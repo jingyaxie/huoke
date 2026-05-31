@@ -1,0 +1,41 @@
+{
+  "aweme_id": "7586960363577429257",
+  "video_url": "https://www.douyin.com/video/7586960363577429257",
+  "api_total_top_comments": 2,
+  "top_comments_captured": 2,
+  "reply_comments_captured_preview": 0,
+  "expected_reply_total_from_top_comments": 0,
+  "total_comments_captured": 2,
+  "capture_method": "network_api",
+  "comments": [
+    {
+      "comment_id": "7587025835262837553",
+      "parent_comment_id": null,
+      "comment": "@柴桑人好物分享 ，退休了也跑不掉[比心]",
+      "create_time": 1766492110,
+      "digg_count": 2,
+      "reply_comment_total": 0,
+      "username": "用户6264913681099",
+      "user_id": "7580288941909115961",
+      "sec_uid": "MS4wLjABAAAATeaagmc4JUPJQoNjTHoRgXN89Pj79Qkl_wcO2-Jye8QYIUh0Z4jOnz82hlieOWUV",
+      "avatar": "https://p3-pc.douyinpic.com/aweme/100x100/aweme-avatar/mosaic-legacy_3795_3033762272.jpeg?from=2064092626"
+    },
+    {
+      "comment_id": "7586966585714967305",
+      "parent_comment_id": null,
+      "comment": "我9岁儿子在校被打残，实名举报上海市闵行区万涛",
+      "create_time": 1766478315,
+      "digg_count": 0,
+      "reply_comment_total": 0,
+      "username": "9岁云童泪洒申城",
+      "user_id": "7543426387337872441",
+      "sec_uid": "MS4wLjABAAAAr4Xd-2kPfPKMJ9qGvqriRWtMpEU_10nQbJIHB9M_6oN7Yz_Bqd6nqlGGqeEM40Gr",
+      "avatar": "https://p3-pc.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-i-0813c000-ce_ocEVPUPBALUB5A5MuapIsxBVT7ARARTiAVEiq.jpeg?from=2064092626"
+    }
+  ],
+  "keyword_context": {
+    "keyword": "淋浴房",
+    "days": 3,
+    "region": "辽宁"
+  }
+}
