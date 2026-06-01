@@ -137,6 +137,15 @@ def launch_args(settings: Settings | None = None) -> list[str]:
     return list(_LAUNCH_ARGS)
 
 
+def visible_browser_launch_kwargs() -> dict:
+    import os
+
+    kwargs: dict = {"headless": False, "args": launch_args()}
+    if os.environ.get("DISPLAY"):
+        kwargs["env"] = os.environ.copy()
+    return kwargs
+
+
 def user_agent(settings: Settings) -> str:
     return (settings.antibot_user_agent or DEFAULT_USER_AGENT).strip()
 
@@ -150,6 +159,10 @@ def headless_for_platform(settings: Settings, platform: str, headless: bool | No
         return headless
     if platform == "xiaohongshu":
         return settings.xhs_headless
+    if platform == "kuaishou":
+        return settings.kuaishou_headless
+    if platform == "huoshan":
+        return settings.huoshan_headless
     return settings.douyin_headless
 
 
@@ -254,16 +267,17 @@ def require_login(
     store: PlatformSessionStore,
     tenant_id: str,
     settings: Settings,
+    account_id: str = "default",
 ) -> None:
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if not ctx.require_login:
         return
     store.migrate_legacy_if_needed(tenant_id)
-    state = store.load(tenant_id)
+    state = store.load(tenant_id, account_id)
     if store.is_ready(state):
         return
-    status = store.login_status(tenant_id)
+    status = store.login_status(tenant_id, account_id)
     raise LoginRequiredError(
         status.get("message")
-        or f"{store.platform} 租户 {tenant_id} 缺少有效登录态，请先完成登录后再抓取。"
+        or f"{store.platform} 账号 {account_id} 缺少有效登录态，请先完成绑定。"
     )

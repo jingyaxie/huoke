@@ -1,0 +1,89 @@
+import { getAccountId, getApiBaseUrl, getApiKey, getAccessToken, getPlatformId, getTenantId } from "./http";
+
+const baseURL = getApiBaseUrl();
+
+function headers() {
+  const h = {
+    "Content-Type": "application/json",
+    "X-Tenant-Id": getTenantId(),
+    "X-Platform-Id": getPlatformId(),
+    "X-Account-Id": getAccountId(),
+  };
+  const apiKey = getApiKey();
+  if (apiKey) h["X-API-Key"] = apiKey;
+  const token = getAccessToken();
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
+
+export async function fetchSupportedBindPlatforms() {
+  const resp = await fetch(`${baseURL}/accounts/platforms/supported`, { headers: headers() });
+  if (!resp.ok) throw new Error("获取平台列表失败");
+  return resp.json();
+}
+
+export async function fetchAccounts() {
+  const resp = await fetch(`${baseURL}/accounts`, { headers: headers() });
+  if (!resp.ok) throw new Error("获取账号列表失败");
+  return resp.json();
+}
+
+export async function createAccount(id, label) {
+  const resp = await fetch(`${baseURL}/accounts`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ id, label }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "创建账号失败");
+  }
+  return resp.json();
+}
+
+export async function setActiveAccount(accountId) {
+  const resp = await fetch(`${baseURL}/accounts/active/${encodeURIComponent(accountId)}`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!resp.ok) throw new Error("切换账号失败");
+  return resp.json();
+}
+
+export async function deleteAccount(accountId) {
+  const resp = await fetch(`${baseURL}/accounts/${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!resp.ok) throw new Error("删除账号失败");
+  return resp.json();
+}
+
+export async function fetchAccountBindings(accountId) {
+  const resp = await fetch(`${baseURL}/accounts/${encodeURIComponent(accountId)}/bindings`, {
+    headers: headers(),
+  });
+  if (!resp.ok) throw new Error("获取绑定状态失败");
+  return resp.json();
+}
+
+export async function triggerAccountPlatformLogin(accountId, platform) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/server-login`,
+    { method: "POST", headers: headers() }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "启动登录失败");
+  }
+  return resp.json();
+}
+
+export async function fetchAccountPlatformLoginStatus(accountId, platform) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/login-status`,
+    { headers: headers() }
+  );
+  if (!resp.ok) throw new Error("查询登录状态失败");
+  return resp.json();
+}

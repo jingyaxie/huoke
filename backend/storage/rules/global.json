@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "id": "browser-safety",
+      "name": "浏览器操作安全",
+      "description": "所有平台通用的浏览器自动化安全约束",
+      "content": "- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点",
+      "always_apply": true,
+      "platforms": [],
+      "enabled": true,
+      "scope": "global",
+      "created_at": "2026-06-01T05:38:00.917813+00:00",
+      "updated_at": "2026-06-01T05:38:00.917813+00:00"
+    },
+    {
+      "id": "douyin-platform",
+      "name": "抖音平台规则",
+      "description": "操作 douyin.com 时的额外约束",
+      "content": "- 优先使用 douyin.com 域名页面\n- 搜索时使用搜索框 `[data-e2e=\"searchbar-input\"]` 而非直接构造未知 API\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 url_contains=comment/list，搜索用 url_contains=search 或 aweme\n- 全量评论抓取请用内置技能 crawl-video-comments，不要手工翻页 DOM\n- 搜索视频列表请用 /search-videos 或 skill_search_videos，不要手工解析搜索页 DOM",
+      "always_apply": true,
+      "platforms": [
+        "douyin",
+        "huoshan"
+      ],
+      "enabled": true,
+      "scope": "global",
+      "created_at": "2026-06-01T05:38:00.917813+00:00",
+      "updated_at": "2026-06-01T05:38:00.917813+00:00"
+    },
+    {
+      "id": "douyin-social-actions",
+      "name": "抖音社交互动安全",
+      "description": "回复评论、关注、私信等写入操作的约束",
+      "content": "- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对回复/私信内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete",
+      "always_apply": true,
+      "platforms": [
+        "douyin",
+        "huoshan"
+      ],
+      "enabled": true,
+      "scope": "global",
+      "created_at": "2026-06-01T07:00:00.000000+00:00",
+      "updated_at": "2026-06-01T07:00:00.000000+00:00"
+    }
+  ]
+}

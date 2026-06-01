@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
@@ -11,6 +12,7 @@ from app.core.antibot import (
     human_delay,
     launch_args,
     require_login,
+    visible_browser_launch_kwargs,
 )
 from app.core.config import Settings
 from app.platforms.douyin.session import DouyinSessionStore, REQUIRED_LOGIN_COOKIES
@@ -34,25 +36,27 @@ class DouyinCrawler:
         settings: Settings,
         tenant_id: str,
         store: PlatformSessionStore | None = None,
+        account_id: str = "default",
     ) -> None:
         self.settings = settings
         self.tenant_id = tenant_id
+        self.account_id = account_id
         self.store = store or DouyinSessionStore(settings)
         self.pool = PlaywrightPool.get()
 
     @classmethod
-    def _session_key(cls, tenant_id: str) -> str:
-        return f"{PLATFORM}:{tenant_id}"
+    def _session_key(cls, tenant_id: str, account_id: str = "default") -> str:
+        return f"{cls.platform}:{tenant_id}:{account_id}"
 
     def _context_kwargs(self) -> dict:
-        return context_kwargs(self.settings, self.store.load(self.tenant_id))
+        return context_kwargs(self.settings, self.store.load(self.tenant_id, self.account_id))
 
     async def _launch_standalone_context(
         self, headless: bool | None = None
     ) -> tuple[Playwright, Browser, BrowserContext, Page]:
         playwright = await async_playwright().start()
         browser = await playwright.chromium.launch(
-            headless=headless_for_platform(self.settings, PLATFORM, headless),
+            headless=headless_for_platform(self.settings, self.platform, headless),
             args=launch_args(),
         )
         context = await browser.new_context(**self._context_kwargs())
@@ -60,20 +64,24 @@ class DouyinCrawler:
         page = await context.new_page()
         return playwright, browser, context, page
 
+    @property
+    def entry_url(self) -> str:
+        return self.settings.douyin_hot_url
+
     async def login_and_save_cookies(self, show_browser: bool = True) -> None:
         playwright, browser, context, page = await self._launch_standalone_context(headless=not show_browser)
         try:
-            await page.goto(self.settings.douyin_hot_url, wait_until="domcontentloaded", timeout=120000)
+            await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
             if not show_browser:
                 raise RuntimeError("Cookie login requires an interactive browser. Set DOUYIN_HEADLESS=false first.")
             for _ in range(60):
                 cookies = await context.cookies()
                 cookie_names = {cookie.get("name") for cookie in cookies if cookie.get("name")}
                 if cookie_names & REQUIRED_LOGIN_COOKIES:
-                    await self.store.save_from_context(self.tenant_id, context)
+                    await self.store.save_from_context(self.tenant_id, context, self.account_id)
                     return
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
-            await self.store.save_from_context(self.tenant_id, context)
+            await self.store.save_from_context(self.tenant_id, context, self.account_id)
             raise RuntimeError("未检测到有效登录态，请在浏览器里完成扫码/验证后重试。")
         finally:
             await context.close()
@@ -81,28 +89,30 @@ class DouyinCrawler:
             await playwright.stop()
 
     async def start_interactive_login_session(self) -> dict:
-        key = self._session_key(self.tenant_id)
+        key = self._session_key(self.tenant_id, self.account_id)
         task = DouyinCrawler._interactive_tasks.get(key)
         if task and not task.done() and key in DouyinCrawler._interactive_sessions:
             return {
                 "status": "running",
-                "message": "该租户的服务器登录窗口已在运行",
+                "message": "该账号的服务器登录窗口已在运行",
                 "tenant_id": self.tenant_id,
-                "platform": PLATFORM,
+                "account_id": self.account_id,
+                "platform": self.platform,
             }
         DouyinCrawler._interactive_tasks[key] = asyncio.create_task(self._run_interactive_login_session())
         return {
             "status": "started",
             "message": "服务器登录窗口已启动",
             "tenant_id": self.tenant_id,
-            "platform": PLATFORM,
+            "account_id": self.account_id,
+            "platform": self.platform,
         }
 
     @classmethod
-    def get_interactive_session(cls, platform: str, tenant_id: str) -> dict | None:
-        if platform != PLATFORM:
+    def get_interactive_session(cls, platform: str, tenant_id: str, account_id: str = "default") -> dict | None:
+        if platform != cls.platform:
             return None
-        session = cls._interactive_sessions.get(cls._session_key(tenant_id))
+        session = cls._interactive_sessions.get(cls._session_key(tenant_id, account_id))
         if not session:
             return None
         page = session.get("page")
@@ -116,33 +126,34 @@ class DouyinCrawler:
         return session
 
     def login_status(self, tenant_id: str) -> dict:
-        return self.store.login_status(tenant_id)
+        return self.store.login_status(tenant_id, account_id=self.account_id)
 
     async def _run_interactive_login_session(self) -> None:
-        key = self._session_key(self.tenant_id)
+        key = self._session_key(self.tenant_id, self.account_id)
         playwright = await async_playwright().start()
         browser = None
         context = None
         try:
-            browser = await playwright.chromium.launch(headless=False, args=launch_args())
+            browser = await playwright.chromium.launch(**visible_browser_launch_kwargs())
             context = await browser.new_context(**self._context_kwargs())
             await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
             page = await context.new_page()
             DouyinCrawler._interactive_sessions[key] = {
-                "platform": PLATFORM,
+                "platform": self.platform,
                 "tenant_id": self.tenant_id,
+                "account_id": self.account_id,
                 "playwright": playwright,
                 "browser": browser,
                 "context": context,
                 "page": page,
             }
-            await page.goto(self.settings.douyin_hot_url, wait_until="domcontentloaded", timeout=120000)
+            await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
             for _ in range(180):
                 cookies = await context.cookies()
                 cookie_names = {cookie.get("name") for cookie in cookies if cookie.get("name")}
                 if cookie_names & REQUIRED_LOGIN_COOKIES:
-                    await self.store.save_from_context(self.tenant_id, context)
-                    await page.goto(self.settings.douyin_hot_url, wait_until="domcontentloaded", timeout=120000)
+                    await self.store.save_from_context(self.tenant_id, context, self.account_id)
+                    await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
                     break
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
             while True:
@@ -157,9 +168,11 @@ class DouyinCrawler:
             await playwright.stop()
 
     async def fetch_hot(self, limit: int = 100) -> list[CrawlItem]:
-        require_login(self.store, self.tenant_id, self.settings)
-        async with self.pool.tenant_context(PLATFORM, self.tenant_id, self.store, self.settings) as (_, page):
-            await page.goto(self.settings.douyin_hot_url, wait_until="domcontentloaded", timeout=120000)
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        async with self.pool.tenant_context(
+            self.platform, self.tenant_id, self.store, self.settings, account_id=self.account_id
+        ) as (_, page):
+            await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
@@ -192,7 +205,7 @@ class DouyinCrawler:
             if video_id:
                 seen_video_ids.add(video_id)
             item = CrawlItem(
-                platform=PLATFORM,
+                platform=self.platform,
                 rank=len(results) + 1,
                 title=title,
                 author_name=parsed.get("author_name") or self._guess_author(text),
@@ -208,7 +221,7 @@ class DouyinCrawler:
                     "href": href,
                     "index": index,
                     "tenant_id": self.tenant_id,
-                    "platform": PLATFORM,
+                    "platform": self.platform,
                 },
             )
             results.append(item)

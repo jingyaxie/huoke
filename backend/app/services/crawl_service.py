@@ -20,15 +20,19 @@ class CrawlService:
         tenant_id: str | None = None,
         platform: str | None = None,
         settings: Settings | None = None,
+        account_id: str = "default",
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
         self.tenant_id = tenant_id or self.settings.default_tenant_id
         self.platform = platform or self.settings.default_platform
+        self.account_id = account_id
         self.author_repo = AuthorRepository(session, self.tenant_id, self.platform)
         self.video_repo = VideoRepository(session, self.tenant_id, self.platform)
         self.snapshot_repo = SnapshotRepository(session, self.tenant_id, self.platform)
-        self.crawler = get_hot_crawler(self.settings, self.platform, self.tenant_id)
+        self.crawler = get_hot_crawler(
+            self.settings, self.platform, self.tenant_id, account_id=self.account_id
+        )
 
     async def crawl_hot(self, limit: int = 100, snapshot_date: date | None = None) -> CrawlResult:
         snapshot_date = snapshot_date or date.today()

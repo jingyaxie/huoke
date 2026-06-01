@@ -9,6 +9,7 @@ from app.api.deps import (
     db_session,
     effective_platform_id,
     effective_tenant_id,
+    get_account_id,
     get_authenticated_tenant_id,
     get_platform_id,
     platform_session_store,
@@ -50,10 +51,11 @@ async def platform_crawl_hot(
     limit: int = Query(default=100, ge=1, le=100),
     session: Session = Depends(db_session),
     tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
     pid = resolve_path_platform_id(platform)
-    service = CrawlService(session, tenant_id=tenant_id, platform=pid)
+    service = CrawlService(session, tenant_id=tenant_id, platform=pid, account_id=account_id)
     result = await service.crawl_hot(limit=limit)
     return result.model_dump()
 
@@ -62,11 +64,12 @@ async def platform_crawl_hot(
 def platform_login_status(
     platform: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
     pid = resolve_path_platform_id(platform)
     store = get_session_store(settings, pid)
-    return store.login_status(tenant_id)
+    return store.login_status(tenant_id, account_id)
 
 
 @router.put("/platforms/{platform}/tenants/{tenant_id}/storage-state")
@@ -124,15 +127,17 @@ async def platform_crawl_video_comments(
     platform: str,
     payload: VideoCommentCrawlRequest,
     tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
     pid = resolve_path_platform_id(platform)
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid)
+    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
     result, output = await service.crawl_video_comments(payload.video_url, show_browser=payload.show_browser)
     return {
         "platform": pid,
         "tenant_id": tid,
+        "account_id": account_id,
         "video_url": result["video_url"],
         "output_file": str(output),
         "total_comments_captured": result["total_comments_captured"],
@@ -145,11 +150,12 @@ async def platform_crawl_keyword_comments(
     platform: str,
     payload: KeywordCommentCrawlRequest,
     tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
     pid = resolve_path_platform_id(platform)
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid)
+    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
     results, outputs, diagnostic = await service.crawl_keyword_comments(
         keyword=payload.keyword,
         limit=payload.limit,

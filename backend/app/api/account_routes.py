@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.api.deps import get_authenticated_tenant_id
+from app.core.config import Settings, get_settings
+from app.platforms.account_id import normalize_account_id
+from app.platforms.constants import BINDABLE_PLATFORMS, PLATFORM_LABELS
+from app.platforms.registry import get_session_store
+from app.schemas.platform_account import (
+    PlatformAccountBindingsOut,
+    PlatformAccountCreate,
+    PlatformAccountListResponse,
+    PlatformAccountOut,
+    UploadAccountStorageStateRequest,
+)
+from app.services.platform_account_store import PlatformAccountStore
+
+
+router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+
+
+def _store(settings: Settings = Depends(get_settings)) -> PlatformAccountStore:
+    return PlatformAccountStore(settings)
+
+
+@router.get("/platforms/supported")
+def list_bindable_platforms() -> dict:
+    return {
+        "items": [
+            {"id": pid, "label": PLATFORM_LABELS.get(pid, pid)}
+            for pid in sorted(BINDABLE_PLATFORMS)
+        ]
+    }
+
+
+@router.get("", response_model=PlatformAccountListResponse)
+def list_accounts(
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> PlatformAccountListResponse:
+    items = store.list_accounts(tenant_id)
+    return PlatformAccountListResponse(
+        items=items,
+        total=len(items),
+        active_account_id=store.get_active_account_id(tenant_id),
+    )
+
+
+@router.post("", response_model=PlatformAccountOut)
+def create_account(
+    payload: PlatformAccountCreate,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> PlatformAccountOut:
+    try:
+        return store.create_account(tenant_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/active/{account_id}")
+def set_active_account(
+    account_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict[str, str]:
+    try:
+        active = store.set_active_account(tenant_id, account_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="账号不存在") from exc
+    return {"active_account_id": active}
+
+
+@router.delete("/{account_id}")
+def delete_account(
+    account_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict[str, bool]:
+    try:
+        deleted = store.delete_account(tenant_id, account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    return {"deleted": True}
+
+
+@router.get("/{account_id}/bindings", response_model=PlatformAccountBindingsOut)
+def get_account_bindings(
+    account_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> PlatformAccountBindingsOut:
+    account = store.get_account(tenant_id, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    return PlatformAccountBindingsOut(
+        account_id=account.id,
+        label=account.label,
+        platforms=store.platform_bindings(tenant_id, account.id),
+    )
+
+
+@router.get("/{account_id}/platforms/{platform}/login-status")
+def account_platform_login_status(
+    account_id: str,
+    platform: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    session_store = get_session_store(settings, platform)
+    return session_store.login_status(tenant_id, normalize_account_id(account_id))
+
+
+@router.post("/{account_id}/platforms/{platform}/server-login")
+async def account_platform_server_login(
+    account_id: str,
+    platform: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    try:
+        return await store.start_server_login(tenant_id, platform, account_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="账号不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/{account_id}/platforms/{platform}/storage-state")
+def account_upload_storage_state(
+    account_id: str,
+    platform: str,
+    payload: UploadAccountStorageStateRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    try:
+        return store.upload_storage_state(tenant_id, platform, account_id, payload.storage_state)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="账号不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

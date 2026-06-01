@@ -54,18 +54,19 @@ class PlaywrightPool:
         *,
         headless: bool | None = None,
         persist_state: bool = True,
+        account_id: str = "default",
     ) -> AsyncIterator[tuple[BrowserContext, Page]]:
         async with self._lock_for(platform, tenant_id):
             resolved_headless = headless_for_platform(settings, platform, headless)
             browser = await self._ensure_browser(resolved_headless)
-            kwargs = context_kwargs(settings, store.load(tenant_id))
+            kwargs = context_kwargs(settings, store.load(tenant_id, account_id))
             context = await browser.new_context(**kwargs)
             await apply_stealth(context, settings, tenant_id=tenant_id)
             try:
                 page = await context.new_page()
                 yield context, page
                 if persist_state:
-                    await store.save_from_context(tenant_id, context)
+                    await store.save_from_context(tenant_id, context, account_id)
             finally:
                 await context.close()
 

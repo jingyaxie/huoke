@@ -4,7 +4,7 @@
       <div class="brand">抖音热点平台</div>
       <div class="tenant-box">
         <div class="tenant-label">数据源</div>
-        <el-input v-model="platformId" size="small" placeholder="douyin / xiaohongshu" @change="onPlatformChange" />
+        <el-input v-model="platformId" size="small" placeholder="douyin / xiaohongshu / kuaishou" @change="onPlatformChange" />
       </div>
       <div class="tenant-box">
         <div class="tenant-label">租户 ID</div>
@@ -26,6 +26,7 @@
         <el-menu-item index="/authors">热门作者</el-menu-item>
         <el-menu-item index="/trend">趋势分析</el-menu-item>
         <el-menu-item index="/comments">评论抓取</el-menu-item>
+        <el-menu-item index="/agent" class="agent-nav-item">智能体助手</el-menu-item>
         <el-menu-item index="/antibot">AntiBot</el-menu-item>
         <el-menu-item index="/reports">热点日报</el-menu-item>
       </el-menu>
@@ -93,6 +94,11 @@ function onApiKeyChange() {
 
 .content {
   min-width: 0;
+}
+
+:deep(.agent-nav-item) {
+  color: var(--el-color-primary) !important;
+  font-weight: 600;
 }
 
 @media (max-width: 900px) {

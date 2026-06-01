@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS backend-base
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     novnc \
     websockify \
     fluxbox \
-    xterm \
+    x11-utils \
     libglib2.0-0t64 \
     libcairo2 \
     libpango-1.0-0 \
@@ -36,17 +36,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxshmfence1 \
     ca-certificates \
     fonts-liberation \
+    fontconfig \
+    fonts-wqy-microhei \
     wget \
-    xdg-utils \
+    && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 RUN playwright install chromium
 
+FROM backend-base AS backend-app
+
 COPY . /app
+RUN chmod +x /app/scripts/docker-entrypoint.sh /app/scripts/install-cjk-fonts.sh
 
 EXPOSE 8000
 EXPOSE 6080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/scripts/docker-entrypoint.sh"]

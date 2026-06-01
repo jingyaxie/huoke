@@ -6,6 +6,12 @@
         subtitle="支持单个视频抓取，以及关键词批量抓取前几个视频的全部评论"
         @login="onLogin"
       />
+      <div class="agent-entry panel">
+        <span>需要 AI 自动操作浏览器？</span>
+        <router-link to="/agent">
+          <el-button type="primary" link>打开智能体助手 →</el-button>
+        </router-link>
+      </div>
       <el-alert
         v-if="loginStatus.message"
         :title="loginStatus.message"
@@ -24,7 +30,7 @@
           <h3 class="section-title">单个视频</h3>
           <el-form label-width="88px">
             <el-form-item label="视频链接">
-              <el-input v-model="single.videoUrl" placeholder="https://www.douyin.com/video/..." />
+              <el-input v-model="single.videoUrl" placeholder="火山分享链接 / item_id / douyin.com/video/..." />
             </el-form-item>
             <el-form-item label="可见浏览器">
               <el-switch v-model="single.showBrowser" />
@@ -78,7 +84,13 @@
           </el-table-column>
         </el-table>
       </div>
-      <ServerLoginDialog v-model="loginDialogVisible" :url="serverLoginUrl" />
+      <ServerLoginDialog
+        v-model="loginDialogVisible"
+        :url="serverLoginUrl"
+        :tenant-id="loginTenantId"
+        :account-id="loginAccountId"
+        :platform-label="loginPlatformLabel"
+      />
       <ServerBrowserDialog v-model="browserDialogVisible" :url="serverBrowserUrl" />
     </div>
   </MainLayout>
@@ -99,6 +111,14 @@ import {
   fetchServerLoginUrl,
   triggerServerLogin,
 } from "../api/douyin";
+import { getAccountId, getPlatformId, getTenantId } from "../api/http";
+
+const PLATFORM_LABELS = {
+  douyin: "抖音",
+  xiaohongshu: "小红书",
+  kuaishou: "快手",
+  huoshan: "火山",
+};
 
 const RESULTS_STORAGE_KEY = "douyin_comment_crawl_results_v1";
 
@@ -113,6 +133,9 @@ function formatCrawlError(err, actionLabel) {
 const results = ref([]);
 const loginDialogVisible = ref(false);
 const serverLoginUrl = ref("");
+const loginTenantId = ref(getTenantId());
+const loginAccountId = ref(getAccountId());
+const loginPlatformLabel = ref(PLATFORM_LABELS[getPlatformId()] || getPlatformId());
 const browserDialogVisible = ref(false);
 const serverBrowserUrl = ref("");
 const loginStatus = reactive({
@@ -210,6 +233,9 @@ async function crawlBatch() {
 
 async function onLogin() {
   try {
+    loginTenantId.value = getTenantId();
+    loginAccountId.value = getAccountId();
+    loginPlatformLabel.value = PLATFORM_LABELS[getPlatformId()] || getPlatformId();
     const data = await fetchServerLoginUrl();
     serverLoginUrl.value = data.url || "";
     loginDialogVisible.value = true;
@@ -293,6 +319,17 @@ watch(
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.agent-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  color: #555;
 }
 
 @media (max-width: 900px) {

@@ -5,6 +5,13 @@
   --muted: #6b7280;
   --primary: #0f766e;
   --accent: #ea580c;
+  --el-color-primary: #0f766e;
+  --el-color-primary-light-3: #5eead4;
+  --el-color-primary-light-5: #99f6e4;
+  --el-color-primary-light-7: #ccfbf1;
+  --el-color-primary-light-8: #ecfdf5;
+  --el-color-primary-light-9: #f0fdfa;
+  --el-color-primary-dark-2: #0d9488;
 }
 
 * {

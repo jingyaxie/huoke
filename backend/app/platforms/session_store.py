@@ -8,6 +8,7 @@ from pathlib import Path
 from playwright.async_api import BrowserContext
 
 from app.core.config import Settings
+from app.platforms.account_id import normalize_account_id
 from app.platforms.types import normalize_platform
 from app.platforms.tenant import normalize_tenant_id
 from app.utils.crypto import decrypt_json, encrypt_json
@@ -29,15 +30,21 @@ class PlatformSessionStore(ABC):
             return self.settings.douyin_tenants_dir
         return self.settings.storage_root / self.platform / "tenants"
 
-    def path_for(self, tenant_id: str) -> Path:
+    def path_for(self, tenant_id: str, account_id: str = "default") -> Path:
         safe = normalize_tenant_id(tenant_id)
-        return self.tenants_dir / safe / "storage_state.json"
+        account = normalize_account_id(account_id)
+        account_path = self.tenants_dir / safe / "accounts" / account / "storage_state.json"
+        if account == "default":
+            legacy = self.tenants_dir / safe / "storage_state.json"
+            if legacy.exists() and not account_path.exists():
+                return legacy
+        return account_path
 
     def migrate_legacy_if_needed(self, tenant_id: str | None = None) -> None:
         if self.platform != "douyin":
             return
         tenant_id = normalize_tenant_id(tenant_id or self.settings.default_tenant_id)
-        target = self.path_for(tenant_id)
+        target = self.path_for(tenant_id, "default")
         if target.exists():
             return
         legacy = self.settings.douyin_storage_state_path
@@ -67,36 +74,40 @@ class PlatformSessionStore(ABC):
         else:
             path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def load(self, tenant_id: str) -> dict | None:
+    def load(self, tenant_id: str, account_id: str = "default") -> dict | None:
         self.migrate_legacy_if_needed(tenant_id)
-        return self._read_file(self.path_for(tenant_id))
+        return self._read_file(self.path_for(tenant_id, account_id))
 
-    def save_dict(self, tenant_id: str, state: dict) -> Path:
-        path = self.path_for(tenant_id)
+    def save_dict(self, tenant_id: str, state: dict, account_id: str = "default") -> Path:
+        path = self.path_for(tenant_id, account_id)
         self._write_file(path, state)
         return path
 
-    async def save_from_context(self, tenant_id: str, context: BrowserContext) -> Path:
-        path = self.path_for(tenant_id)
+    async def save_from_context(
+        self, tenant_id: str, context: BrowserContext, account_id: str = "default"
+    ) -> Path:
+        path = self.path_for(tenant_id, account_id)
         temp_path = path.with_name(f".{path.name}.tmp")
         path.parent.mkdir(parents=True, exist_ok=True)
         await context.storage_state(path=str(temp_path))
         try:
             state = json.loads(temp_path.read_text(encoding="utf-8"))
-            return self.save_dict(tenant_id, state)
+            return self.save_dict(tenant_id, state, account_id)
         finally:
             temp_path.unlink(missing_ok=True)
 
     @abstractmethod
     def is_ready(self, state: dict | None) -> bool: ...
 
-    def login_status(self, tenant_id: str) -> dict:
-        path = self.path_for(tenant_id)
+    def login_status(self, tenant_id: str, account_id: str = "default") -> dict:
+        account = normalize_account_id(account_id)
+        path = self.path_for(tenant_id, account)
         self.migrate_legacy_if_needed(tenant_id)
         encrypted = bool(self.settings.storage_state_encryption_key)
         base = {
             "platform": self.platform,
             "tenant_id": normalize_tenant_id(tenant_id),
+            "account_id": account,
             "storage_state_path": str(path),
             "encrypted": encrypted,
         }
@@ -104,18 +115,18 @@ class PlatformSessionStore(ABC):
             return {
                 **base,
                 "status": "missing",
-                "message": f"未找到 {self.platform} 登录态文件，请先完成登录。",
+                "message": f"未找到 {self.platform} 登录态，请先绑定账号。",
                 "cookie_count": 0,
             }
         try:
-            data = self.load(tenant_id) or {}
+            data = self.load(tenant_id, account) or {}
             cookies = data.get("cookies") or []
             cookie_names = {c.get("name") for c in cookies if isinstance(c, dict)}
             has_session = self.is_ready(data)
             return {
                 **base,
                 "status": "ready" if has_session else "incomplete",
-                "message": "登录态可用" if has_session else "已找到 Cookie 文件，但缺少关键会话 Cookie，可能仍需重新登录。",
+                "message": "登录态可用" if has_session else "已找到 Cookie，但缺少关键会话，请重新登录。",
                 "cookie_count": len(cookies),
                 "cookie_names_preview": sorted(cookie_names)[:20],
             }

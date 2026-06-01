@@ -34,14 +34,16 @@ class XhsCommentCrawler:
         settings: Settings,
         tenant_id: str,
         store: PlatformSessionStore | None = None,
+        account_id: str = "default",
     ) -> None:
         self.settings = settings
         self.tenant_id = tenant_id
+        self.account_id = account_id
         self.store = store or XhsSessionStore(settings)
-        self.hot_crawler = XhsCrawler(settings, tenant_id, self.store)
+        self.hot_crawler = XhsCrawler(settings, tenant_id, self.store, account_id=account_id)
 
     async def crawl_note_comments(self, note_url: str, show_browser: bool = False) -> tuple[dict, Path]:
-        require_login(self.store, self.tenant_id, self.settings)
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         note_id = extract_note_id(note_url)
         payload = await self._fetch_note_comments(note_url=note_url, headless=not show_browser)
         output = (
@@ -59,11 +61,11 @@ class XhsCommentCrawler:
         days: int = 3,
         region: str | None = None,
     ) -> tuple[list[dict], list[Path], str | None]:
-        require_login(self.store, self.tenant_id, self.settings)
-        if show_browser and not XhsCrawler.get_interactive_session(PLATFORM, self.tenant_id):
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        if show_browser and not XhsCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id):
             await self.hot_crawler.start_interactive_login_session()
         if show_browser:
-            session = XhsCrawler.get_interactive_session(PLATFORM, self.tenant_id)
+            session = XhsCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
             if session:
                 note_urls, diagnostic = await self._search_from_existing_page(session["page"], keyword, limit)
             else:
@@ -134,7 +136,7 @@ class XhsCommentCrawler:
         note_id = extract_note_id(note_url)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=headless, args=launch_args())
-            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id))
+            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id, self.account_id))
             context = await browser.new_context(**kwargs)
             await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
             page = await context.new_page()

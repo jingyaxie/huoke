@@ -25,6 +25,7 @@ PLATFORM = "douyin"
 
 
 COMMENT_PATH = "/aweme/v1/web/comment/list"
+REPLY_COMMENT_PATH = "/aweme/v1/web/comment/list/reply"
 DROP_QUERY_KEYS = {"a_bogus", "x-secsdk-web-signature", "msToken"}
 
 
@@ -62,6 +63,16 @@ def _build_next_url(base_url: str, cursor: int) -> str:
     return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query, doseq=True), ""))
 
 
+def _set_query(url: str, patch: dict[str, str | int]) -> str:
+    split = urlsplit(url)
+    query = dict(parse_qsl(split.query, keep_blank_values=True))
+    for key, value in patch.items():
+        query[key] = str(value)
+    for key in DROP_QUERY_KEYS:
+        query.pop(key, None)
+    return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query, doseq=True), ""))
+
+
 async def _launch_browser(playwright, headless: bool):
     try:
         return await playwright.chromium.launch(headless=headless, args=launch_args()), headless
@@ -78,14 +89,20 @@ class DouyinCommentCrawler:
         settings: Settings,
         tenant_id: str,
         store: PlatformSessionStore | None = None,
+        account_id: str = "default",
     ) -> None:
         self.settings = settings
         self.tenant_id = tenant_id
+        self.account_id = account_id
         self.platform = PLATFORM
         self.store = store or DouyinSessionStore(settings)
 
+    @property
+    def entry_url(self) -> str:
+        return self.settings.douyin_hot_url
+
     async def crawl_note_comments(self, content_url: str, show_browser: bool = False) -> tuple[dict, Path]:
-        require_login(self.store, self.tenant_id, self.settings)
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         aweme_id = _extract_aweme_id(content_url)
         payload = await self._fetch_video_comments(video_url=content_url, headless=not show_browser)
         payload["platform"] = PLATFORM
@@ -107,12 +124,12 @@ class DouyinCommentCrawler:
         days: int = 3,
         region: str | None = None,
     ) -> tuple[list[dict], list[Path], str | None]:
-        require_login(self.store, self.tenant_id, self.settings)
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         crawler = DouyinCrawler(self.settings, self.tenant_id, self.store)
-        if show_browser and not DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id):
+        if show_browser and not DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id):
             await crawler.start_interactive_login_session()
         if show_browser:
-            session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id)
+            session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
             if session:
                 video_urls, diagnostic = await self.search_videos_from_existing_page(
                     page=session["page"],
@@ -207,11 +224,11 @@ class DouyinCommentCrawler:
         headless: bool = True,
         manual_search: bool = False,
     ) -> tuple[list[str], str | None]:
-        require_login(self.store, self.tenant_id, self.settings)
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         async with async_playwright() as p:
             browser, actual_headless = await _launch_browser(p, headless=headless)
-            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id))
-            has_storage_state = self.store.is_ready(self.store.load(self.tenant_id))
+            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id, self.account_id))
+            has_storage_state = self.store.is_ready(self.store.load(self.tenant_id, self.account_id))
             context = await browser.new_context(**kwargs)
             await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
             page = await context.new_page()
@@ -232,7 +249,7 @@ class DouyinCommentCrawler:
                             break
 
             page.on("response", on_response)
-            await page.goto(self.settings.douyin_hot_url, wait_until="domcontentloaded", timeout=120000)
+            await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
             await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
             search_input = page.locator('[data-e2e="searchbar-input"]').first
             if manual_search:
@@ -402,15 +419,242 @@ class DouyinCommentCrawler:
             uniq.append(vid)
         return uniq
 
+    def _normalize_search_aweme(self, node: dict) -> dict | None:
+        aweme = node.get("aweme_info") if isinstance(node.get("aweme_info"), dict) else node
+        if not isinstance(aweme, dict):
+            return None
+        aweme_id = str(aweme.get("aweme_id") or "")
+        if not re.fullmatch(r"\d{8,22}", aweme_id):
+            return None
+        author = aweme.get("author") or {}
+        stats = aweme.get("statistics") or {}
+        return {
+            "aweme_id": aweme_id,
+            "video_url": f"https://www.douyin.com/video/{aweme_id}",
+            "title": (aweme.get("desc") or "").strip(),
+            "author": (author.get("nickname") or "").strip(),
+            "author_id": str(author.get("uid") or ""),
+            "sec_uid": author.get("sec_uid") or "",
+            "digg_count": int(stats.get("digg_count") or 0),
+            "comment_count": int(stats.get("comment_count") or 0),
+            "share_count": int(stats.get("share_count") or 0),
+            "create_time": aweme.get("create_time"),
+        }
+
+    def _extract_aweme_items_from_json(self, data) -> list[dict]:
+        items: list[dict] = []
+        seen: set[str] = set()
+
+        def walk(node) -> None:
+            if isinstance(node, dict):
+                if "aweme_id" in node and ("desc" in node or "author" in node or "aweme_info" in node):
+                    row = self._normalize_search_aweme(node)
+                    if row and row["aweme_id"] not in seen:
+                        seen.add(row["aweme_id"])
+                        items.append(row)
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(data)
+        return items
+
+    async def search_videos(
+        self,
+        keyword: str,
+        limit: int = 20,
+        show_browser: bool = False,
+    ) -> tuple[dict, Path]:
+        """Search Douyin by keyword and return structured video list via API interception."""
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        headless = not show_browser
+        api_items: dict[str, dict] = {}
+        api_aweme_ids: list[str] = []
+        uniq_urls: list[str] = []
+        diagnostic: str | None = None
+
+        async def on_response(resp):
+            try:
+                url = resp.url
+                if "/aweme/v1/web/" not in url or "search" not in url:
+                    return
+                data = await resp.json()
+            except Exception:
+                return
+            for row in self._extract_aweme_items_from_json(data):
+                api_items.setdefault(row["aweme_id"], row)
+            for vid in self._extract_aweme_ids_from_json(data):
+                if vid not in api_aweme_ids:
+                    api_aweme_ids.append(vid)
+
+        async with async_playwright() as p:
+            browser, actual_headless = await _launch_browser(p, headless=headless)
+            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id, self.account_id))
+            has_storage_state = self.store.is_ready(self.store.load(self.tenant_id, self.account_id))
+            context = await browser.new_context(**kwargs)
+            await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
+            page = await context.new_page()
+            page.on("response", on_response)
+            manual_search = show_browser
+            try:
+                await page.goto(self.entry_url, wait_until="domcontentloaded", timeout=120000)
+                await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+                search_input = page.locator('[data-e2e="searchbar-input"]').first
+                if manual_search:
+                    if await search_input.count() > 0:
+                        try:
+                            await search_input.click(force=True)
+                            await search_input.fill(keyword)
+                        except Exception:
+                            pass
+                else:
+                    if await search_input.count() > 0:
+                        await search_input.evaluate(
+                            """(el, kw) => {
+                                el.value = kw;
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                            }""",
+                            keyword,
+                        )
+                        btn = page.locator('[data-e2e="searchbar-button"]').first
+                        if await btn.count() > 0:
+                            await btn.click(force=True)
+                        await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="action")
+                    if not api_aweme_ids and "/search/" not in page.url:
+                        await page.goto(
+                            f"https://www.douyin.com/search/{quote(keyword)}?source=search_all",
+                            wait_until="domcontentloaded",
+                        )
+                        await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+
+                if await self._is_captcha_page(page):
+                    if headless:
+                        diagnostic = "关键词搜索命中抖音验证码中间页。请开启可见浏览器并完成验证后重试。"
+                        await context.close()
+                        await browser.close()
+                        payload = {
+                            "platform": PLATFORM,
+                            "keyword": keyword,
+                            "video_count": 0,
+                            "capture_method": "failed",
+                            "diagnostic": diagnostic,
+                            "videos": [],
+                        }
+                        output = self._search_videos_output_path(keyword)
+                        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                        return payload, output
+                    for _ in range(200):
+                        await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
+                        if not await self._is_captcha_page(page):
+                            break
+
+                links = await page.locator('a[href*="/video/"]').evaluate_all("els => els.map(e => e.href)")
+                if manual_search and not links:
+                    for _ in range(200):
+                        await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
+                        links = await page.locator('a[href*="/video/"]').evaluate_all("els => els.map(e => e.href)")
+                        if links or api_aweme_ids:
+                            break
+                if not links and api_aweme_ids:
+                    links = [f"https://www.douyin.com/video/{vid}" for vid in api_aweme_ids[:limit]]
+                if not links:
+                    links = await self._extract_video_urls_from_page_payload(page, limit=limit)
+
+                uniq_urls: list[str] = []
+                seen_href = set()
+                for href in links:
+                    if href and href not in seen_href:
+                        seen_href.add(href)
+                        uniq_urls.append(href.split("?")[0])
+                    if len(uniq_urls) >= limit:
+                        break
+
+                if not uniq_urls:
+                    body_text = ""
+                    try:
+                        body_text = (await page.locator("body").inner_text(timeout=3000))[:2000]
+                    except Exception:
+                        body_text = ""
+                    if not has_storage_state:
+                        diagnostic = "未检测到登录 Cookie，关键词搜索可能被限制。请先登录抖音。"
+                    elif await self._is_captcha_page(page):
+                        diagnostic = "关键词搜索命中验证码中间页，请完成验证后重试。"
+                    elif any(k in body_text for k in ("验证", "验证码", "风险", "异常", "登录后继续")):
+                        diagnostic = "疑似触发抖音风控或登录校验，请完成验证后重试。"
+                    else:
+                        diagnostic = "搜索页未识别到视频结果，可能是关键词受限或页面结构变化。"
+                elif manual_search:
+                    diagnostic = "已在可见浏览器中接收到搜索结果。"
+            finally:
+                try:
+                    page.remove_listener("response", on_response)
+                except Exception:
+                    pass
+                await context.close()
+                await browser.close()
+
+        videos: list[dict] = []
+        seen_ids: set[str] = set()
+        for url in uniq_urls:
+            match = re.search(r"/video/(\d{8,22})", url)
+            aweme_id = match.group(1) if match else ""
+            if not aweme_id or aweme_id in seen_ids:
+                continue
+            seen_ids.add(aweme_id)
+            videos.append(api_items.get(aweme_id) or {
+                "aweme_id": aweme_id,
+                "video_url": url,
+                "title": "",
+                "author": "",
+                "author_id": "",
+                "sec_uid": "",
+                "digg_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "create_time": None,
+            })
+        for aweme_id, row in api_items.items():
+            if aweme_id in seen_ids or len(videos) >= limit:
+                continue
+            seen_ids.add(aweme_id)
+            videos.append(row)
+        videos = videos[:limit]
+
+        capture_method = "network_api" if any(v.get("title") for v in videos) else "url_fallback"
+        payload = {
+            "platform": PLATFORM,
+            "keyword": keyword,
+            "video_count": len(videos),
+            "capture_method": capture_method,
+            "diagnostic": diagnostic,
+            "videos": videos,
+        }
+        output = self._search_videos_output_path(keyword)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return payload, output
+
+    def _search_videos_output_path(self, keyword: str) -> Path:
+        safe_keyword = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", keyword)[:32]
+        path = (
+            self.settings.report_output_dir
+            / f"search_videos_{PLATFORM}_{self.tenant_id}_{safe_keyword}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
     async def _fetch_video_comments(self, video_url: str, headless: bool = True) -> dict:
         aweme_id = _extract_aweme_id(video_url)
         async with async_playwright() as p:
             browser, _ = await _launch_browser(p, headless=headless)
-            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id))
+            kwargs = context_kwargs(self.settings, self.store.load(self.tenant_id, self.account_id))
             context = await browser.new_context(**kwargs)
             await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
             page = await context.new_page()
             first_response: dict = {"url": None, "data": None}
+            captured_pages: list[tuple[str, dict]] = []
 
             async def on_response(resp):
                 if COMMENT_PATH in resp.url:
@@ -419,6 +663,7 @@ class DouyinCommentCrawler:
                         if isinstance(data, dict) and ("comments" in data or "total" in data):
                             first_response["url"] = resp.url
                             first_response["data"] = data
+                            captured_pages.append((resp.url, data))
                     except Exception:
                         return
 
@@ -490,12 +735,35 @@ class DouyinCommentCrawler:
             first_data: dict = first_response["data"]
             api_total = int(first_data.get("total") or 0)
             api_url = first_response["url"]
+            consumed_cursors: set[int] = set()
+
+            def merge_page(data: dict) -> None:
+                for c in data.get("comments") or []:
+                    row = _normalize_comment(c)
+                    if row["comment_id"]:
+                        comments_map[row["comment_id"]] = row
+                    for reply in c.get("reply_comment") or []:
+                        reply_row = _normalize_comment(reply, parent_comment_id=row["comment_id"])
+                        if reply_row["comment_id"]:
+                            comments_map[reply_row["comment_id"]] = reply_row
+
+            # 1) 优先合并页面已返回的数据（接口监听结果）
+            for _, data in captured_pages:
+                try:
+                    consumed_cursors.add(int(data.get("cursor") or 0))
+                except Exception:
+                    pass
+                merge_page(data)
 
             cursor = 0
             has_more = 1
             guard = 0
             while has_more and guard < 50:
                 guard += 1
+                if cursor in consumed_cursors and guard > 1:
+                    has_more = 1
+                    cursor += 20
+                    continue
                 page_url = _build_next_url(api_url, cursor).replace("count=5", "count=20")
                 data = await page.evaluate(
                     """async (url) => {
@@ -505,18 +773,56 @@ class DouyinCommentCrawler:
                     }""",
                     page_url,
                 )
-                for c in data.get("comments") or []:
-                    row = _normalize_comment(c)
-                    if row["comment_id"]:
-                        comments_map[row["comment_id"]] = row
-                    for reply in c.get("reply_comment") or []:
-                        reply_row = _normalize_comment(reply, parent_comment_id=row["comment_id"])
-                        if reply_row["comment_id"]:
-                            comments_map[reply_row["comment_id"]] = reply_row
+                merge_page(data)
                 cursor = int(data.get("cursor") or cursor)
                 has_more = int(data.get("has_more") or 0)
                 if not data.get("comments"):
                     break
+
+            # 2) 对回复总数大于预览数量的评论，主动拉 reply 接口补齐
+            reply_api_url = _set_query(
+                api_url.replace(COMMENT_PATH, REPLY_COMMENT_PATH),
+                {"aweme_id": aweme_id, "item_id": aweme_id, "count": 20},
+            )
+            top_rows_snapshot = [row for row in comments_map.values() if not row.get("parent_comment_id")]
+            for top in top_rows_snapshot:
+                cid = top.get("comment_id")
+                if not cid:
+                    continue
+                need_total = int(top.get("reply_comment_total") or 0)
+                if need_total <= 0:
+                    continue
+                current_reply = sum(1 for row in comments_map.values() if row.get("parent_comment_id") == cid)
+                if current_reply >= need_total:
+                    continue
+                reply_cursor = 0
+                reply_guard = 0
+                while reply_guard < 50:
+                    reply_guard += 1
+                    url = _set_query(
+                        reply_api_url,
+                        {"comment_id": cid, "cursor": reply_cursor, "count": 20},
+                    )
+                    data = await page.evaluate(
+                        """async (url) => {
+                            const resp = await fetch(url, { credentials: 'include' });
+                            const text = await resp.text();
+                            return JSON.parse(text);
+                        }""",
+                        url,
+                    )
+                    rows = data.get("comments") or data.get("reply_comments") or []
+                    if not rows:
+                        break
+                    for reply in rows:
+                        reply_row = _normalize_comment(reply, parent_comment_id=cid)
+                        if reply_row["comment_id"]:
+                            comments_map[reply_row["comment_id"]] = reply_row
+                    current_reply = sum(1 for row in comments_map.values() if row.get("parent_comment_id") == cid)
+                    has_more_reply = int(data.get("has_more") or 0)
+                    if not has_more_reply or current_reply >= need_total:
+                        break
+                    reply_cursor = int(data.get("cursor") or (reply_cursor + 20))
 
             await context.close()
             await browser.close()

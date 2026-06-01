@@ -13,10 +13,10 @@ class XhsSessionStore(PlatformSessionStore):
         cookie_names = {c.get("name") for c in state.get("cookies", []) if isinstance(c, dict)}
         return "web_session" in cookie_names and bool(cookie_names & REQUIRED_LOGIN_COOKIES)
 
-    def login_status(self, tenant_id: str) -> dict:
-        result = super().login_status(tenant_id)
+    def login_status(self, tenant_id: str, account_id: str = "default") -> dict:
+        result = super().login_status(tenant_id, account_id=account_id)
         if result.get("status") in {"ready", "incomplete"}:
-            data = self.load(tenant_id) or {}
+            data = self.load(tenant_id, account_id) or {}
             cookies = data.get("cookies") or []
             cookie_names = {c.get("name") for c in cookies if isinstance(c, dict)}
             result["required_cookies_present"] = sorted(cookie_names & REQUIRED_LOGIN_COOKIES)

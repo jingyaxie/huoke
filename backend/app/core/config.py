@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     xhs_headless: bool = True
     xhs_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
 
+    huoshan_home_url: str = "https://www.huoshan.com"
+    huoshan_hot_url: str = "https://www.douyin.com/hot"
+    huoshan_headless: bool = True
+    huoshan_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+    huoshan_seed_user_ids: Optional[str] = None
+    huoshan_hot_mode: str = "seed_then_fallback"
+
+    kuaishou_home_url: str = "https://www.kuaishou.com"
+    kuaishou_headless: bool = True
+    kuaishou_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+
     antibot_enabled: bool = True
     antibot_stealth_enabled: bool = True
     antibot_require_login: bool = True
@@ -65,10 +76,32 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
 
+    agent_max_steps: int = 100
+    agent_default_provider: str = "openai"
+    agent_headless: bool = True
+    agent_vision_enabled: bool = True
+    agent_vision_model: Optional[str] = None
+    agent_max_history_messages: int = 40
+    agent_default_run_mode: str = "auto"
+    agent_checkpoints_enabled: bool = True
+    agent_checkpoint_max_count: int = 20
+    agent_subagent_max_steps: int = 100
+    agent_stream_enabled: bool = True
+    agent_compress_enabled: bool = True
+    agent_compress_threshold_messages: int = 30
+    agent_compress_keep_recent: int = 12
+    agent_dream_enabled: bool = True
+    agent_dream_auto: bool = True
+    agent_dream_use_llm: bool = False
+    agent_dream_inject_max: int = 5
+
     report_output_dir: Path = BASE_DIR / "reports"
 
     tenant_auth_enabled: bool = False
     tenant_auth_pepper: str = "change-me-in-production"
+    user_auth_pepper: str = "change-me-in-production"
+    jwt_secret: str = "change-me-jwt-secret-in-production"
+    jwt_expire_minutes: int = 60 * 24 * 7
     admin_api_secret: Optional[str] = None
     tenant_bootstrap_api_keys: Optional[str] = None
     storage_state_encryption_key: Optional[str] = None

@@ -1,0 +1,299 @@
+{
+  "skills": [
+    {
+      "id": "douyin-hot-list",
+      "name": "打开抖音热榜",
+      "description": "导航到抖音热榜页面并读取热点标题列表",
+      "type": "actions",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [],
+      "content": "",
+      "actions": [
+        {
+          "tool": "browser_goto",
+          "args": {
+            "url": "https://www.douyin.com/hot"
+          }
+        },
+        {
+          "tool": "browser_wait",
+          "args": {
+            "timeout_ms": 3000
+          }
+        },
+        {
+          "tool": "browser_get_text",
+          "args": {}
+        }
+      ],
+      "builtin_handler": null,
+      "created_at": "2026-06-01T05:38:00.917398+00:00",
+      "updated_at": "2026-06-01T05:38:00.917398+00:00"
+    },
+    {
+      "id": "douyin-search-keyword",
+      "name": "抖音关键词搜索",
+      "description": "在抖音网页版搜索指定关键词并查看搜索结果",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        }
+      ],
+      "content": "执行抖音关键词搜索任务：\n1. 若不在 douyin.com，先 browser_goto 到 https://www.douyin.com\n2. 找到搜索框（通常是 input 或 placeholder 含「搜索」），browser_fill 填入 {{keyword}}\n3. browser_press Enter\n4. browser_wait 等待结果加载\n5. browser_get_page_info 查看搜索结果\n6. 汇总前几条视频标题后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-01T05:38:00.917398+00:00",
+      "updated_at": "2026-06-01T05:38:00.917398+00:00"
+    },
+    {
+      "id": "crawl-hot",
+      "name": "抓取热榜入库",
+      "description": "调用后端爬虫抓取当前平台热榜数据并写入数据库",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取数量上限",
+          "required": false,
+          "default": 50
+        }
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "crawl_hot",
+      "created_at": "2026-06-01T05:38:00.917398+00:00",
+      "updated_at": "2026-06-01T05:38:00.917398+00:00"
+    },
+    {
+      "id": "check-login",
+      "name": "检查登录状态",
+      "description": "检查当前平台是否已登录",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "login_status",
+      "created_at": "2026-06-01T05:38:00.917398+00:00",
+      "updated_at": "2026-06-01T05:38:00.917398+00:00"
+    },
+    {
+      "id": "crawl-video-comments",
+      "name": "单个视频评论抓取",
+      "description": "抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "video_url",
+          "type": "string",
+          "description": "视频链接：火山分享链接 / item_id / douyin.com/video/...",
+          "required": true
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "是否显示浏览器窗口",
+          "required": false,
+          "default": false
+        }
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "crawl_video_comments",
+      "created_at": "2026-06-01T06:30:00.000000+00:00",
+      "updated_at": "2026-06-01T06:30:00.000000+00:00"
+    },
+    {
+      "id": "crawl-keyword-comments",
+      "name": "关键词批量评论抓取",
+      "description": "按关键词搜索视频并批量抓取前 N 个视频的全部评论",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取视频数量",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地区筛选，可选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "是否显示浏览器窗口",
+          "required": false,
+          "default": false
+        }
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "crawl_keyword_comments",
+      "created_at": "2026-06-01T06:30:00.000000+00:00",
+      "updated_at": "2026-06-01T06:30:00.000000+00:00"
+    },
+    {
+      "id": "search-videos",
+      "name": "关键词搜索视频列表",
+      "description": "按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "返回视频数量上限",
+          "required": false,
+          "default": 20
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "是否显示浏览器窗口",
+          "required": false,
+          "default": false
+        }
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "search_videos",
+      "created_at": "2026-06-01T08:00:00.000000+00:00",
+      "updated_at": "2026-06-01T08:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-reply-comment",
+      "name": "抖音回复评论",
+      "description": "在抖音视频页定位指定评论并发表回复（需已登录）",
+      "type": "instruction",
+      "enabled": true,
+      "disable_model_invocation": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "comment_hint",
+          "type": "string",
+          "description": "目标评论定位：用户名或评论内容片段",
+          "required": true
+        },
+        {
+          "name": "reply_text",
+          "type": "string",
+          "description": "回复内容",
+          "required": true
+        },
+        {
+          "name": "video_url",
+          "type": "string",
+          "description": "视频链接；已在视频页时可留空",
+          "required": false
+        }
+      ],
+      "content": "执行抖音视频评论回复任务。必须已登录，未登录则 task_failed。\n\n参数：\n- 视频链接：{{video_url}}（可空，表示使用当前页）\n- 目标评论：{{comment_hint}}（用户名或评论文字片段）\n- 回复内容：{{reply_text}}\n\n步骤：\n1. 若 {{video_url}} 非空且当前不在该视频页，browser_goto 到 {{video_url}}；否则 browser_get_page_info 确认在 douyin.com 视频页\n2. browser_wait 2-3 秒；若评论未展开，browser_click 评论入口：`[data-e2e=\"feed-comment-icon\"]`、`[data-e2e*=\"comment\"]` 或 `text=评论`\n3. browser_scroll direction=down 多次，直到页面文本中出现 {{comment_hint}}\n4. 在含 {{comment_hint}} 的评论行内 browser_click「回复」：`text=回复`\n5. browser_fill 回复框，依次尝试 `[data-e2e=\"comment-input\"]`、`textarea[placeholder*=\"评论\"]`，填入 {{reply_text}}\n6. browser_click 发送：`[data-e2e=\"comment-post\"]`、`text=发送`，或 browser_press Enter\n7. browser_wait 后 browser_get_text 确认出现 {{reply_text}}；成功 task_complete，否则 task_failed\n\n注意：一次只回复一条；遇到验证码/登录墙 task_failed；发送前核对目标评论无误。",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-01T07:00:00.000000+00:00",
+      "updated_at": "2026-06-01T07:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-follow-user",
+      "name": "抖音关注用户",
+      "description": "进入抖音用户主页并点击关注（支持从评论点头像或直达主页链接）",
+      "type": "instruction",
+      "enabled": true,
+      "disable_model_invocation": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "user_profile_url",
+          "type": "string",
+          "description": "用户主页链接 https://www.douyin.com/user/...",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "description": "当前页评论/视频中的用户名（无主页链接时使用）",
+          "required": false
+        }
+      ],
+      "content": "执行抖音关注用户任务。必须已登录。\n\n参数（至少填一项，优先 user_profile_url）：\n- 用户主页：{{user_profile_url}}\n- 用户名：{{username}}（从当前页点头像/昵称进入主页）\n\n进入主页：\nA) 若 {{user_profile_url}} 非空：browser_goto 到该链接\nB) 若仅有 {{username}}：browser_click 含该昵称的链接或头像（`a:has-text(\"{{username}}\")`、评论区内 img/avatar），等待 URL 含 /user/\nC) 两者都空：task_failed 缺少用户定位信息\n\n关注：\n1. browser_wait 2 秒，browser_get_page_info 确认在用户主页\n2. browser_get_text 若已有「已关注」「互相关注」，task_complete 说明已关注\n3. browser_click 关注按钮：`[data-e2e=\"user-follow-btn\"]`、`[data-e2e*=\"follow\"]`、`button:has-text(\"关注\")`（勿点「已关注」）\n4. browser_wait 后确认按钮变为「已关注」/「互相关注」，task_complete\n\n注意：单次只关注一人；遇到验证码 task_failed。",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-01T07:00:00.000000+00:00",
+      "updated_at": "2026-06-01T07:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-send-dm",
+      "name": "抖音发送私信",
+      "description": "进入抖音用户主页并发送私信（需已登录，可能受互关/隐私限制）",
+      "type": "instruction",
+      "enabled": true,
+      "disable_model_invocation": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "message",
+          "type": "string",
+          "description": "私信内容",
+          "required": true
+        },
+        {
+          "name": "user_profile_url",
+          "type": "string",
+          "description": "用户主页链接",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "description": "当前页用户名（无主页链接时使用）",
+          "required": false
+        }
+      ],
+      "content": "执行抖音发私信任务。必须已登录。\n\n参数：\n- 私信内容：{{message}}\n- 用户主页：{{user_profile_url}}（可空）\n- 用户名：{{username}}（可空，从当前页进入主页）\n\n进入主页（同 douyin-follow-user）：优先 browser_goto {{user_profile_url}}；否则 browser_click {{username}} 的头像/昵称进入 /user/ 页\n\n发私信：\n1. browser_click 私信入口：`[data-e2e=\"user-info-message-btn\"]`、`[data-e2e*=\"message\"]`、`button:has-text(\"私信\")`\n2. browser_wait 等待聊天面板出现（侧栏或 /im 页面）\n3. browser_fill 输入框：`[data-e2e=\"message-input\"]`、`textarea[placeholder*=\"消息\"]`、`div[contenteditable=\"true\"]`，填入 {{message}}\n4. browser_click 发送或 browser_press Enter\n5. browser_get_text 确认 {{message}} 出现在聊天记录，task_complete\n\n若提示无法私信、需互关或未开启私信，task_failed 并说明原因。",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-01T07:00:00.000000+00:00",
+      "updated_at": "2026-06-01T07:00:00.000000+00:00"
+    }
+  ]
+}

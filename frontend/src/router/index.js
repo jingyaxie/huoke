@@ -5,6 +5,7 @@ import TrendView from "../views/TrendView.vue";
 import ReportView from "../views/ReportView.vue";
 import CommentCrawlView from "../views/CommentCrawlView.vue";
 import AntibotView from "../views/AntibotView.vue";
+import AgentChatView from "../views/AgentChatView.vue";
 
 const routes = [
   { path: "/", redirect: "/videos" },
@@ -14,6 +15,7 @@ const routes = [
   { path: "/reports", name: "reports", component: ReportView },
   { path: "/comments", name: "comments", component: CommentCrawlView },
   { path: "/antibot", name: "antibot", component: AntibotView },
+  { path: "/agent", name: "agent", component: AgentChatView },
 ];
 
 const router = createRouter({
