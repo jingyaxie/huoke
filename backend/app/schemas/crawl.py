@@ -3,10 +3,15 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+from app.platforms.constants import DEFAULT_PLATFORM
+
+
 class CrawlItem(BaseModel):
+    platform: str = DEFAULT_PLATFORM
     rank: int
     title: str
     author_name: str | None = None
+    external_id: str | None = None
     douyin_video_id: str | None = None
     video_url: str | None = None
     cover_url: str | None = None
@@ -20,6 +25,7 @@ class CrawlItem(BaseModel):
 
 
 class CrawlResult(BaseModel):
+    platform: str = DEFAULT_PLATFORM
     snapshot_date: str
     total: int
     items: list[CrawlItem]

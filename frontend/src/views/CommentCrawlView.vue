@@ -101,6 +101,15 @@ import {
 } from "../api/douyin";
 
 const RESULTS_STORAGE_KEY = "douyin_comment_crawl_results_v1";
+
+function formatCrawlError(err, actionLabel) {
+  const detail = err?.response?.data?.detail;
+  const msg = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : err?.message || String(err);
+  if (err?.code === "ECONNABORTED" || /timeout/i.test(msg)) {
+    return `${actionLabel}超时：抓取耗时较长，请确认后端仍在运行；若 reports 已生成文件可手动下载。`;
+  }
+  return `${actionLabel}失败：${msg}`;
+}
 const results = ref([]);
 const loginDialogVisible = ref(false);
 const serverLoginUrl = ref("");
@@ -157,6 +166,8 @@ async function crawlSingle() {
       file_name: fileName,
     });
     ElMessage.success("抓取完成");
+  } catch (err) {
+    ElMessage.error(formatCrawlError(err, "单视频抓取"));
   } finally {
     single.loading = false;
   }
@@ -190,6 +201,8 @@ async function crawlBatch() {
       });
     });
     ElMessage.success(`批量抓取完成：成功抓取 ${data.items.length} 条视频评论`);
+  } catch (err) {
+    ElMessage.error(formatCrawlError(err, "关键词批量抓取"));
   } finally {
     batch.loading = false;
   }

@@ -10,6 +10,8 @@ class SnapshotRepository(BaseRepository):
     def _find_by_date_rank(self, snapshot_date: date, rank: int) -> HotRankSnapshot | None:
         return self.session.scalar(
             select(HotRankSnapshot)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == snapshot_date)
             .where(HotRankSnapshot.rank == rank)
             .limit(1)
@@ -18,6 +20,8 @@ class SnapshotRepository(BaseRepository):
     def _find_by_date_video(self, snapshot_date: date, video_id: int) -> HotRankSnapshot | None:
         return self.session.scalar(
             select(HotRankSnapshot)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == snapshot_date)
             .where(HotRankSnapshot.video_id == video_id)
             .limit(1)
@@ -36,6 +40,8 @@ class SnapshotRepository(BaseRepository):
         snapshot = self._find_by_date_video(snapshot_date, video_id) or self._find_by_date_rank(snapshot_date, rank)
         if snapshot is None:
             snapshot = HotRankSnapshot(
+                tenant_id=self.tenant_id,
+                platform=self.platform,
                 snapshot_date=snapshot_date,
                 rank=rank,
                 video_id=video_id,
@@ -56,6 +62,8 @@ class SnapshotRepository(BaseRepository):
     def get_previous_rank(self, *, video_id: int, snapshot_date: date) -> int | None:
         stmt = (
             select(HotRankSnapshot.rank)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.video_id == video_id)
             .where(HotRankSnapshot.snapshot_date < snapshot_date)
             .order_by(HotRankSnapshot.snapshot_date.desc())
@@ -66,6 +74,8 @@ class SnapshotRepository(BaseRepository):
     def list_by_date(self, snapshot_date: date, limit: int = 100):
         return self.session.scalars(
             select(HotRankSnapshot)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == snapshot_date)
             .order_by(HotRankSnapshot.rank.asc())
             .limit(limit)
@@ -78,6 +88,8 @@ class SnapshotRepository(BaseRepository):
                 HotRankSnapshot.rank,
                 HotRankSnapshot.rank_change,
             )
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.video_id == video_id)
             .order_by(HotRankSnapshot.snapshot_date.asc())
         )
@@ -89,6 +101,8 @@ class SnapshotRepository(BaseRepository):
                 func.date(HotRankSnapshot.snapshot_date).label("day"),
                 func.count(HotRankSnapshot.id).label("count"),
             )
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .group_by("day")
             .order_by(func.date(HotRankSnapshot.snapshot_date).asc())
             .limit(limit)

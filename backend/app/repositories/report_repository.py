@@ -8,7 +8,13 @@ from app.repositories.base import BaseRepository
 
 class ReportRepository(BaseRepository):
     def get_by_date(self, report_date: date) -> DailyReport | None:
-        return self.session.scalar(select(DailyReport).where(DailyReport.report_date == report_date))
+        return self.session.scalar(
+            select(DailyReport).where(
+                DailyReport.tenant_id == self.tenant_id,
+                DailyReport.platform == self.platform,
+                DailyReport.report_date == report_date,
+            )
+        )
 
     def upsert(
         self,
@@ -25,6 +31,8 @@ class ReportRepository(BaseRepository):
         report = self.get_by_date(report_date)
         if report is None:
             report = DailyReport(
+                tenant_id=self.tenant_id,
+                platform=self.platform,
                 report_date=report_date,
                 provider=provider,
                 model=model,
@@ -47,5 +55,9 @@ class ReportRepository(BaseRepository):
         return report
 
     def list_recent(self, limit: int = 30):
-        return self.session.scalars(select(DailyReport).order_by(DailyReport.report_date.desc()).limit(limit)).all()
-
+        return self.session.scalars(
+            select(DailyReport)
+            .where(DailyReport.tenant_id == self.tenant_id, DailyReport.platform == self.platform)
+            .order_by(DailyReport.report_date.desc())
+            .limit(limit)
+        ).all()

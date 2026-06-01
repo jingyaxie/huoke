@@ -4,6 +4,7 @@ import HotAuthorView from "../views/HotAuthorView.vue";
 import TrendView from "../views/TrendView.vue";
 import ReportView from "../views/ReportView.vue";
 import CommentCrawlView from "../views/CommentCrawlView.vue";
+import AntibotView from "../views/AntibotView.vue";
 
 const routes = [
   { path: "/", redirect: "/videos" },
@@ -12,6 +13,7 @@ const routes = [
   { path: "/trend", name: "trend", component: TrendView },
   { path: "/reports", name: "reports", component: ReportView },
   { path: "/comments", name: "comments", component: CommentCrawlView },
+  { path: "/antibot", name: "antibot", component: AntibotView },
 ];
 
 const router = createRouter({

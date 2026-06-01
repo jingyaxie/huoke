@@ -7,12 +7,18 @@ from app.models.hot_rank_snapshot import HotRankSnapshot
 from app.models.author import Author
 from app.models.video import Video
 from app.repositories.snapshot_repository import SnapshotRepository
+from app.repositories.video_repository import VideoRepository
 
 
 class TrendService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant_id: str = "default", platform: str | None = None) -> None:
+        from app.core.config import get_settings
+
         self.session = session
-        self.snapshot_repo = SnapshotRepository(session)
+        self.tenant_id = tenant_id
+        self.platform = platform or get_settings().default_platform
+        self.snapshot_repo = SnapshotRepository(session, tenant_id, self.platform)
+        self.video_repo = VideoRepository(session, tenant_id, self.platform)
 
     def list_hot_videos(self, snapshot_date: date | None = None, limit: int = 100):
         if snapshot_date is None:
@@ -20,6 +26,8 @@ class TrendService:
         stmt = (
             select(HotRankSnapshot)
             .options(joinedload(HotRankSnapshot.video).joinedload(Video.author))
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == snapshot_date)
             .order_by(HotRankSnapshot.rank.asc())
             .limit(limit)
@@ -41,6 +49,10 @@ class TrendService:
             )
             .join(Video, Video.id == HotRankSnapshot.video_id)
             .join(Author, Author.id == Video.author_id)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
+            .where(Video.platform == self.platform)
+            .where(Author.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == snapshot_date)
             .where(not_(Author.name.op("REGEXP")(invalid_author_pattern)))
             .group_by(Author.id, Author.name)
@@ -50,9 +62,13 @@ class TrendService:
         return self.session.execute(stmt).all()
 
     def video_trend(self, video_id: int, days: int = 30):
+        if self.video_repo.get_by_id(video_id) is None:
+            return []
         since = date.today() - timedelta(days=days)
         stmt = (
             select(HotRankSnapshot.snapshot_date, HotRankSnapshot.rank, HotRankSnapshot.rank_change)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
             .where(HotRankSnapshot.video_id == video_id)
             .where(HotRankSnapshot.snapshot_date >= since)
             .order_by(HotRankSnapshot.snapshot_date.asc())
@@ -61,19 +77,33 @@ class TrendService:
 
     def overview(self, days: int = 7) -> dict:
         since = date.today() - timedelta(days=days)
-        total_videos = self.session.scalar(select(func.count(Video.id))) or 0
+        total_videos = self.session.scalar(
+            select(func.count(Video.id)).where(
+                Video.tenant_id == self.tenant_id,
+                Video.platform == self.platform,
+            )
+        ) or 0
         total_snapshots = self.session.scalar(
-            select(func.count(HotRankSnapshot.id)).where(HotRankSnapshot.snapshot_date >= since)
+            select(func.count(HotRankSnapshot.id))
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
+            .where(HotRankSnapshot.snapshot_date >= since)
         ) or 0
         latest_date = self._latest_snapshot_date()
         top_videos = self.session.scalar(
             select(Video.title)
             .join(HotRankSnapshot, HotRankSnapshot.video_id == Video.id)
+            .where(HotRankSnapshot.tenant_id == self.tenant_id)
+            .where(HotRankSnapshot.platform == self.platform)
+            .where(Video.tenant_id == self.tenant_id)
+            .where(Video.platform == self.platform)
             .where(HotRankSnapshot.snapshot_date == latest_date)
             .order_by(HotRankSnapshot.rank.asc())
             .limit(1)
         )
         return {
+            "platform": self.platform,
+            "tenant_id": self.tenant_id,
             "total_videos": total_videos,
             "total_snapshots": total_snapshots,
             "latest_snapshot_date": latest_date.isoformat(),
@@ -81,5 +111,10 @@ class TrendService:
         }
 
     def _latest_snapshot_date(self) -> date:
-        latest = self.session.scalar(select(func.max(HotRankSnapshot.snapshot_date)))
+        latest = self.session.scalar(
+            select(func.max(HotRankSnapshot.snapshot_date)).where(
+                HotRankSnapshot.tenant_id == self.tenant_id,
+                HotRankSnapshot.platform == self.platform,
+            )
+        )
         return latest or date.today()

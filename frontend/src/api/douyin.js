@@ -1,4 +1,10 @@
-import http from "./http";
+import http, { getTenantId, setTenantId } from "./http";
+
+export { getTenantId, setTenantId };
+
+export function fetchPlatforms() {
+  return http.get("/platforms").then((res) => res.data);
+}
 
 export function fetchOverview(days = 7) {
   return http.get("/overview", { params: { days } }).then((res) => res.data);
@@ -9,7 +15,7 @@ export function triggerCrawl(limit = 100) {
 }
 
 export function triggerLogin(showBrowser = true) {
-  return http.post("/douyin/login", { show_browser: showBrowser }).then((res) => res.data);
+  return http.post("/douyin/login", { show_browser: showBrowser, tenant_id: getTenantId() }).then((res) => res.data);
 }
 
 export function fetchLoginStatus() {
@@ -24,8 +30,21 @@ export function triggerServerLogin() {
   return http.post("/douyin/server-login").then((res) => res.data);
 }
 
+export function uploadStorageState(storageState) {
+  const tenantId = getTenantId();
+  return http
+    .put(`/tenants/${encodeURIComponent(tenantId)}/douyin/storage-state`, { storage_state: storageState })
+    .then((res) => res.data);
+}
+
 export function crawlVideoComments(videoUrl, showBrowser = false) {
-  return http.post("/comments/video", { video_url: videoUrl, show_browser: showBrowser }).then((res) => res.data);
+  return http
+    .post("/comments/video", {
+      video_url: videoUrl,
+      show_browser: showBrowser,
+      tenant_id: getTenantId(),
+    })
+    .then((res) => res.data);
 }
 
 export function crawlKeywordComments(keyword, limit = 3, showBrowser = false, days = 3, region = "") {
@@ -36,6 +55,7 @@ export function crawlKeywordComments(keyword, limit = 3, showBrowser = false, da
       show_browser: showBrowser,
       days,
       region: region || null,
+      tenant_id: getTenantId(),
     })
     .then((res) => res.data);
 }

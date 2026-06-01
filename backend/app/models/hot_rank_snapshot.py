@@ -10,11 +10,15 @@ from app.db.base import Base
 class HotRankSnapshot(Base):
     __tablename__ = "hot_rank_snapshots"
     __table_args__ = (
-        UniqueConstraint("snapshot_date", "rank", name="uq_snapshot_date_rank"),
-        UniqueConstraint("snapshot_date", "video_id", name="uq_snapshot_date_video"),
+        UniqueConstraint("tenant_id", "platform", "snapshot_date", "rank", name="uq_tenant_platform_snapshot_rank"),
+        UniqueConstraint(
+            "tenant_id", "platform", "snapshot_date", "video_id", name="uq_tenant_platform_snapshot_video"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="default")
+    platform: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="douyin")
     snapshot_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
     video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), index=True, nullable=False)

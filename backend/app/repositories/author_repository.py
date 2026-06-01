@@ -8,10 +8,22 @@ class AuthorRepository(BaseRepository):
     def get_by_douyin_user_id(self, douyin_user_id: str | None) -> Author | None:
         if not douyin_user_id:
             return None
-        return self.session.scalar(select(Author).where(Author.douyin_user_id == douyin_user_id))
+        return self.session.scalar(
+            select(Author).where(
+                Author.tenant_id == self.tenant_id,
+                Author.platform == self.platform,
+                Author.douyin_user_id == douyin_user_id,
+            )
+        )
 
     def get_by_name(self, name: str) -> Author | None:
-        return self.session.scalar(select(Author).where(Author.name == name))
+        return self.session.scalar(
+            select(Author).where(
+                Author.tenant_id == self.tenant_id,
+                Author.platform == self.platform,
+                Author.name == name,
+            )
+        )
 
     def upsert(
         self,
@@ -24,6 +36,8 @@ class AuthorRepository(BaseRepository):
         author = self.get_by_douyin_user_id(douyin_user_id) or (self.get_by_name(name) if name else None)
         if author is None:
             author = Author(
+                tenant_id=self.tenant_id,
+                platform=self.platform,
                 douyin_user_id=douyin_user_id,
                 name=name,
                 avatar_url=avatar_url,
@@ -37,4 +51,3 @@ class AuthorRepository(BaseRepository):
             author.profile_url = profile_url or author.profile_url
         self.session.flush()
         return author
-

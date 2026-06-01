@@ -1,8 +1,11 @@
 from contextlib import asynccontextmanager
+import json
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.antibot_routes import router as antibot_router
+from app.api.platform_routes import router as platform_router
 from app.api.v1_routes import router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -10,7 +13,9 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.crawl_service import CrawlService
+from app.services.playwright_pool import PlaywrightPool
 from app.services.scheduler import build_scheduler
+from app.services.tenant_auth_service import TenantAuthService
 
 
 settings = get_settings()
@@ -20,10 +25,24 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     configure_logging()
     Base.metadata.create_all(bind=engine)
+    session = SessionLocal()
+    try:
+        if settings.tenant_bootstrap_api_keys:
+            auth = TenantAuthService(session, settings)
+            for tenant_id, api_key in json.loads(settings.tenant_bootstrap_api_keys).items():
+                auth.ensure_api_key(tenant_id, api_key)
+            session.commit()
+    finally:
+        session.close()
+
     async def scheduled_crawl() -> None:
         session = SessionLocal()
         try:
-            await CrawlService(session).crawl_hot(limit=100)
+            await CrawlService(
+                session,
+                tenant_id=settings.default_tenant_id,
+                platform=settings.default_platform,
+            ).crawl_hot(limit=100)
         finally:
             session.close()
 
@@ -32,6 +51,7 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     yield
     scheduler.shutdown(wait=False)
+    await PlaywrightPool.get().shutdown()
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
@@ -43,3 +63,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(platform_router)
+app.include_router(antibot_router)

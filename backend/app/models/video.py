@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -9,9 +9,15 @@ from app.db.base import Base
 
 class Video(Base):
     __tablename__ = "videos"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "platform", "douyin_video_id", name="uq_videos_tenant_platform_video"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    douyin_video_id: Mapped[Optional[str]] = mapped_column(String(128), unique=True, index=True, nullable=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="default")
+    platform: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="douyin")
+    external_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    douyin_video_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(500))
     author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("authors.id"), nullable=True, index=True)
     video_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

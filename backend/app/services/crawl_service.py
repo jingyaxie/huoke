@@ -4,22 +4,31 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.platforms.constants import DEFAULT_PLATFORM
+from app.platforms.registry import get_hot_crawler
 from app.repositories.author_repository import AuthorRepository
 from app.repositories.snapshot_repository import SnapshotRepository
 from app.repositories.video_repository import VideoRepository
 from app.schemas.crawl import CrawlItem, CrawlResult
-from app.services.douyin_crawler import DouyinCrawler
 
 
 class CrawlService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        tenant_id: str | None = None,
+        platform: str | None = None,
+        settings: Settings | None = None,
+    ) -> None:
         self.session = session
-        self.settings = get_settings()
-        self.author_repo = AuthorRepository(session)
-        self.video_repo = VideoRepository(session)
-        self.snapshot_repo = SnapshotRepository(session)
-        self.crawler = DouyinCrawler(self.settings)
+        self.settings = settings or get_settings()
+        self.tenant_id = tenant_id or self.settings.default_tenant_id
+        self.platform = platform or self.settings.default_platform
+        self.author_repo = AuthorRepository(session, self.tenant_id, self.platform)
+        self.video_repo = VideoRepository(session, self.tenant_id, self.platform)
+        self.snapshot_repo = SnapshotRepository(session, self.tenant_id, self.platform)
+        self.crawler = get_hot_crawler(self.settings, self.platform, self.tenant_id)
 
     async def crawl_hot(self, limit: int = 100, snapshot_date: date | None = None) -> CrawlResult:
         snapshot_date = snapshot_date or date.today()
@@ -32,10 +41,12 @@ class CrawlService:
                 avatar_url=item.author_avatar_url,
                 profile_url=item.author_profile_url,
             )
+            content_id = item.external_id or item.douyin_video_id
             video = self.video_repo.upsert(
                 title=item.title,
                 author_id=author.id if author else None,
-                douyin_video_id=item.douyin_video_id,
+                external_id=content_id,
+                douyin_video_id=content_id,
                 video_url=item.video_url,
                 cover_url=item.cover_url,
                 like_count=item.like_count,
@@ -56,5 +67,9 @@ class CrawlService:
             )
             results.append(item)
         self.session.commit()
-        return CrawlResult(snapshot_date=snapshot_date.isoformat(), total=len(results), items=results)
-
+        return CrawlResult(
+            platform=self.platform,
+            snapshot_date=snapshot_date.isoformat(),
+            total=len(results),
+            items=results,
+        )

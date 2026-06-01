@@ -30,10 +30,30 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:5173"
 
     douyin_hot_url: str = "https://www.douyin.com/hot"
+    default_tenant_id: str = "default"
+    default_platform: str = "douyin"
+    storage_root: Path = BASE_DIR / "storage"
+    douyin_tenants_dir: Path = BASE_DIR / "storage" / "douyin" / "tenants"
     douyin_storage_state_path: Path = BASE_DIR / "storage" / "douyin" / "storage_state.json"
     douyin_profile_dir: Path = BASE_DIR / "storage" / "douyin" / "profile"
     douyin_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
     douyin_headless: bool = True
+
+    xhs_home_url: str = "https://www.xiaohongshu.com"
+    xhs_explore_url: str = "https://www.xiaohongshu.com/explore"
+    xhs_headless: bool = True
+    xhs_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+
+    antibot_enabled: bool = True
+    antibot_stealth_enabled: bool = True
+    antibot_require_login: bool = True
+    antibot_delay_min_ms: float = 2000
+    antibot_delay_max_ms: float = 6000
+    antibot_user_agent: Optional[str] = None
+    antibot_viewport_width: int = 1440
+    antibot_viewport_height: int = 1200
+    antibot_locale: str = "zh-CN"
+
     crawl_hour: int = 8
     crawl_minute: int = 0
 
@@ -47,10 +67,18 @@ class Settings(BaseSettings):
 
     report_output_dir: Path = BASE_DIR / "reports"
 
+    tenant_auth_enabled: bool = False
+    tenant_auth_pepper: str = "change-me-in-production"
+    admin_api_secret: Optional[str] = None
+    tenant_bootstrap_api_keys: Optional[str] = None
+    storage_state_encryption_key: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    settings.storage_root.mkdir(parents=True, exist_ok=True)
+    settings.douyin_tenants_dir.mkdir(parents=True, exist_ok=True)
     settings.douyin_storage_state_path.parent.mkdir(parents=True, exist_ok=True)
     settings.douyin_profile_dir.mkdir(parents=True, exist_ok=True)
     settings.report_output_dir.mkdir(parents=True, exist_ok=True)

@@ -43,12 +43,14 @@ REPORT_TEMPLATE = Template(
 
 
 class ReportService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, tenant_id: str = "default", platform: str | None = None) -> None:
         self.session = session
+        self.tenant_id = tenant_id
         self.settings = get_settings()
-        self.report_repo = ReportRepository(session)
-        self.video_repo = VideoRepository(session)
-        self.snapshot_repo = SnapshotRepository(session)
+        self.platform = platform or self.settings.default_platform
+        self.report_repo = ReportRepository(session, tenant_id, self.platform)
+        self.video_repo = VideoRepository(session, tenant_id, self.platform)
+        self.snapshot_repo = SnapshotRepository(session, tenant_id, self.platform)
         self.ai_factory = AIClientFactory(self.settings)
         self.pdf_service = PdfService()
 
@@ -121,7 +123,10 @@ class ReportService:
     async def generate_report(self, report_date: date, provider: str = "template") -> tuple[str, str | None]:
         title, markdown, summary, model = await self.generate_markdown(report_date, provider=provider)
         html = self.build_html(title, markdown, summary, provider, model, report_date)
-        pdf_path = self.settings.report_output_dir / f"hot_report_{report_date.isoformat()}.pdf"
+        pdf_path = (
+            self.settings.report_output_dir
+            / f"hot_report_{self.platform}_{self.tenant_id}_{report_date.isoformat()}.pdf"
+        )
         await self.pdf_service.html_to_pdf(html, pdf_path)
         repo = self.report_repo
         report = repo.upsert(

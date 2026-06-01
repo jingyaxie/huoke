@@ -1,14 +1,18 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Any, Optional
 
 
 class VideoCommentCrawlRequest(BaseModel):
     video_url: str
     show_browser: bool = False
+    tenant_id: Optional[str] = None
+    platform: Optional[str] = None
 
 
 class DouyinLoginRequest(BaseModel):
     show_browser: bool = True
+    tenant_id: Optional[str] = None
+    platform: Optional[str] = None
 
 
 class KeywordCommentCrawlRequest(BaseModel):
@@ -17,6 +21,12 @@ class KeywordCommentCrawlRequest(BaseModel):
     show_browser: bool = False
     days: int = Field(default=3, ge=1, le=30)
     region: Optional[str] = None
+    tenant_id: Optional[str] = None
+    platform: Optional[str] = None
+
+
+class UploadStorageStateRequest(BaseModel):
+    storage_state: dict[str, Any]
 
 
 class CommentCrawlResult(BaseModel):
