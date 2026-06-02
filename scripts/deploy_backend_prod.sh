@@ -22,11 +22,13 @@ usage() {
 环境变量（兼容旧用法）:
   SKIP_BUILD=1    等同 --fast
   SKIP_BUILD=0    等同 --full
+  BUILD_FRONTEND=1  额外构建并重启 frontend_prod（仅前端镜像，不触发 backend build）
 
 示例:
   ./scripts/deploy_backend_prod.sh              # 自动
   ./scripts/deploy_backend_prod.sh --fast       # 只改 Python/Vue 时用
   ./scripts/deploy_backend_prod.sh --full       # 改了依赖或 Dockerfile 时用
+  BUILD_FRONTEND=1 ./scripts/deploy_backend_prod.sh --fast  # 前后端都改时用
 EOF
 }
 
@@ -133,12 +135,16 @@ for i in $(seq 1 45); do
 done
 
 if [ "$BUILD_FRONTEND" = "1" ]; then
-  echo "--- docker build frontend_prod ---"
-  docker compose -p "$PROD_PROJECT_NAME" --profile prod up -d --build frontend_prod
+  echo "--- docker build frontend_prod（仅前端，不重建 backend）---"
+  docker compose -p "$PROD_PROJECT_NAME" --profile prod build frontend_prod
+  docker compose -p "$PROD_PROJECT_NAME" --profile prod up -d --no-deps frontend_prod
 fi
 
 echo "--- containers ---"
 docker compose -p "$PROD_PROJECT_NAME" ps backend
+if [ "$BUILD_FRONTEND" = "1" ]; then
+  docker compose -p "$PROD_PROJECT_NAME" --profile prod ps frontend_prod
+fi
 
 echo "--- health ---"
 if [ "$ok" != "1" ]; then
