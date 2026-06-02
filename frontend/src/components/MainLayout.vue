@@ -22,6 +22,7 @@
         />
       </div>
       <el-menu :default-active="activePath" router>
+        <el-menu-item index="/login">登录</el-menu-item>
         <el-menu-item index="/videos">热门视频</el-menu-item>
         <el-menu-item index="/authors">热门作者</el-menu-item>
         <el-menu-item index="/trend">趋势分析</el-menu-item>

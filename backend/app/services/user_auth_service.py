@@ -116,6 +116,74 @@ class UserAuthService:
         self.session.flush()
         return user, tenant
 
+    def provision_bridge_user(self, payload: RegisterRequest) -> tuple[User, Tenant]:
+        """为外部系统联动开户：租户已存在时追加成员，否则创建租户+owner。"""
+        username = payload.username.strip()
+        tenant_id = normalize_tenant_id(payload.tenant_id or username)
+        password_hash = self.hash_password(payload.password, self.settings.user_auth_pepper)
+        now = datetime.utcnow()
+
+        existing_user = self.get_user_by_username(username)
+        tenant = self.get_tenant(tenant_id)
+
+        if existing_user is not None:
+            if existing_user.tenant_id != tenant_id:
+                raise UserAuthError("用户名已绑定其他租户")
+            existing_user.password_hash = password_hash
+            existing_user.display_name = (payload.display_name or existing_user.display_name or username).strip()
+            existing_user.is_active = True
+            existing_user.updated_at = now
+            if tenant is None:
+                raise UserAuthError("所属租户不存在")
+            if not tenant.is_active:
+                raise UserAuthError("所属租户不可用")
+            self.session.flush()
+            return existing_user, tenant
+
+        if tenant is not None:
+            if not tenant.is_active:
+                raise UserAuthError("所属租户不可用")
+            user = User(
+                username=username,
+                email=(payload.email or "").strip() or None,
+                password_hash=password_hash,
+                tenant_id=tenant_id,
+                role="member",
+                display_name=(payload.display_name or username).strip(),
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(user)
+            self.session.flush()
+            return user, tenant
+
+        tenant = Tenant(
+            id=tenant_id,
+            name=(payload.tenant_name or payload.display_name or username).strip() or tenant_id,
+            owner_user_id=None,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        user = User(
+            username=username,
+            email=(payload.email or "").strip() or None,
+            password_hash=password_hash,
+            tenant_id=tenant_id,
+            role="owner",
+            display_name=(payload.display_name or username).strip(),
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(tenant)
+        self.session.add(user)
+        self.session.flush()
+        tenant.owner_user_id = user.id
+        self.session.flush()
+        return user, tenant
+
     def login(self, username: str, password: str) -> User:
         user = self.get_user_by_username(username.strip())
         if user is None or not user.is_active:

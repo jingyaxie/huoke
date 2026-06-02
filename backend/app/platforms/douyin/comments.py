@@ -702,7 +702,12 @@ class DouyinCommentCrawler:
                                 """async (url) => {
                                     const resp = await fetch(url, { credentials: 'include' });
                                     const text = await resp.text();
-                                    return JSON.parse(text);
+                                    if (!text) return {};
+                                    try {
+                                        return JSON.parse(text);
+                                    } catch {
+                                        return {};
+                                    }
                                 }""",
                                 resource_url,
                             )
@@ -769,10 +774,17 @@ class DouyinCommentCrawler:
                     """async (url) => {
                         const resp = await fetch(url, { credentials: 'include' });
                         const text = await resp.text();
-                        return JSON.parse(text);
+                        if (!text) return {};
+                        try {
+                            return JSON.parse(text);
+                        } catch {
+                            return {};
+                        }
                     }""",
                     page_url,
                 )
+                if not isinstance(data, dict):
+                    data = {}
                 merge_page(data)
                 cursor = int(data.get("cursor") or cursor)
                 has_more = int(data.get("has_more") or 0)
@@ -807,10 +819,17 @@ class DouyinCommentCrawler:
                         """async (url) => {
                             const resp = await fetch(url, { credentials: 'include' });
                             const text = await resp.text();
-                            return JSON.parse(text);
+                            if (!text) return {};
+                            try {
+                                return JSON.parse(text);
+                            } catch {
+                                return {};
+                            }
                         }""",
                         url,
                     )
+                    if not isinstance(data, dict):
+                        data = {}
                     rows = data.get("comments") or data.get("reply_comments") or []
                     if not rows:
                         break

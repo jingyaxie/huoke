@@ -38,8 +38,14 @@ start_vnc() {
   fi
 
   export DISPLAY=:99
+  mkdir -p /root/.fluxbox
+  if [ -f /app/scripts/fluxbox/init ]; then
+    cp /app/scripts/fluxbox/init /root/.fluxbox/init
+  fi
+  # 避免默认 init 调用 fbsetbg 弹出 xmessage 挡住 VNC 登录窗口
   fluxbox -display :99 >/tmp/fluxbox.log 2>&1 &
   sleep 1
+  pkill -x xmessage 2>/dev/null || true
 
   echo "[vnc] starting x11vnc on :5900..."
   x11vnc -display :99 -nopw -forever -shared -listen 0.0.0.0 -xkb -rfbport 5900 \

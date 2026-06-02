@@ -141,14 +141,24 @@ class PlatformAccountStore:
         return bindings
 
     async def start_server_login(self, tenant_id: str, platform: str, account_id: str) -> dict:
+        from app.platforms.interactive_login import restart_interactive_login_for_platform
+
         platform = platform.strip().lower()
         if platform not in BINDABLE_PLATFORMS:
             raise ValueError(f"不支持绑定的平台: {platform}")
         account_id = normalize_account_id(account_id)
         if self.get_account(tenant_id, account_id) is None:
             raise KeyError(account_id)
+        stopped = await restart_interactive_login_for_platform(tenant_id, account_id, platform)
         crawler = get_hot_crawler(self.settings, platform, tenant_id, account_id=account_id)
         result = await crawler.start_interactive_login_session()
+        if stopped:
+            labels = ", ".join(stopped)
+            result = {
+                **result,
+                "stopped_platforms": stopped,
+                "message": f"已关闭 {labels} 的旧窗口；{result.get('message', '')}".strip(),
+            }
         store = get_session_store(self.settings, platform)
         return {
             **result,

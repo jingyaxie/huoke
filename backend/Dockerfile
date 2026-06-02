@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     novnc \
     websockify \
     fluxbox \
+    feh \
     x11-utils \
     libglib2.0-0t64 \
     libcairo2 \
@@ -49,7 +50,9 @@ RUN playwright install chromium
 FROM backend-base AS backend-app
 
 COPY . /app
-RUN chmod +x /app/scripts/docker-entrypoint.sh /app/scripts/install-cjk-fonts.sh
+RUN chmod +x /app/scripts/docker-entrypoint.sh /app/scripts/install-cjk-fonts.sh \
+    && mkdir -p /root/.fluxbox \
+    && cp /app/scripts/fluxbox/init /root/.fluxbox/init
 
 EXPOSE 8000
 EXPOSE 6080

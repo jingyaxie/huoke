@@ -73,7 +73,7 @@ export function resolveVncUrl(backendUrl = "") {
   if (!backendUrl) return proxyUrl;
   try {
     const u = new URL(backendUrl, origin || "http://localhost");
-    if (u.port === "6080" || u.pathname.includes("vnc.html")) {
+    if (u.port === "6080" || u.port === "16080" || u.pathname.includes("vnc.html")) {
       return proxyUrl;
     }
   } catch {

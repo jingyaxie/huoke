@@ -6,6 +6,7 @@ import ReportView from "../views/ReportView.vue";
 import CommentCrawlView from "../views/CommentCrawlView.vue";
 import AntibotView from "../views/AntibotView.vue";
 import AgentChatView from "../views/AgentChatView.vue";
+import LoginView from "../views/LoginView.vue";
 
 const routes = [
   { path: "/", redirect: "/videos" },
@@ -14,6 +15,7 @@ const routes = [
   { path: "/trend", name: "trend", component: TrendView },
   { path: "/reports", name: "reports", component: ReportView },
   { path: "/comments", name: "comments", component: CommentCrawlView },
+  { path: "/login", name: "login", component: LoginView },
   { path: "/antibot", name: "antibot", component: AntibotView },
   { path: "/agent", name: "agent", component: AgentChatView },
 ];

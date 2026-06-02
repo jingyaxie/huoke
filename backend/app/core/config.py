@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     user_auth_pepper: str = "change-me-in-production"
     jwt_secret: str = "change-me-jwt-secret-in-production"
     jwt_expire_minutes: int = 60 * 24 * 7
+    huoke_bridge_secret: Optional[str] = None
     admin_api_secret: Optional[str] = None
     tenant_bootstrap_api_keys: Optional[str] = None
     storage_state_encryption_key: Optional[str] = None
