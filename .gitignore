@@ -13,3 +13,6 @@ backend/reports/
 # Frontend
 node_modules/
 frontend/dist/assets/*.map
+
+# Deploy state (local only)
+scripts/.deploy-state

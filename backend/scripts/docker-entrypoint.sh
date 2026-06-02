@@ -95,6 +95,8 @@ import sys
 
 if importlib.util.find_spec("jwt") is None:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "PyJWT==2.10.1"])
+if importlib.util.find_spec("multipart") is None:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-multipart>=0.0.9"])
 PY
 
 start_vnc

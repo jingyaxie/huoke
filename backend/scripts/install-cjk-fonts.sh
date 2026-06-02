@@ -5,7 +5,14 @@ set -e
 FONT_DIR="/usr/share/fonts/truetype/wqy"
 MARKER="$FONT_DIR/.installed"
 
-if [ -f "$MARKER" ] && [ -f "$FONT_DIR/wqy-microhei.ttc" ]; then
+if [ -f "$FONT_DIR/wqy-microhei.ttc" ]; then
+  if [ ! -f "$MARKER" ]; then
+    date > "$MARKER" 2>/dev/null || true
+  fi
+  exit 0
+fi
+
+if [ -f "$MARKER" ]; then
   exit 0
 fi
 

@@ -172,16 +172,23 @@ docker compose --profile prod up -d --build frontend_prod
 cp .env.deploy.example .env.deploy.local
 # 填写 PROD_SSH_HOST / PROD_SSH_USER / PROD_SSH_PASSWORD
 
-# 发布（仅操作当前项目 compose 名称，不影响其他项目）
+# 发布（默认自动：仅改业务代码时跳过 docker build，约 1–3 分钟）
 ./scripts/deploy_backend_prod.sh
+
+# 或显式选择模式
+./scripts/deploy_fast.sh    # 快速：上传 + 重启，不装 apt/pip/playwright
+./scripts/deploy_full.sh    # 全量：重建镜像（改 Dockerfile/requirements 后）
 ```
 
-可选参数：
+发布模式说明：
 
-```bash
-# 跳过远端 build，仅重启 backend（前提：镜像已存在）
-SKIP_BUILD=1 ./scripts/deploy_backend_prod.sh
-```
+| 命令 | 何时用 | 耗时 |
+|------|--------|------|
+| `deploy_backend_prod.sh`（默认 auto） | 日常发版；自动检测 `Dockerfile`/`requirements.txt` 等是否变更 | 通常快 |
+| `deploy_fast.sh` / `--fast` | 确定只改了 `backend/app`、前端源码 | ~1–3 分钟 |
+| `deploy_full.sh` / `--full` | 改了依赖、Dockerfile、Playwright/VNC 相关 | ~10–30 分钟 |
+
+兼容旧环境变量：`SKIP_BUILD=1` 等同 `--fast`。
 
 ## 抖音登录与抓取
 
