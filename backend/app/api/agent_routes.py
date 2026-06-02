@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -59,6 +59,17 @@ from app.schemas.skill import (
     SkillRecordFromStepsRequest,
     SkillUpdate,
 )
+from app.schemas.skillhub import (
+    SkillHubConfigOut,
+    SkillHubConfigUpdate,
+    SkillHubInstallRequest,
+    SkillHubInstallResult,
+    SkillHubInstalledItem,
+    SkillHubInstalledListResponse,
+    SkillHubPublishRequest,
+    SkillHubPublishResult,
+    SkillHubSearchResponse,
+)
 from app.services.agent_dream_service import AgentDreamService
 from app.services.agent_experience_store import AgentExperienceStore
 from app.services.agent_rule_store import AgentRuleStore
@@ -70,6 +81,8 @@ from app.services.agent_eval_service import AgentEvalService
 from app.services.skill_effect_service import SkillEffectService
 from app.services.skill_md_parser import extract_actions_from_steps, parse_skill_md, render_skill_md
 from app.services.skill_store import SkillStore
+from app.services.skillhub_config_store import SkillHubConfigStore
+from app.services.skillhub_installer import SkillHubInstaller
 
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -846,6 +859,215 @@ def record_skill_from_steps(
         return store.create(tenant_id, skill, scope="tenant")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _skillhub_config_out(settings: Settings, tenant_id: str) -> SkillHubConfigOut:
+    store = SkillHubConfigStore(settings)
+    data = store.load(tenant_id)
+    token = store.get_token(tenant_id)
+    return SkillHubConfigOut(
+        registry=store.get_registry(tenant_id),
+        token_configured=bool(token),
+        auto_install_enabled=store.is_auto_install_enabled(tenant_id),
+    )
+
+
+@router.get("/skills/hub/config", response_model=SkillHubConfigOut)
+def get_skillhub_config(
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubConfigOut:
+    return _skillhub_config_out(settings, tenant_id)
+
+
+@router.put("/skills/hub/config", response_model=SkillHubConfigOut)
+def update_skillhub_config(
+    payload: SkillHubConfigUpdate,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubConfigOut:
+    store = SkillHubConfigStore(settings)
+    data = store.load(tenant_id)
+    if payload.registry is not None:
+        data["registry"] = payload.registry.rstrip("/")
+    if payload.clear_token:
+        data.pop("token", None)
+    elif payload.token is not None:
+        data["token"] = payload.token.strip() or None
+    if payload.auto_install_enabled is not None:
+        data["auto_install_enabled"] = payload.auto_install_enabled
+    store.save(tenant_id, data)
+    return _skillhub_config_out(settings, tenant_id)
+
+
+@router.get("/skills/hub/search", response_model=SkillHubSearchResponse)
+async def search_skillhub(
+    q: str = Query(default="", max_length=200),
+    limit: int = Query(default=20, ge=1, le=50),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubSearchResponse:
+    installer = SkillHubInstaller(settings, tenant_id)
+    try:
+        data = await installer.search(q, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    from app.schemas.skillhub import SkillHubSearchItem
+
+    items = [
+        SkillHubSearchItem(
+            namespace=i.get("namespace", "global"),
+            slug=i.get("slug", ""),
+            latest_version=i.get("latestVersion") or i.get("latest_version") or "",
+            summary=i.get("summary", ""),
+        )
+        for i in (data.get("items") or [])
+    ]
+    return SkillHubSearchResponse(
+        items=items,
+        total=int(data.get("total") or len(items)),
+        limit=limit,
+    )
+
+
+@router.post("/skills/hub/install-zip", response_model=SkillHubInstallResult)
+async def install_skillhub_zip(
+    file: UploadFile = File(...),
+    overwrite: bool = Query(default=False),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubInstallResult:
+    import tempfile
+    from pathlib import Path
+
+    from app.schemas.skill import SkillUpdate
+    from app.services.skillhub_package import extract_zip_to_dir, parse_skill_md_from_package
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="空文件")
+    installer = SkillHubInstaller(settings, tenant_id)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            extract_zip_to_dir(content, tmp_path)
+            skill_create = parse_skill_md_from_package(tmp_path)
+        target_dir = installer.package_dir(skill_create.id)
+        extract_zip_to_dir(content, target_dir)
+        skill_create.source = "skillhub"
+        skill_create.package_path = str(target_dir)
+        skill_create.hub_namespace = "local"
+        skill_create.hub_version = "upload"
+        existing = installer.skill_store.get(tenant_id, skill_create.id)
+        if existing and existing.scope == "tenant" and not overwrite:
+            raise HTTPException(status_code=409, detail=f"技能已存在: {skill_create.id}")
+        if existing and existing.scope == "tenant":
+            skill_out = installer.skill_store.update(
+                tenant_id,
+                skill_create.id,
+                SkillUpdate(**{k: v for k, v in skill_create.model_dump().items() if k != "id"}),
+            )
+        else:
+            skill_out = installer.skill_store.create(tenant_id, skill_create, scope="tenant")
+        installer._upsert_install_record(
+            slug=skill_create.id,
+            namespace="local",
+            version="upload",
+            skill_id=skill_out.id,
+            package_dir=str(target_dir),
+            fingerprint=None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SkillHubInstallResult(
+        skill=skill_out.model_dump(mode="json"),
+        namespace="local",
+        slug=skill_create.id,
+        version="upload",
+        package_dir=str(target_dir),
+        installed=True,
+        message=f"已从 zip 安装技能 {skill_create.id}",
+    )
+
+
+@router.post("/skills/hub/install", response_model=SkillHubInstallResult)
+async def install_skillhub(
+    payload: SkillHubInstallRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubInstallResult:
+    installer = SkillHubInstaller(settings, tenant_id)
+    try:
+        result = await installer.install(
+            coordinate=payload.coordinate,
+            namespace=payload.namespace,
+            slug=payload.slug,
+            version=payload.version,
+            overwrite=payload.overwrite or payload.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return SkillHubInstallResult(**result)
+
+
+@router.get("/skills/hub/installed", response_model=SkillHubInstalledListResponse)
+def list_skillhub_installed(
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubInstalledListResponse:
+    installer = SkillHubInstaller(settings, tenant_id)
+    items = [
+        SkillHubInstalledItem(
+            slug=i["slug"],
+            namespace=i.get("namespace", "global"),
+            version=i.get("version", ""),
+            skill_id=i.get("skill_id", i["slug"]),
+            package_dir=i.get("package_dir", ""),
+            registry=i.get("registry", ""),
+            installed_at=i.get("installed_at"),
+            fingerprint=i.get("fingerprint"),
+        )
+        for i in installer.list_installed()
+    ]
+    return SkillHubInstalledListResponse(items=items)
+
+
+@router.delete("/skills/hub/installed/{slug}")
+def uninstall_skillhub(
+    slug: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, bool]:
+    installer = SkillHubInstaller(settings, tenant_id)
+    removed = installer.uninstall(slug)
+    return {"deleted": removed}
+
+
+@router.post("/skills/hub/publish", response_model=SkillHubPublishResult)
+async def publish_skillhub(
+    payload: SkillHubPublishRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> SkillHubPublishResult:
+    installer = SkillHubInstaller(settings, tenant_id)
+    try:
+        result = await installer.publish_local_skill(
+            payload.skill_id,
+            namespace=payload.namespace,
+            visibility=payload.visibility,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return SkillHubPublishResult(
+        namespace=result.get("namespace", payload.namespace),
+        slug=result.get("slug", payload.skill_id),
+        version=str(result.get("version", "")),
+        visibility=str(result.get("visibility", payload.visibility)),
+    )
 
 
 @router.get("/experiences", response_model=AgentExperienceListResponse)

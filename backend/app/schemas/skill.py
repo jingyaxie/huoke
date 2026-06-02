@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 SkillType = Literal["instruction", "actions", "builtin"]
 SkillScope = Literal["tenant", "global"]
+SkillSource = Literal["local", "skillhub"]
 ParamType = Literal["string", "integer", "number", "boolean"]
 
 BUILTIN_HANDLERS = {
@@ -56,6 +57,11 @@ class SkillBase(BaseModel):
     content: str = ""
     actions: list[SkillAction] = Field(default_factory=list)
     builtin_handler: str | None = None
+    source: SkillSource = "local"
+    package_path: str | None = None
+    hub_namespace: str | None = None
+    hub_version: str | None = None
+    has_scripts: bool = False
 
     @field_validator("builtin_handler")
     @classmethod
@@ -87,6 +93,11 @@ class SkillUpdate(BaseModel):
     content: str | None = None
     actions: list[SkillAction] | None = None
     builtin_handler: str | None = None
+    source: SkillSource | None = None
+    package_path: str | None = None
+    hub_namespace: str | None = None
+    hub_version: str | None = None
+    has_scripts: bool | None = None
 
     @field_validator("builtin_handler")
     @classmethod

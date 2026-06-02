@@ -140,6 +140,8 @@ class AgentEvent(BaseModel):
         "approval_request",
         "checkpoint",
         "context_compressed",
+        "skill_installed",
+        "skill_install_failed",
         "cancelled",
         "done",
         "error",

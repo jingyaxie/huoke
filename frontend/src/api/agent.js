@@ -206,6 +206,84 @@ export async function recordSkillFromSteps(payload) {
   return resp.json();
 }
 
+export async function fetchSkillHubConfig() {
+  const resp = await fetch(`${baseURL}/agent/skills/hub/config`, { headers: agentHeaders() });
+  if (!resp.ok) throw new Error("加载 SkillHub 配置失败");
+  return resp.json();
+}
+
+export async function updateSkillHubConfig(payload) {
+  const resp = await fetch(`${baseURL}/agent/skills/hub/config`, {
+    method: "PUT",
+    headers: agentHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "保存 SkillHub 配置失败");
+  }
+  return resp.json();
+}
+
+export async function searchSkillHub(query, limit = 20) {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const resp = await fetch(`${baseURL}/agent/skills/hub/search?${params}`, {
+    headers: agentHeaders(),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "搜索 SkillHub 失败");
+  }
+  return resp.json();
+}
+
+export async function installSkillHub(payload) {
+  const resp = await fetch(`${baseURL}/agent/skills/hub/install`, {
+    method: "POST",
+    headers: agentHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "安装技能失败");
+  }
+  return resp.json();
+}
+
+export async function installSkillHubZip(file, overwrite = false) {
+  const form = new FormData();
+  form.append("file", file);
+  const headers = agentHeaders();
+  delete headers["Content-Type"];
+  const resp = await fetch(
+    `${baseURL}/agent/skills/hub/install-zip?overwrite=${overwrite ? "true" : "false"}`,
+    { method: "POST", headers, body: form }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "上传安装失败");
+  }
+  return resp.json();
+}
+
+export async function fetchSkillHubInstalled() {
+  const resp = await fetch(`${baseURL}/agent/skills/hub/installed`, { headers: agentHeaders() });
+  if (!resp.ok) throw new Error("加载已安装 SkillHub 技能失败");
+  return resp.json();
+}
+
+export async function uninstallSkillHub(slug) {
+  const resp = await fetch(`${baseURL}/agent/skills/hub/installed/${slug}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "卸载失败");
+  }
+  return resp.json();
+}
+
 export async function downloadWithAuth(url, filename) {
   const resp = await fetch(url, { headers: agentHeaders() });
   if (!resp.ok) throw new Error("下载失败");

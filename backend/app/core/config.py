@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     agent_dream_use_llm: bool = False
     agent_dream_inject_max: int = 5
 
+    skillhub_registry: str = "https://skill.xfyun.cn"
+    skillhub_token: Optional[str] = None
+    skillhub_auto_install_enabled: bool = True
+    skillhub_script_timeout_seconds: int = 120
+
     report_output_dir: Path = BASE_DIR / "reports"
 
     tenant_auth_enabled: bool = False

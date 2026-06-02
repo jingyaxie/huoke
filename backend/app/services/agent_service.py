@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
+from pathlib import Path
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -49,6 +50,10 @@ from app.services.skill_executor import (
     build_skill_tool_definitions,
     skills_description_summary,
 )
+from app.services.skill_auto_install import auto_install_from_message
+from app.services.skillhub_installer import SkillHubInstaller
+from app.services.skillhub_package import read_package_file, run_package_script
+from app.services.skillhub_tools import build_skillhub_tool_definitions
 from app.services.skill_store import SkillStore
 from app.services.skill_effect_service import SkillEffectService
 from app.services.agent_result_validator import build_validation_report
@@ -70,6 +75,12 @@ SYSTEM_PROMPT = """你是一个浏览器自动化智能体，可以通过 Playwr
 - 用 invoke_skill(skill_id, params) 调用技能；instruction 技能会注入完整指南
 - 标记为「自动」的技能也可直接通过 skill_* 工具调用
 - 用户消息中的 /skill-id 表示明确要求使用该技能
+
+SkillHub 技能市场（完整技能包，含 scripts/references/assets）：
+- skillhub_search：搜索注册中心技能
+- skillhub_install：安装技能包（坐标如 pdf-parser、@global/pdf-parser）
+- read_skill_resource / run_skill_script：读取包内文件或执行 scripts/ 脚本
+- 用户说「安装 xxx 技能」或 skillhub:install xxx 时会自动从 SkillHub 安装
 
 工作方式：
 1. 结合对话历史理解用户目标，必要时先 list_skills
@@ -257,7 +268,14 @@ class AgentService:
 
     @staticmethod
     def _tool_category(fn_name: str) -> str:
-        if fn_name.startswith("skill_") or fn_name in {"invoke_skill", "list_skills"}:
+        if fn_name.startswith("skill_") or fn_name in {
+            "invoke_skill",
+            "list_skills",
+            "skillhub_search",
+            "skillhub_install",
+            "read_skill_resource",
+            "run_skill_script",
+        }:
             return "skill"
         if fn_name in {"task_complete", "task_failed", "submit_plan", "spawn_task"}:
             return "control"
@@ -697,8 +715,94 @@ class AgentService:
         if fn_name == "spawn_task":
             return {"error": "spawn_task 由智能体循环直接处理"}
 
+        hub_result = await self._execute_skillhub_tool(fn_name, fn_args, skills_by_id=skills_by_id)
+        if hub_result is not None:
+            return hub_result
+
         result, _ = await executor.execute(fn_name, fn_args)
         return result
+
+    async def _execute_skillhub_tool(
+        self,
+        fn_name: str,
+        fn_args: dict[str, Any],
+        *,
+        skills_by_id: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if fn_name == "skillhub_search":
+            query = str(fn_args.get("query") or "").strip()
+            if not query:
+                return {"error": "缺少 query"}
+            limit = int(fn_args.get("limit") or 10)
+            installer = SkillHubInstaller(self.settings, self.tenant_id)
+            try:
+                data = await installer.search(query, limit=min(limit, 50))
+            except Exception as exc:
+                return {"error": str(exc)}
+            items = data.get("items") or []
+            return {
+                "items": [
+                    {
+                        "namespace": i.get("namespace"),
+                        "slug": i.get("slug"),
+                        "version": i.get("latestVersion") or i.get("latest_version"),
+                        "summary": i.get("summary"),
+                        "coordinate": (
+                            i.get("slug")
+                            if (i.get("namespace") or "global") == "global"
+                            else f"@{i.get('namespace')}/{i.get('slug')}"
+                        ),
+                    }
+                    for i in items
+                ],
+                "total": data.get("total", len(items)),
+            }
+
+        if fn_name == "skillhub_install":
+            installer = SkillHubInstaller(self.settings, self.tenant_id)
+            try:
+                result = await installer.install(
+                    coordinate=fn_args.get("coordinate"),
+                    namespace=fn_args.get("namespace"),
+                    slug=fn_args.get("slug"),
+                    version=fn_args.get("version"),
+                    overwrite=bool(fn_args.get("overwrite")),
+                )
+                return result
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        if fn_name == "read_skill_resource":
+            skill_id = str(fn_args.get("skill_id") or "").strip()
+            rel_path = str(fn_args.get("path") or "").strip()
+            skill = skills_by_id.get(skill_id)
+            if skill is None:
+                return {"error": f"技能不存在: {skill_id}"}
+            package_path = getattr(skill, "package_path", None)
+            if not package_path:
+                return {"error": "该技能无本地技能包目录"}
+            return read_package_file(Path(package_path), rel_path)
+
+        if fn_name == "run_skill_script":
+            skill_id = str(fn_args.get("skill_id") or "").strip()
+            script = str(fn_args.get("script") or "").strip()
+            skill = skills_by_id.get(skill_id)
+            if skill is None:
+                return {"error": f"技能不存在: {skill_id}"}
+            package_path = getattr(skill, "package_path", None)
+            if not package_path:
+                return {"error": "该技能无 scripts 包目录"}
+            args = fn_args.get("args") or []
+            if not isinstance(args, list):
+                args = []
+            return await run_package_script(
+                Path(package_path),
+                script,
+                args,
+                timeout_seconds=self.settings.skillhub_script_timeout_seconds,
+            )
+
+        return None
 
     async def _resolve_session(
         self,
@@ -1467,12 +1571,32 @@ class AgentService:
         run.run_mode = run_mode
         run.provider = effective_provider
 
+        install_events = await auto_install_from_message(self.settings, self.tenant_id, message)
+        for item in install_events:
+            if item.get("installed"):
+                yield AgentEvent(
+                    type="skill_installed",
+                    data={
+                        "slug": item.get("slug"),
+                        "namespace": item.get("namespace"),
+                        "version": item.get("version"),
+                        "message": item.get("message"),
+                    },
+                )
+            elif item.get("error"):
+                yield AgentEvent(
+                    type="skill_install_failed",
+                    data={"coordinate": item.get("coordinate"), "error": item["error"]},
+                )
+
         skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
         skills_by_tool = {s.tool_name: s for s in skills}
         skills_by_id = {s.id: s for s in skills}
         skill_tools = build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
+        has_packages = any(getattr(s, "package_path", None) for s in skills)
+        hub_tools = build_skillhub_tool_definitions(has_packages=has_packages or True)
         all_tools = self._append_tools_for_mode(
-            filter_tools_for_mode(TOOL_DEFINITIONS + skill_tools, mode),
+            filter_tools_for_mode(TOOL_DEFINITIONS + skill_tools + hub_tools, mode),
             mode,
         )
         vision_model = self._resolve_vision_model(effective_provider, model)
@@ -1624,9 +1748,10 @@ class AgentService:
         skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
         skills_by_tool = {s.tool_name: s for s in skills}
         skills_by_id = {s.id: s for s in skills}
+        hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + build_skill_tool_definitions(skills),
+                TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
                 mode,
             ),
             mode,
@@ -1737,9 +1862,10 @@ class AgentService:
         skills = self.skill_store.list_enabled(self.tenant_id)
         skills_by_tool = {s.tool_name: s for s in skills}
         skills_by_id = {s.id: s for s in skills}
+        hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + build_skill_tool_definitions(skills),
+                TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
                 mode,
             ),
             mode,

@@ -411,7 +411,66 @@
         </div>
       </div>
 
-      <el-drawer v-model="skillsDrawerVisible" title="技能管理" size="560px" @open="loadSkills">
+      <el-drawer v-model="skillsDrawerVisible" title="技能管理" size="640px" @open="onSkillsDrawerOpen">
+        <el-collapse v-model="skillHubConfigOpen" style="margin-bottom: 12px">
+          <el-collapse-item title="SkillHub 注册中心" name="hub">
+            <el-form label-width="100px" size="small">
+              <el-form-item label="Registry URL">
+                <el-input v-model="skillHubConfig.registry" placeholder="https://skill.xfyun.cn" />
+              </el-form-item>
+              <el-form-item label="API Token">
+                <el-input
+                  v-model="skillHubTokenInput"
+                  type="password"
+                  show-password
+                  :placeholder="skillHubConfig.token_configured ? '已配置（留空不修改）' : 'sk_...'"
+                />
+              </el-form-item>
+              <el-form-item label="对话自动安装">
+                <el-switch v-model="skillHubConfig.auto_install_enabled" />
+              </el-form-item>
+              <el-button size="small" type="primary" :loading="skillHubConfigSaving" @click="saveSkillHubConfig">
+                保存配置
+              </el-button>
+            </el-form>
+            <div class="skills-toolbar" style="margin-top: 8px">
+              <el-input
+                v-model="skillHubSearchQuery"
+                size="small"
+                placeholder="搜索 SkillHub 技能..."
+                style="width: 200px"
+                @keyup.enter="doSkillHubSearch"
+              />
+              <el-button size="small" :loading="skillHubSearching" @click="doSkillHubSearch">搜索</el-button>
+              <input ref="skillHubZipInput" type="file" accept=".zip,application/zip" hidden @change="onSkillHubZipSelected" />
+              <el-button size="small" @click="skillHubZipInput?.click()">上传 zip 安装</el-button>
+            </div>
+            <el-table
+              v-if="skillHubSearchResults.length"
+              :data="skillHubSearchResults"
+              size="small"
+              stripe
+              style="width: 100%; margin-top: 8px"
+            >
+              <el-table-column prop="slug" label="技能" width="140" />
+              <el-table-column prop="namespace" label="空间" width="80" />
+              <el-table-column prop="summary" label="描述" min-width="160" show-overflow-tooltip />
+              <el-table-column label="操作" width="88">
+                <template #default="{ row }">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :loading="skillHubInstalling === row.slug"
+                    @click="installFromHub(row)"
+                  >
+                    安装
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-collapse-item>
+        </el-collapse>
         <div class="skills-toolbar">
           <el-button type="primary" size="small" @click="openSkillForm()">新建技能</el-button>
           <el-button size="small" @click="openImportDialog">导入</el-button>
@@ -427,7 +486,13 @@
           </el-table-column>
           <el-table-column prop="scope" label="范围" width="70">
             <template #default="{ row }">
-              {{ row.scope === "global" ? "全局" : "租户" }}
+              <span v-if="row.source === 'skillhub'">SkillHub</span>
+              <span v-else>{{ row.scope === "global" ? "全局" : "租户" }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="包" width="52">
+            <template #default="{ row }">
+              <el-tag v-if="row.package_path" size="small" type="info">包</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="enabled" label="启用" width="70">
@@ -482,7 +547,9 @@
           </el-table-column>
         </el-table>
         <p class="skills-hint">
-          抖音社交：<code>/douyin-reply-comment</code>、<code>/douyin-follow-user</code>、<code>/douyin-send-dm</code>（需已登录）
+          SkillHub：<code>skillhub:install pdf-parser</code> 或说「安装 xxx 技能」可自动安装；对话中可用
+          <code>skillhub_search</code> / <code>skillhub_install</code>。
+          抖音：<code>/douyin-reply-comment</code> 等（需已登录）
         </p>
       </el-drawer>
 
@@ -929,6 +996,8 @@ import {
   dreamFromRun,
   exportSkillsJson,
   fetchAgentConfig,
+  fetchAgentJob,
+  fetchAgentJobs,
   fetchAgentRun,
   fetchAgentRuns,
   fetchExperiences,
@@ -938,6 +1007,13 @@ import {
   fetchSkillEffectDetail,
   fetchSkillEffects,
   fetchSkills,
+  fetchSkillHubConfig,
+  updateSkillHubConfig,
+  searchSkillHub,
+  installSkillHub,
+  installSkillHubZip,
+  fetchSkillHubInstalled,
+  uninstallSkillHub,
   submitAgentJob,
   importSkillMarkdown,
   importSkillsJson,
@@ -947,6 +1023,7 @@ import {
   resumeApproval,
   resumePlan,
   resumeAgentRun,
+  runAgentBenchmark,
   sendAgentWsMessage,
   skillMarkdownDownloadUrl,
   streamAgentChat,
@@ -1030,6 +1107,19 @@ const agentMeta = ref({
 const finalStatus = ref(null);
 const messagesRef = ref(null);
 const skillsDrawerVisible = ref(false);
+const skillHubConfigOpen = ref(["hub"]);
+const skillHubConfig = ref({
+  registry: "https://skill.xfyun.cn",
+  token_configured: false,
+  auto_install_enabled: true,
+});
+const skillHubTokenInput = ref("");
+const skillHubConfigSaving = ref(false);
+const skillHubSearchQuery = ref("");
+const skillHubSearchResults = ref([]);
+const skillHubSearching = ref(false);
+const skillHubInstalling = ref(null);
+const skillHubZipInput = ref(null);
 const skills = ref([]);
 const skillEffectVisible = ref(false);
 const selectedSkillEffect = ref(null);
@@ -1582,6 +1672,88 @@ async function respondPlan(approved) {
     if (!approved) pendingPlan.value = null;
     abortController = null;
   }
+}
+
+async function onSkillsDrawerOpen() {
+  await Promise.all([loadSkills(), loadSkillHubConfig()]);
+}
+
+async function loadSkillHubConfig() {
+  try {
+    skillHubConfig.value = await fetchSkillHubConfig();
+  } catch {
+    /* ignore */
+  }
+}
+
+async function saveSkillHubConfig() {
+  skillHubConfigSaving.value = true;
+  try {
+    const payload = {
+      registry: skillHubConfig.value.registry,
+      auto_install_enabled: skillHubConfig.value.auto_install_enabled,
+    };
+    if (skillHubTokenInput.value.trim()) {
+      payload.token = skillHubTokenInput.value.trim();
+    }
+    skillHubConfig.value = await updateSkillHubConfig(payload);
+    skillHubTokenInput.value = "";
+    ElMessage.success("SkillHub 配置已保存");
+  } catch (err) {
+    ElMessage.error(err.message || "保存失败");
+  } finally {
+    skillHubConfigSaving.value = false;
+  }
+}
+
+async function doSkillHubSearch() {
+  const q = skillHubSearchQuery.value.trim();
+  if (!q) {
+    ElMessage.warning("请输入搜索关键词");
+    return;
+  }
+  skillHubSearching.value = true;
+  try {
+    const data = await searchSkillHub(q, 20);
+    skillHubSearchResults.value = data.items || [];
+    if (!skillHubSearchResults.value.length) {
+      ElMessage.info("未找到匹配技能");
+    }
+  } catch (err) {
+    ElMessage.error(err.message || "搜索失败");
+  } finally {
+    skillHubSearching.value = false;
+  }
+}
+
+async function installFromHub(row) {
+  const coord =
+    row.namespace && row.namespace !== "global"
+      ? `@${row.namespace}/${row.slug}`
+      : row.slug;
+  skillHubInstalling.value = row.slug;
+  try {
+    await installSkillHub({ coordinate: coord, overwrite: false });
+    ElMessage.success(`已安装 ${coord}`);
+    await loadSkills();
+  } catch (err) {
+    ElMessage.error(err.message || "安装失败");
+  } finally {
+    skillHubInstalling.value = null;
+  }
+}
+
+async function onSkillHubZipSelected(ev) {
+  const file = ev.target?.files?.[0];
+  if (!file) return;
+  try {
+    await installSkillHubZip(file, false);
+    ElMessage.success(`已从 zip 安装技能`);
+    await loadSkills();
+  } catch (err) {
+    ElMessage.error(err.message || "安装失败");
+  }
+  ev.target.value = "";
 }
 
 async function loadSkills() {
@@ -2415,6 +2587,13 @@ function handleEvent(event) {
       break;
     case "context_compressed":
       ElMessage.info(`上下文已压缩：${data.before} → ${data.after} 条消息`);
+      break;
+    case "skill_installed":
+      ElMessage.success(data.message || `已安装技能 ${data.slug || ""}`);
+      loadSkills();
+      break;
+    case "skill_install_failed":
+      ElMessage.warning(data.error || "技能自动安装失败");
       break;
     case "step":
       break;
@@ -3939,6 +4118,3 @@ onBeforeUnmount(() => {
   }
 }
 </style>
-  fetchAgentJob,
-  fetchAgentJobs,
-  runAgentBenchmark,
