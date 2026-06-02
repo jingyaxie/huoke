@@ -244,7 +244,12 @@ class PlaywrightToolExecutor:
         self.settings = settings
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-        page = self.session.page
+        try:
+            page = await self.session.ensure_started()
+        except TimeoutError:
+            return {"error": "浏览器启动超时，请稍后重试"}, None
+        except Exception as exc:
+            return {"error": f"浏览器启动失败: {exc}"}, None
         try:
             if name == "browser_goto":
                 return await self._goto(page, arguments), None

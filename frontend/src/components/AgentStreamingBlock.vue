@@ -12,6 +12,7 @@
       <div class="turn-content">
         <div v-if="html" class="prose streaming-prose" v-html="html" />
         <div v-else class="thinking-row">
+          <span v-if="status" class="status-text">{{ status }}</span>
           <span class="typing-dots"><i /><i /><i /></span>
         </div>
       </div>
@@ -22,6 +23,7 @@
 <script setup>
 defineProps({
   html: { type: String, default: "" },
+  status: { type: String, default: "" },
 });
 </script>
 
@@ -68,7 +70,15 @@ defineProps({
 }
 
 .thinking-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   padding: 6px 0;
+}
+
+.status-text {
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .typing-dots {

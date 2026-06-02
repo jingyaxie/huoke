@@ -28,10 +28,21 @@ class AgentBrowserSession:
     network_capture: NetworkCapture = field(default_factory=NetworkCapture, repr=False)
 
     @property
+    def is_started(self) -> bool:
+        return self._page is not None
+
+    @property
     def page(self) -> Page:
         if self._page is None:
             raise RuntimeError("浏览器会话未启动")
         return self._page
+
+    async def ensure_started(self) -> Page:
+        if self._page is not None:
+            return self._page
+        timeout = float(self.settings.agent_browser_start_timeout_seconds)
+        await asyncio.wait_for(self.start(), timeout=timeout)
+        return self.page
 
     async def start(self) -> None:
         async with self._lock:
@@ -125,6 +136,7 @@ class AgentSessionManager:
         *,
         account_id: str = "default",
         headless: bool | None = None,
+        auto_start: bool = True,
     ) -> AgentBrowserSession:
         session_id = str(uuid.uuid4())
         session = AgentBrowserSession(
@@ -135,7 +147,8 @@ class AgentSessionManager:
             account_id=account_id,
             headless=headless,
         )
-        await session.start()
+        if auto_start:
+            await session.start()
         async with self._manager_lock:
             self._sessions[session_id] = session
         return session

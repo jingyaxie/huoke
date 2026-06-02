@@ -130,6 +130,7 @@ class AgentMessageOut(BaseModel):
 class AgentEvent(BaseModel):
     type: Literal[
         "session",
+        "status",
         "message",
         "message_delta",
         "tool_start",

@@ -7,9 +7,84 @@
     "f48200f3-ef79-400c-a608-062334e14522",
     "902f8f80-8603-441e-9652-210b9a3b5bd2",
     "575f9d09-3ae6-48ff-a685-22f5ba5f486a",
-    "53f914da-4e4a-4c99-893a-086a3ac3e24d"
+    "53f914da-4e4a-4c99-893a-086a3ac3e24d",
+    "05180808-fd24-4511-a873-f1ea542edc4b",
+    "fd6281f4-8291-458b-8520-3b88a88019de",
+    "3bacf4e4-5017-428c-b142-4864acba44d6"
   ],
   "experiences": [
+    {
+      "title": "你好",
+      "task_keywords": [
+        "你好",
+        "douyin"
+      ],
+      "outcome": "success",
+      "lesson": "【成功】你好！有什么我可以帮你的吗？你可以告诉我你想在抖音上做什么，比如：\n\n- **搜索视频或关键词** — 按关键词搜索抖音视频，获取结构化列表\n- **查看热榜** — 浏览抖音热榜热点话题\n- **抓取视频评论** — 获取单个视频或批量抓取评论\n- **关注用户、发送私信、回复评论** — 社交互动操作\n- **其它浏览器自动化任务** — 访问特定页面、提取数据等\n\n请告诉我你的需求，我来帮你操作！😊",
+      "do_tips": [],
+      "avoid_tips": [],
+      "platform": "douyin",
+      "source_run_id": "3bacf4e4-5017-428c-b142-4864acba44d6",
+      "enabled": true,
+      "version": 2,
+      "supersedes_id": "exp-f48200f3",
+      "conflict_tag": "",
+      "id": "exp-3bacf4e4",
+      "created_at": "2026-06-02T15:01:16.933249+00:00",
+      "updated_at": "2026-06-02T15:01:16.933249+00:00"
+    },
+    {
+      "title": "帮我整理今天的股市信息",
+      "task_keywords": [
+        "帮我整理今天的股市信息",
+        "douyin"
+      ],
+      "outcome": "success",
+      "lesson": "【成功】我已经获取到今日股市的实时行情信息，下面为你整理如下：\n\n---\n\n## 📊 今日A股大盘行情（实时数据）\n\n### 主要指数表现\n\n| 指数 | 最新点位 | 涨跌点数 | 涨跌幅 |\n|------|---------|---------|:-----:|\n| **上证指数** | **4,049.47** | -8.27 | **-0.20%** |\n| **深证成指** | **15,325.55** | -14.81 | **-0.10%** |\n| **创业板指** | **3,982.14** | **+31.20** | **+0.79%** ✅ |\n| 中小100 | 9,204.12 | -47.40 | -0.51% |\n| 沪深300 | 4,847.02 | +2.92 | +0.06% |\n| 上证50 | 2,894.07 | +0.22 | +0.01% |\n| 中证500 | 8,217.92 | -56.16 | -0.68% |\n\n### 涨跌概况\n- 📈 **上涨家数**：954家（涨停31家）\n- 📉 **下跌家数**：4,157家（跌停13家）\n- **整体偏弱**，下跌家数明显多于上涨家数\n\n---\n\n### 🔥 今日热点板块\n\n| 板块 | 涨跌幅 | 领涨个股 |\n|-----|:-----:|---------|\n| **油气开采Ⅱ** | **+1.96%** | ST洲际 +5.17% |\n| **元件板块** | 短线拉升 | 中京电子 **涨停** |\n\n### 板块异动\n- 📉 **有色金属矿采选业** — 步入低谷\n- 📉 **无人战机** — 低位冲跌\n- 📉 **居民服务、修理和其他服务业** — 低位冲跌\n\n### 今日亮点\n- **元件板块**短线拉升，中京电子涨停，骏亚科技、威尔高、生益电子、风华高科等跟涨\n- **创业板指**逆势上涨 **+0.79%**，表现相对强势\n\n---\n\n### ⚠️ 温馨提示\n以上数据为**今日实时行情**，A股今日整体偏弱，上证指数小幅下跌0.20%，超4000只个股下跌。创业板指逆势走强，油气板块领涨。如需进一步了解某个板块或个股的详细信息，可以告诉我！",
+      "do_tips": [
+        "SPA 页面优先读 api_captures / browser_get_network_data，再决定是否截图"
+      ],
+      "avoid_tips": [],
+      "platform": "douyin",
+      "source_run_id": "fd6281f4-8291-458b-8520-3b88a88019de",
+      "enabled": true,
+      "version": 1,
+      "supersedes_id": null,
+      "conflict_tag": "",
+      "id": "exp-fd6281f4",
+      "created_at": "2026-06-02T01:48:57.886516+00:00",
+      "updated_at": "2026-06-02T01:48:57.886516+00:00"
+    },
+    {
+      "title": "【系统恢复建议】连续失败，请切换工具策略并复用现有证据，不要重复同一动作。",
+      "task_keywords": [
+        "不要重复同一动作",
+        "系统恢复建议",
+        "请切换工具策略并复用现有证据",
+        "连续失败",
+        "anonymous",
+        "at",
+        "end",
+        "eval",
+        "douyin"
+      ],
+      "outcome": "failure",
+      "lesson": "【失败】子智能体达到步数上限 (30) 主要错误：Page.evaluate: SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at eval (eval at evaluate (:302:30), <anonymous>:4:41)\n    at async",
+      "do_tips": [],
+      "avoid_tips": [
+        "不要重复已失败的路径；换用内置 skill 或调整参数后再试",
+        "以下技能/调用曾失败：skill_crawl_video_comments: Page.evaluate: SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at eval (eval at evaluate ("
+      ],
+      "platform": "douyin",
+      "source_run_id": "05180808-fd24-4511-a873-f1ea542edc4b",
+      "enabled": true,
+      "version": 1,
+      "supersedes_id": null,
+      "conflict_tag": "",
+      "id": "exp-05180808",
+      "created_at": "2026-06-01T23:35:21.118210+00:00",
+      "updated_at": "2026-06-01T23:35:21.118210+00:00"
+    },
     {
       "title": "browser_screenshot 已完成，截图已在用户界面展示。当前模型不支持视觉理解，请调用 browser_get_text 或 browser_get…",
       "task_keywords": [

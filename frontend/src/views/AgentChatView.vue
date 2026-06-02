@@ -123,6 +123,14 @@
             </div>
           </div>
 
+          <div v-if="bindingStatus && !bindingStatus.ready" class="binding-banner">
+            <div class="binding-banner-text">
+              <strong>抖音未绑定</strong>
+              <span>{{ bindingStatus.message || "请先完成平台登录后再使用智能体" }}</span>
+            </div>
+            <el-button type="primary" size="small" @click="openAccountsDrawer">去绑定</el-button>
+          </div>
+
           <div v-if="runResumable && !running" class="resume-banner">
             <div class="resume-banner-text">
               <strong>任务已暂停</strong>
@@ -157,7 +165,7 @@
                 :expanded="expandedChatTools.has(idx)"
                 @toggle="toggleChatToolExpand(idx)"
               />
-              <AgentStreamingBlock v-if="running" :html="streamingHtml" />
+              <AgentStreamingBlock v-if="running" :html="streamingHtml" :status="statusMessage" />
             </div>
           </div>
 
@@ -167,8 +175,8 @@
                 v-model="inputText"
                 type="textarea"
                 :autosize="{ minRows: 1, maxRows: 6 }"
-                placeholder="描述任务，Agent 将自动操作浏览器…"
-                :disabled="running"
+                :placeholder="bindingBlocked ? '请先绑定抖音账号（侧栏「绑定」）' : '描述任务，Agent 将自动操作浏览器…'"
+                :disabled="running || bindingBlocked"
                 resize="none"
                 class="composer-textarea"
                 @keydown.ctrl.enter="sendMessage"
@@ -234,8 +242,8 @@
                   <button
                     type="button"
                     class="send-btn"
-                    :class="{ active: inputText.trim() && !running, loading: running }"
-                    :disabled="!inputText.trim() || running"
+                    :class="{ active: inputText.trim() && !running && !bindingBlocked, loading: running }"
+                    :disabled="!inputText.trim() || running || bindingBlocked"
                     @click="sendMessage"
                   >
                     <el-icon v-if="running" class="is-loading"><Loading /></el-icon>
@@ -996,6 +1004,7 @@ import {
   dreamFromRun,
   exportSkillsJson,
   fetchAgentConfig,
+  fetchAgentBindingStatus,
   fetchAgentJob,
   fetchAgentJobs,
   fetchAgentRun,
@@ -1092,6 +1101,7 @@ const streamEnabled = ref(false);
 const messages = ref([]);
 const steps = ref([]);
 const streamingText = ref("");
+const statusMessage = ref("");
 const screenshot = ref(null);
 const pageInfo = ref({ url: "", title: "" });
 const agentPhase = ref("plan");
@@ -1162,6 +1172,8 @@ const newAccountLabel = ref("");
 const accountCreating = ref(false);
 const bindingLoginPlatform = ref("");
 const bindingLoginPlatformLabel = ref("");
+const bindingStatus = ref(null);
+const bindingBlocked = computed(() => bindingStatus.value && !bindingStatus.value.ready);
 const loginDialogVisible = ref(false);
 const serverLoginUrl = ref("");
 const experiences = ref([]);
@@ -1421,7 +1433,13 @@ async function switchTenantContext() {
   runId.value = null;
   persistSessionIds();
   clearChatUiState();
-  await Promise.all([loadChatHistory(), loadAccounts(), loadRules(), loadExperiences()]);
+  await Promise.all([
+    loadChatHistory(),
+    loadAccounts(),
+    loadRules(),
+    loadExperiences(),
+    loadBindingStatus(),
+  ]);
 }
 
 async function onTenantChange() {
@@ -1451,6 +1469,14 @@ function onExternalTenantChange(event) {
   switchTenantContext();
 }
 
+async function loadBindingStatus() {
+  try {
+    bindingStatus.value = await fetchAgentBindingStatus();
+  } catch {
+    bindingStatus.value = null;
+  }
+}
+
 async function loadAccountBindings() {
   await loadAccounts();
   try {
@@ -1459,6 +1485,7 @@ async function loadAccountBindings() {
   } catch (err) {
     ElMessage.error(err.message || "加载绑定状态失败");
   }
+  await loadBindingStatus();
 }
 
 function openAccountsDrawer() {
@@ -2488,6 +2515,7 @@ function clearChatUiState() {
   agentMeta.value = { budget_limits: {}, tool_usage: {}, failure_streak: {}, skill_priority: [] };
   finalStatus.value = null;
   streamingText.value = "";
+  statusMessage.value = "";
   checkpoints.value = [];
   expandedSteps.value = new Set();
   expandedCheckpoints.value = new Set();
@@ -2570,6 +2598,9 @@ function handleEvent(event) {
         tool_call_id: data.tool_call_id,
       };
       approvalDialogVisible.value = true;
+      break;
+    case "status":
+      statusMessage.value = data.message || "";
       break;
     case "message_delta":
       streamingText.value += data.delta || "";
@@ -2795,6 +2826,7 @@ async function runAgentStream(streamFn) {
   } finally {
     running.value = false;
     streamingText.value = "";
+    statusMessage.value = "";
     abortController = null;
   }
 }
@@ -2812,11 +2844,17 @@ async function resumeRun() {
 async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || running.value) return;
+  if (bindingBlocked.value) {
+    ElMessage.warning(bindingStatus.value?.message || "请先绑定抖音账号后再使用智能体");
+    openAccountsDrawer();
+    return;
+  }
 
   messages.value.push({ role: "user", content: text });
   inputText.value = "";
   running.value = true;
   streamingText.value = "";
+  statusMessage.value = "";
   finalStatus.value = null;
   runResumable.value = false;
   await scrollToBottom();
@@ -2848,6 +2886,7 @@ async function sendMessage() {
     } finally {
       running.value = false;
       streamingText.value = "";
+      statusMessage.value = "";
       abortController = null;
     }
     return;
@@ -2865,7 +2904,8 @@ onMounted(async () => {
   await loadAgentConfig();
   loadSkills();
   loadRules();
-  loadAccounts();
+  await loadAccounts();
+  await loadBindingStatus();
   loadBuiltinHandlers();
   await loadChatHistory();
   await restoreRunIfNeeded();
@@ -2875,6 +2915,12 @@ onMounted(async () => {
 watch(provider, (value) => {
   localStorage.setItem(PROVIDER_STORAGE_KEY, value);
   updateProviderNote();
+});
+
+watch(loginDialogVisible, (open, wasOpen) => {
+  if (wasOpen && !open) {
+    loadAccountBindings();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -3250,6 +3296,31 @@ onBeforeUnmount(() => {
 .resume-banner-text strong {
   font-size: 13px;
   color: #78350f;
+}
+
+.binding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 16px 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.binding-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #991b1b;
+}
+
+.binding-banner-text strong {
+  font-size: 13px;
+  color: #7f1d1d;
 }
 
 .chat-scroll {

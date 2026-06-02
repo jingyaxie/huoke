@@ -11,6 +11,9 @@ READ_ONLY_TOOLS = {
     "browser_screenshot",
     "browser_wait",
     "list_skills",
+    "list_local_comment_files",
+    "read_local_comments",
+    "analyze_local_comments",
 }
 
 WRITE_TOOLS = {
@@ -96,6 +99,20 @@ ASK_MODE_PROMPT = """
 - 仅可使用 browser_get_page_info、browser_get_network_data、browser_get_text、browser_screenshot、browser_wait、list_skills
 - 不要调用任何写入操作或 invoke_skill
 """
+
+
+def tool_needs_browser(fn_name: str, *, is_skill: bool = False) -> bool:
+    if fn_name in {"task_complete", "task_failed", "list_skills", "submit_plan"}:
+        return False
+    if fn_name.startswith("browser_") or fn_name == "spawn_subagent":
+        return True
+    if is_skill or fn_name in {"invoke_skill"} or fn_name.startswith("skill_"):
+        return True
+    if fn_name.startswith("skillhub_") or fn_name in {"read_skill_resource", "run_skill_script"}:
+        return False
+    if fn_name in {"list_local_comment_files", "read_local_comments", "analyze_local_comments"}:
+        return False
+    return False
 
 
 def filter_tools_for_mode(

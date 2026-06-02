@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     agent_checkpoint_max_count: int = 20
     agent_subagent_max_steps: int = 100
     agent_stream_enabled: bool = True
+    agent_browser_start_timeout_seconds: int = 90
     agent_compress_enabled: bool = True
     agent_compress_threshold_messages: int = 30
     agent_compress_keep_recent: int = 12

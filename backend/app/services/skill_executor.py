@@ -16,6 +16,57 @@ from app.services.agent_browser_session import AgentBrowserSession
 
 _TEMPLATE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
+_LOCAL_COMMENT_HINT = (
+    "完整评论已写入 output_file；后续汇总/筛选意向请用 analyze_local_comments 或 read_local_comments，"
+    "勿对同一视频重复 crawl-video-comments。"
+)
+
+
+def _nickname_from_row(row: dict[str, Any]) -> str | None:
+    for key in ("nickname", "user_name", "username"):
+        if row.get(key):
+            return str(row[key])[:40]
+    user = row.get("user")
+    if isinstance(user, dict) and user.get("nickname"):
+        return str(user["nickname"])[:40]
+    return None
+
+
+def _slim_comment_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    comments = payload.get("comments") or []
+    preview = []
+    for row in comments[:8]:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get("comment") or row.get("text") or "")[:120]
+        preview.append(
+            {
+                "nickname": _nickname_from_row(row),
+                "comment": text,
+                "digg_count": row.get("digg_count"),
+            }
+        )
+    slim = {k: v for k, v in payload.items() if k != "comments"}
+    slim["comments_count"] = len(comments)
+    slim["comments_preview"] = preview
+    return slim
+
+
+def _slim_keyword_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    slimmed: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        slimmed.append(
+            {
+                "aweme_id": item.get("aweme_id"),
+                "video_url": item.get("video_url") or item.get("note_url"),
+                "total_comments_captured": item.get("total_comments_captured"),
+                "api_total_top_comments": item.get("api_total_top_comments"),
+            }
+        )
+    return slimmed
+
 
 def _coerce_param(value: Any, param_type: str) -> Any:
     if value is None:
@@ -208,7 +259,8 @@ class SkillExecutor:
                 "total_comments_captured": captured,
                 "api_total_top_comments": api_total,
                 "output_file": str(output),
-                "result": payload,
+                "result": _slim_comment_payload(payload),
+                "hint": _LOCAL_COMMENT_HINT,
             }
         if handler == "crawl_keyword_comments":
             keyword = params.get("keyword")
@@ -241,7 +293,8 @@ class SkillExecutor:
                 "videos_processed": len(results),
                 "total_comments_captured": total_captured,
                 "output_files": [str(p) for p in outputs],
-                "results": results,
+                "results": _slim_keyword_results(results),
+                "hint": _LOCAL_COMMENT_HINT,
             }
         if handler == "search_videos":
             keyword = params.get("keyword")

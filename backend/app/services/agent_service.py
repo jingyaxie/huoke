@@ -24,6 +24,7 @@ from app.services.agent_policy import (
     filter_tools_for_mode,
     is_write_tool,
     requires_approval,
+    tool_needs_browser,
 )
 from app.services.agent_run_controller import AgentRunController
 from app.services.agent_dream_service import AgentDreamService
@@ -67,6 +68,13 @@ from app.services.agent_llm import (
     trim_assistant_tool_call,
 )
 from app.services.agent_subagent import run_subagent
+from app.services.comment_data_service import (
+    analyze_comment_leads,
+    collect_comment_files_from_history,
+    list_comment_files,
+    read_comment_file,
+)
+from app.services.comment_data_tools import COMMENT_DATA_TOOL_DEFINITIONS
 
 SYSTEM_PROMPT = """你是一个浏览器自动化智能体，可以通过 Playwright 工具操作真实网页来完成用户任务。
 
@@ -90,10 +98,16 @@ SkillHub 技能市场（完整技能包，含 scripts/references/assets）：
 5. 任务成功 task_complete；无法完成 task_failed
 6. 优先复用已获得信息：历史消息、最近工具返回、api_captures 中的 ID/URL/作者/标题；除非证据不足，不要从头重复搜索
 
+本地评论数据（重要）：
+- 抓取评论技能会把完整数据写入 reports/comments_*.json，工具返回里的 output_file / output_files 即本地路径
+- 用户要对「已抓取的评论」做汇总、筛选意向客户、导出分析时，必须用 list_local_comment_files、read_local_comments、analyze_local_comments
+- 禁止为同一批已下载评论再次调用 crawl-video-comments / crawl-keyword-comments 或重新打开视频页抓评论
+- 只有用户明确要求重新抓取、或本地文件不存在/数据不足时，才发起新的爬取
+
 注意：
 - 不要编造未观察到的页面内容；抖音视频/评论/搜索数据优先从拦截到的 JSON 接口获取
 - 若需登录或验证码，说明情况并 task_failed
-- 若已拿到关键结构化信息（如 aweme_id、video_url、作者信息），先基于已有数据继续推理与提取，再决定是否新增页面操作
+- 若已拿到关键结构化信息（如 aweme_id、video_url、作者信息），或已有 output_file，先基于已有数据继续推理与提取，再决定是否新增页面操作
 - 避免“口头推进”式重复承诺（如连续多次“我再试试”）；每次行动都要有明确新依据
 - 回复用户使用中文
 """
@@ -155,6 +169,7 @@ class AgentService:
         self.ai_factory = AIClientFactory(settings)
         self.skill_store = SkillStore(settings)
         self.experience_store = AgentExperienceStore(settings)
+        self._active_comment_file_refs: list[str] = []
 
     def _dream_service(self) -> AgentDreamService:
         return AgentDreamService(self.settings, self.tenant_id)
@@ -510,13 +525,19 @@ class AgentService:
             },
         }
 
-    async def create_session(self, *, headless: bool | None = None) -> AgentBrowserSession:
+    async def create_session(
+        self,
+        *,
+        headless: bool | None = None,
+        auto_start: bool = True,
+    ) -> AgentBrowserSession:
         return await self.session_manager.create(
             self.tenant_id,
             self.platform,
             self.settings,
             account_id=self.account_id,
             headless=headless,
+            auto_start=auto_start,
         )
 
     async def close_session(self, session_id: str) -> bool:
@@ -594,6 +615,8 @@ class AgentService:
         session: AgentBrowserSession,
     ):
         if not self.settings.agent_checkpoints_enabled or not is_write_tool(tool):
+            return None
+        if not session.is_started:
             return None
         info = await session.page_info()
         storage_state = await session.capture_storage_state()
@@ -715,12 +738,64 @@ class AgentService:
         if fn_name == "spawn_task":
             return {"error": "spawn_task 由智能体循环直接处理"}
 
+        comment_result = self._execute_comment_data_tool(fn_name, fn_args)
+        if comment_result is not None:
+            return comment_result
+
         hub_result = await self._execute_skillhub_tool(fn_name, fn_args, skills_by_id=skills_by_id)
         if hub_result is not None:
             return hub_result
 
         result, _ = await executor.execute(fn_name, fn_args)
         return result
+
+    def _execute_comment_data_tool(
+        self,
+        fn_name: str,
+        fn_args: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if fn_name == "list_local_comment_files":
+            limit = int(fn_args.get("limit") or 20)
+            files = list_comment_files(
+                self.settings,
+                tenant_id=self.tenant_id,
+                platform=self.platform,
+                limit=min(limit, 50),
+            )
+            return {"files": files, "count": len(files)}
+
+        if fn_name == "read_local_comments":
+            file_name = str(fn_args.get("file_name") or "").strip()
+            if not file_name:
+                return {"error": "缺少 file_name"}
+            max_comments = int(fn_args.get("max_comments") or 200)
+            return read_comment_file(
+                self.settings,
+                file_name,
+                max_comments=min(max_comments, 500),
+            )
+
+        if fn_name == "analyze_local_comments":
+            file_names = fn_args.get("file_names") or []
+            if not isinstance(file_names, list):
+                file_names = []
+            refs = [str(x) for x in file_names if x]
+            if not refs:
+                refs = list(getattr(self, "_active_comment_file_refs", None) or [])
+            intent_keywords = fn_args.get("intent_keywords") or []
+            if not isinstance(intent_keywords, list):
+                intent_keywords = []
+            max_leads = int(fn_args.get("max_leads") or 80)
+            return analyze_comment_leads(
+                self.settings,
+                file_refs=refs,
+                tenant_id=self.tenant_id,
+                platform=self.platform,
+                intent_keywords=[str(x) for x in intent_keywords if x],
+                max_leads=min(max_leads, 200),
+            )
+
+        return None
 
     async def _execute_skillhub_tool(
         self,
@@ -813,8 +888,10 @@ class AgentService:
             session = self.session_manager.get(session_id)
             if session is None:
                 # 刷新页面或服务重启后，内存会话可能丢失；自动新建会话以便继续 run。
-                session = await self.create_session(headless=headless)
+                session = await self.create_session(headless=headless, auto_start=False)
                 return session, True
+            if not session.is_started:
+                return session, False
             if (
                 session.tenant_id != self.tenant_id
                 or session.account_id != self.account_id
@@ -824,7 +901,7 @@ class AgentService:
                     "浏览器会话与当前租户/账号/平台不匹配，请不传 session_id 以创建新会话"
                 )
             return session, False
-        session = await self.create_session(headless=headless)
+        session = await self.create_session(headless=headless, auto_start=False)
         return session, True
 
     async def _compress_and_sync(
@@ -1411,6 +1488,36 @@ class AgentService:
             },
         )
 
+        if session is not None and tool_needs_browser(fn_name, is_skill=is_skill):
+            yield AgentEvent(
+                type="status",
+                data={"phase": "browser", "message": "正在启动浏览器…"},
+            )
+            try:
+                await session.ensure_started()
+            except TimeoutError:
+                yield AgentEvent(
+                    type="tool_result",
+                    data={
+                        "tool": fn_name,
+                        "tool_call_id": tool_call_id,
+                        "result": {"error": "浏览器启动超时，请稍后重试"},
+                        "is_skill": is_skill,
+                    },
+                )
+                return
+            except Exception as exc:
+                yield AgentEvent(
+                    type="tool_result",
+                    data={
+                        "tool": fn_name,
+                        "tool_call_id": tool_call_id,
+                        "result": {"error": f"浏览器启动失败: {exc}"},
+                        "is_skill": is_skill,
+                    },
+                )
+                return
+
         if session is not None and run_id:
             checkpoint = await self._save_checkpoint_if_needed(
                 run_id=run_id,
@@ -1547,6 +1654,7 @@ class AgentService:
             return
 
         explicit_ids = set(explicit_skill_ids or []) | set(parse_explicit_skill_ids(message))
+        yield AgentEvent(type="status", data={"phase": "init", "message": "正在准备对话…"})
         try:
             session, created_new = await self._resolve_session(session_id, headless)
         except ValueError as exc:
@@ -1596,8 +1704,15 @@ class AgentService:
         has_packages = any(getattr(s, "package_path", None) for s in skills)
         hub_tools = build_skillhub_tool_definitions(has_packages=has_packages or True)
         all_tools = self._append_tools_for_mode(
-            filter_tools_for_mode(TOOL_DEFINITIONS + skill_tools + hub_tools, mode),
+            filter_tools_for_mode(
+                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + skill_tools + hub_tools,
+                mode,
+            ),
             mode,
+        )
+        self._active_comment_file_refs = collect_comment_files_from_history(
+            list(run.messages),
+            self.settings,
         )
         vision_model = self._resolve_vision_model(effective_provider, model)
         rules_prompt = self.rule_store.build_rules_prompt(self.tenant_id, self.platform)
@@ -1620,6 +1735,8 @@ class AgentService:
                 "tenant_id": session.tenant_id,
                 "account_id": session.account_id,
                 "binding_status": self.platform_binding_status(),
+                "browser_ready": session.is_started,
+                "local_comment_files": self._active_comment_file_refs,
                 "created": created_new,
                 "skills_count": len(skills),
                 "history_count": len(run.messages),
@@ -1687,6 +1804,8 @@ class AgentService:
             phase="plan",
         )
 
+        yield AgentEvent(type="status", data={"phase": "think", "message": "正在思考…"})
+
         await self.run_controller.register(effective_run_id)
         try:
             async for event in self._agent_loop(
@@ -1711,6 +1830,7 @@ class AgentService:
             self._mark_run_interrupted(effective_run_id)
             raise
         finally:
+            self._active_comment_file_refs = []
             await self.run_controller.clear(effective_run_id)
 
     async def resume_run(self, run_id: str) -> AsyncIterator[AgentEvent]:
@@ -1751,7 +1871,7 @@ class AgentService:
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
+                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
                 mode,
             ),
             mode,
@@ -1865,7 +1985,7 @@ class AgentService:
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
+                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
                 mode,
             ),
             mode,
