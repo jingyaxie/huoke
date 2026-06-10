@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
-from app.core.antibot import apply_stealth, context_kwargs, headless_for_platform, launch_args
+from app.core.antibot import (
+    headless_for_platform,
+    launch_browser,
+    new_browser_context,
+    open_tenant_page,
+)
 from app.core.config import Settings
 from app.platforms.registry import get_session_store
 from app.services.agent_network_capture import NetworkCapture
@@ -50,16 +55,16 @@ class AgentBrowserSession:
                 return
             store = get_session_store(self.settings, self.platform)
             store.migrate_legacy_if_needed()
-            resolved_headless = headless_for_platform(self.settings, self.platform, self.headless)
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=resolved_headless,
-                args=launch_args(),
+            self._browser, self._context, self._page = await open_tenant_page(
+                self._playwright,
+                self.settings,
+                self.platform,
+                self.tenant_id,
+                store,
+                headless=self.headless,
+                account_id=self.account_id,
             )
-            kwargs = context_kwargs(self.settings, store.load(self.tenant_id, self.account_id))
-            self._context = await self._browser.new_context(**kwargs)
-            await apply_stealth(self._context, self.settings, tenant_id=self.tenant_id)
-            self._page = await self._context.new_page()
             self.network_capture.attach(self._page)
 
     async def close(self) -> None:
@@ -95,7 +100,7 @@ class AgentBrowserSession:
 
     async def restore_from_checkpoint(self, storage_state: dict, url: str | None = None) -> None:
         async with self._lock:
-            if self._browser is None or self._playwright is None:
+            if self._playwright is None:
                 raise RuntimeError("浏览器未启动")
             if self._page is not None:
                 await self._page.close()
@@ -103,11 +108,15 @@ class AgentBrowserSession:
             if self._context is not None:
                 await self._context.close()
                 self._context = None
-            store = get_session_store(self.settings, self.platform)
-            kwargs = context_kwargs(self.settings, store.load(self.tenant_id, self.account_id))
-            kwargs["storage_state"] = storage_state
-            self._context = await self._browser.new_context(**kwargs)
-            await apply_stealth(self._context, self.settings, tenant_id=self.tenant_id)
+            if self._browser is None:
+                resolved_headless = headless_for_platform(self.settings, self.platform, self.headless)
+                self._browser = await launch_browser(self._playwright, self.settings, headless=resolved_headless)
+            self._context = await new_browser_context(
+                self._browser,
+                self.settings,
+                state=storage_state,
+                tenant_id=self.tenant_id,
+            )
             self._page = await self._context.new_page()
             self.network_capture.clear()
             self.network_capture.attach(self._page)

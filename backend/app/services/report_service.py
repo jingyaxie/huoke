@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import html
 from datetime import date
 from pathlib import Path
 
-from jinja2 import Template
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -14,32 +14,38 @@ from app.services.ai_client import AIClientFactory
 from app.services.pdf_service import PdfService
 
 
-REPORT_TEMPLATE = Template(
-    """
-    <!doctype html>
-    <html lang="zh-CN">
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 32px; color: #111827; }
-        h1, h2, h3 { margin: 0 0 12px; }
-        .meta { color: #6b7280; margin-bottom: 24px; }
-        table { width: 100%; border-collapse: collapse; margin: 16px 0 28px; }
-        th, td { border-bottom: 1px solid #e5e7eb; padding: 10px 8px; text-align: left; font-size: 13px; }
-        th { background: #f9fafb; }
-        .section { margin-bottom: 28px; }
-        .summary { padding: 14px 16px; background: #f8fafc; border-left: 4px solid #2563eb; }
-      </style>
-    </head>
-    <body>
-      <h1>{{ title }}</h1>
-      <div class="meta">{{ report_date }} | {{ provider }}{{ " / " + model if model else "" }}</div>
-      <div class="summary">{{ summary }}</div>
-      <div class="section">{{ content | safe }}</div>
-    </body>
-    </html>
-    """
-)
+def _render_report_html(
+    *,
+    title: str,
+    summary: str,
+    content: str,
+    provider: str,
+    model: str | None,
+    report_date: date,
+) -> str:
+    meta_model = f" / {html.escape(model)}" if model else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 32px; color: #111827; }}
+    h1, h2, h3 {{ margin: 0 0 12px; }}
+    .meta {{ color: #6b7280; margin-bottom: 24px; }}
+    table {{ width: 100%; border-collapse: collapse; margin: 16px 0 28px; }}
+    th, td {{ border-bottom: 1px solid #e5e7eb; padding: 10px 8px; text-align: left; font-size: 13px; }}
+    th {{ background: #f9fafb; }}
+    .section {{ margin-bottom: 28px; }}
+    .summary {{ padding: 14px 16px; background: #f8fafc; border-left: 4px solid #2563eb; }}
+  </style>
+</head>
+<body>
+  <h1>{html.escape(title)}</h1>
+  <div class="meta">{report_date.isoformat()} | {html.escape(provider)}{meta_model}</div>
+  <div class="summary">{html.escape(summary)}</div>
+  <div class="section">{content}</div>
+</body>
+</html>"""
 
 
 class ReportService:
@@ -111,13 +117,13 @@ class ReportService:
 
     def build_html(self, title: str, markdown: str, summary: str | None, provider: str, model: str | None, report_date: date) -> str:
         content = markdown.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-        return REPORT_TEMPLATE.render(
+        return _render_report_html(
             title=title,
             summary=summary or "",
             content=content,
             provider=provider,
             model=model,
-            report_date=report_date.isoformat(),
+            report_date=report_date,
         )
 
     async def generate_report(self, report_date: date, provider: str = "template") -> tuple[str, str | None]:

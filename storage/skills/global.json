@@ -1,35 +1,40 @@
 {
   "skills": [
     {
-      "id": "douyin-hot-list",
-      "name": "打开抖音热榜",
-      "description": "导航到抖音热榜页面并读取热点标题列表",
-      "type": "actions",
+      "id": "douyin-hot-api",
+      "name": "抖音热榜（接口优先）",
+      "description": "模拟真人浏览抖音热榜，拦截 hotspot 接口并从 JSON 解析热榜列表",
+      "type": "instruction",
       "enabled": true,
       "scope": "global",
-      "parameters": [],
-      "content": "",
-      "actions": [
+      "parameters": [
         {
-          "tool": "browser_goto",
-          "args": {
-            "url": "https://www.douyin.com/hot"
-          }
-        },
-        {
-          "tool": "browser_wait",
-          "args": {
-            "timeout_ms": 3000
-          }
-        },
-        {
-          "tool": "browser_get_text",
-          "args": {}
+          "name": "limit",
+          "type": "integer",
+          "description": "返回条数上限",
+          "required": false,
+          "default": 20
         }
       ],
+      "content": "抖音热榜抓取（接口优先，禁止先扫 DOM）：\n1. browser_browse url=https://www.douyin.com/hot warmup_first=true scroll_rounds=3\n2. browser_wait_api url_contains=channel/hotspot timeout_ms=15000\n3. browser_get_network_data url_contains=channel/hotspot limit=3\n4. 从 items[].data 解析 aweme_list / 含 aweme_id+desc+author 的节点，提取标题、作者、video_url、点赞数\n5. 若 hotspot 为空，再试 url_contains=hot/search/list\n6. 仍无数据时 browser_get_page_info 看 embedded_data，最后才 browser_get_text\n7. 汇总前 {{limit}} 条后 task_complete；登录/验证码则 task_failed",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-hot-list",
+      "name": "打开抖音热榜（已废弃）",
+      "description": "已废弃，请使用 douyin-hot-api",
+      "type": "instruction",
+      "enabled": false,
+      "scope": "global",
+      "parameters": [],
+      "content": "请改用 /douyin-hot-api",
+      "actions": [],
       "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
     },
     {
       "id": "douyin-search-keyword",
@@ -46,7 +51,7 @@
           "required": true
         }
       ],
-      "content": "执行抖音关键词搜索任务：\n1. 若不在 douyin.com，先 browser_goto 到 https://www.douyin.com\n2. 找到搜索框（通常是 input 或 placeholder 含「搜索」），browser_fill 填入 {{keyword}}\n3. browser_press Enter\n4. browser_wait 等待结果加载\n5. browser_get_page_info 查看搜索结果\n6. 汇总前几条视频标题后 task_complete",
+      "content": "抖音关键词搜索（接口优先）：\n1. browser_browse url=https://www.douyin.com warmup_first=true scroll_rounds=1\n2. browser_fill selector=[data-e2e=\"searchbar-input\"] text={{keyword}}；若无则 browser_goto https://www.douyin.com/search/{{keyword}}\n3. browser_press key=Enter 或 browser_click [data-e2e=\"searchbar-button\"]\n4. browser_wait_api url_contains=search timeout_ms=20000\n5. browser_get_network_data url_contains=search limit=5\n6. 从 items[].data 解析 aweme_id、desc、author.nickname、statistics.digg_count，生成 video_url\n7. 接口无结果才 browser_get_page_info；禁止直接扫 DOM 列表\n8. 汇总搜索结果后 task_complete",
       "actions": [],
       "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
@@ -54,10 +59,11 @@
     },
     {
       "id": "crawl-hot",
-      "name": "抓取热榜入库",
-      "description": "调用后端爬虫抓取当前平台热榜数据并写入数据库",
+      "name": "抓取热榜入库（legacy）",
+      "description": "legacy 内置爬虫入库；新业务请用 douyin-hot-api + 人工确认后入库",
       "type": "builtin",
       "enabled": true,
+      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
         {
@@ -89,11 +95,33 @@
       "updated_at": "2026-06-01T23:10:35.567157+00:00"
     },
     {
+      "id": "douyin-comments-api",
+      "name": "抖音视频评论（接口优先）",
+      "description": "打开视频页拦截 comment/list 接口，从 JSON 解析全部评论",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "video_url",
+          "type": "string",
+          "description": "视频链接",
+          "required": true
+        }
+      ],
+      "content": "抖音评论抓取（接口优先）：\n1. browser_browse url={{video_url}} warmup_first=true scroll_rounds=2\n2. 若未触发接口：browser_click [data-e2e=\"feed-comment-icon\"] 或 text=评论\n3. browser_wait_api url_contains=comment/list timeout_ms=20000\n4. browser_get_network_data url_contains=comment/list limit=10\n5. 从 data.comments 解析 cid、text、user.nickname、digg_count、reply_comment_total；合并多页 cursor\n6. 接口为空才 browser_get_text 兜底\n7. 输出结构化评论列表后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+    },
+    {
       "id": "crawl-video-comments",
-      "name": "单个视频评论抓取",
-      "description": "抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等",
+      "name": "单个视频评论抓取（legacy）",
+      "description": "legacy 内置爬虫；新业务请用 douyin-comments-api",
       "type": "builtin",
       "enabled": true,
+      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
         {
@@ -118,10 +146,11 @@
     },
     {
       "id": "crawl-keyword-comments",
-      "name": "关键词批量评论抓取",
-      "description": "按关键词搜索视频并批量抓取前 N 个视频的全部评论",
+      "name": "关键词批量评论抓取（legacy）",
+      "description": "legacy；新业务请组合 douyin-search-keyword + douyin-comments-api",
       "type": "builtin",
       "enabled": true,
+      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
         {
@@ -166,10 +195,11 @@
     },
     {
       "id": "search-videos",
-      "name": "关键词搜索视频列表",
-      "description": "按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）",
+      "name": "关键词搜索视频列表（legacy）",
+      "description": "legacy 内置爬虫；新业务请用 douyin-search-keyword",
       "type": "builtin",
       "enabled": true,
+      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
         {
@@ -294,6 +324,77 @@
       "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
       "updated_at": "2026-06-01T23:10:35.567157+00:00"
+    },
+    {
+      "id": "xhs-feed-api",
+      "name": "小红书发现页（接口优先）",
+      "description": "浏览 explore 页，拦截 homefeed 接口解析笔记列表",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "条数上限",
+          "required": false,
+          "default": 20
+        }
+      ],
+      "content": "小红书发现页（接口优先）：\n1. browser_browse url=https://www.xiaohongshu.com/explore warmup_first=true home_url=https://www.xiaohongshu.com scroll_rounds=4\n2. browser_wait_api url_contains=homefeed timeout_ms=15000\n3. browser_get_network_data url_contains=homefeed limit=5\n4. 从 data.items[].note_card 解析 note_id、display_title、user.nickname、interact_info\n5. 生成 explore 链接；接口不足才 DOM 兜底\n6. 汇总 {{limit}} 条后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-search-api",
+      "name": "小红书搜索（接口优先）",
+      "description": "关键词搜索笔记，拦截 search/notes 接口",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "条数上限",
+          "required": false,
+          "default": 20
+        }
+      ],
+      "content": "小红书搜索（接口优先）：\n1. browser_browse url=https://www.xiaohongshu.com/search_result?keyword={{keyword}}&source=web_search_result_notes warmup_first=true scroll_rounds=5\n2. browser_wait_api url_contains=search/notes timeout_ms=20000\n3. browser_get_network_data url_contains=search/notes limit=5\n4. 从 data.items 解析 note_id、标题、作者；保留 xsec_token 拼链接\n5. 汇总 {{limit}} 条后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-comments-api",
+      "name": "小红书笔记评论（接口优先）",
+      "description": "打开笔记页拦截 comment/page 接口解析评论",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "note_url",
+          "type": "string",
+          "description": "笔记链接",
+          "required": true
+        }
+      ],
+      "content": "小红书评论（接口优先）：\n1. browser_browse url={{note_url}} warmup_first=true scroll_rounds=2\n2. browser_click 评论区域或 text=评论 触发加载\n3. browser_wait_api url_contains=comment/page timeout_ms=20000\n4. browser_get_network_data url_contains=comment/page limit=10\n5. 从 data.comments 解析 id、content、user_info.nickname、like_count、sub_comments\n6. 汇总后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
     }
   ]
 }

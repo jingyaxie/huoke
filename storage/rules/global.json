@@ -4,7 +4,7 @@
       "id": "browser-safety",
       "name": "浏览器操作安全",
       "description": "所有平台通用的浏览器自动化安全约束",
-      "content": "- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点",
+      "content": "- 架构：底层 BrowserRuntime（Chrome+人类行为+接口拦截）→ Skill（instruction/actions）承载业务\n- 业务逻辑写在 Skill 配置里，不在 Python 爬虫写死页面解析\n- 数据获取：browser_browse → browser_wait_api → browser_get_network_data 读完整 JSON\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点",
       "always_apply": true,
       "platforms": [],
       "enabled": true,
@@ -26,6 +26,20 @@
       "scope": "global",
       "created_at": "2026-06-01T23:10:35.568257+00:00",
       "updated_at": "2026-06-01T23:10:35.568257+00:00"
+    },
+    {
+      "id": "xiaohongshu-platform",
+      "name": "小红书平台规则",
+      "description": "操作 xiaohongshu.com 时的额外约束",
+      "content": "- 优先使用 xiaohongshu.com 域名页面\n- 数据获取策略（强制）：接口拦截 > 页面内嵌 JSON > DOM 解析\n- 发现页/热榜：拦截 `/api/sns/web/v1/homefeed`\n- 搜索：拦截 `/api/sns/web/v1/search/notes`，不要手工解析搜索页 DOM\n- 评论：拦截 `/api/sns/web/v2/comment/page` 与 `/comment/sub/page`，DOM 仅作最后兜底\n- 探索页 URL: https://www.xiaohongshu.com/explore\n- 笔记 URL 格式: https://www.xiaohongshu.com/explore/{note_id}\n- selector 仅用于触发评论/搜索接口，不用于批量解析列表",
+      "always_apply": true,
+      "platforms": [
+        "xiaohongshu"
+      ],
+      "enabled": true,
+      "scope": "global",
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-10T00:00:00.000000+00:00"
     },
     {
       "id": "douyin-social-actions",

@@ -6,10 +6,11 @@ from typing import Any
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from app.core.antibot import human_delay
+from app.core.antibot import human_click, human_delay, human_scroll, human_type
 from app.core.config import Settings
 from app.services.agent_browser_session import AgentBrowserSession
 from app.services.agent_network_capture import extract_embedded_page_data
+from app.services.browser_runtime import BrowserRuntime
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -145,10 +146,67 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "browser_warmup",
+            "description": "模拟真人：先访问平台首页滚动热身，建立正常浏览会话（底层能力，不含业务逻辑）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "home_url": {
+                        "type": "string",
+                        "description": "首页 URL，留空则使用当前平台默认首页",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_browse",
+            "description": "模拟真人浏览：可选首页热身 → 打开目标 URL → 随机延迟与滚动，触发 SPA 接口请求",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "目标页面 URL"},
+                    "warmup_first": {
+                        "type": "boolean",
+                        "description": "是否先访问首页热身，默认 true",
+                    },
+                    "home_url": {"type": "string", "description": "可选，自定义首页 URL"},
+                    "scroll_rounds": {
+                        "type": "integer",
+                        "description": "滚动次数，默认 2",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_wait_api",
+            "description": "等待浏览器拦截到匹配条件的 JSON 接口（XHR/Fetch），用于接口优先的数据获取",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url_contains": {
+                        "type": "string",
+                        "description": "URL/path 关键词，如 comment/list、search/notes、hotspot",
+                    },
+                    "min_count": {"type": "integer", "description": "最少匹配条数，默认 1"},
+                    "timeout_ms": {"type": "integer", "description": "超时毫秒，默认 15000"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "browser_get_network_data",
             "description": (
-                "读取浏览器自动拦截的 JSON 接口响应（XHR/Fetch）。"
-                "适用于抖音等 SPA：搜索、评论、视频详情等数据往往来自接口而非 DOM。"
+                "读取浏览器自动拦截的完整 JSON 接口响应（XHR/Fetch）。"
+                "业务解析由 Skill/Agent 完成，底层只返回原始 data。"
             ),
             "parameters": {
                 "type": "object",
@@ -242,6 +300,7 @@ class PlaywrightToolExecutor:
     def __init__(self, session: AgentBrowserSession, settings: Settings) -> None:
         self.session = session
         self.settings = settings
+        self.runtime = BrowserRuntime(session, settings)
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         try:
@@ -267,8 +326,27 @@ class PlaywrightToolExecutor:
                 return await self._get_text(page, arguments), None
             if name == "browser_get_page_info":
                 return await self._get_page_info(page), None
+            if name == "browser_warmup":
+                return await self.runtime.warmup(arguments.get("home_url")), None
+            if name == "browser_browse":
+                return await self.runtime.browse(
+                    arguments["url"],
+                    warmup_first=bool(arguments.get("warmup_first", True)),
+                    home_url=arguments.get("home_url"),
+                    scroll_rounds=int(arguments.get("scroll_rounds", 2)),
+                ), None
+            if name == "browser_wait_api":
+                return await self.runtime.wait_api(
+                    url_contains=arguments.get("url_contains"),
+                    min_count=int(arguments.get("min_count", 1)),
+                    timeout_ms=int(arguments.get("timeout_ms", 15000)),
+                ), None
             if name == "browser_get_network_data":
-                return await self._get_network_data(arguments), None
+                return self.runtime.query_api(
+                    url_contains=arguments.get("url_contains"),
+                    limit=int(arguments.get("limit", 5)),
+                    clear_buffer=bool(arguments.get("clear_buffer", False)),
+                ), None
             if name == "browser_screenshot":
                 return await self._screenshot(page), None
             if name == "task_complete":
@@ -300,8 +378,13 @@ class PlaywrightToolExecutor:
     async def _click(self, page: Page, args: dict[str, Any]) -> dict[str, Any]:
         selector = args["selector"]
         timeout = args.get("timeout_ms", 10000)
-        await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="action")
-        await page.locator(selector).first.click(timeout=timeout)
+        await human_click(
+            page,
+            selector,
+            self.settings,
+            tenant_id=self.session.tenant_id,
+            timeout=timeout,
+        )
         info = await self.session.page_info()
         return {"clicked": selector, "url": info["url"], "title": info["title"]}
 
@@ -309,10 +392,14 @@ class PlaywrightToolExecutor:
         selector = args["selector"]
         text = args["text"]
         timeout = args.get("timeout_ms", 10000)
-        await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="action")
-        locator = page.locator(selector).first
-        await locator.click(timeout=timeout)
-        await locator.fill(text, timeout=timeout)
+        await human_type(
+            page,
+            selector,
+            text,
+            self.settings,
+            tenant_id=self.session.tenant_id,
+            timeout=timeout,
+        )
         return {"filled": selector, "text_length": len(text)}
 
     async def _press(self, page: Page, args: dict[str, Any]) -> dict[str, Any]:
@@ -329,14 +416,25 @@ class PlaywrightToolExecutor:
     async def _scroll(self, page: Page, args: dict[str, Any]) -> dict[str, Any]:
         direction = args["direction"]
         amount = args.get("amount", 600)
-        await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="scroll")
         if direction == "down":
-            await page.evaluate(f"window.scrollBy(0, {amount})")
+            await human_scroll(
+                page,
+                self.settings,
+                tenant_id=self.session.tenant_id,
+                delta_y=amount,
+            )
         elif direction == "up":
-            await page.evaluate(f"window.scrollBy(0, -{amount})")
+            await human_scroll(
+                page,
+                self.settings,
+                tenant_id=self.session.tenant_id,
+                delta_y=-amount,
+            )
         elif direction == "bottom":
+            await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="scroll")
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         elif direction == "top":
+            await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="scroll")
             await page.evaluate("window.scrollTo(0, 0)")
         return {"scrolled": direction, "amount": amount if direction in {"down", "up"} else None}
 
@@ -372,28 +470,10 @@ class PlaywrightToolExecutor:
             "embedded_data": embedded_data,
             "hint": (
                 "SPA 页面数据优先看 api_captures 与 embedded_data；"
-                "需要更多接口详情时调用 browser_get_network_data(url_contains=...)。"
-                if api_captures or embedded_data.get("aweme_ids") or embedded_data.get("video_urls")
+                "需要完整 JSON 时调用 browser_get_network_data(url_contains=...)，业务解析由 Skill 完成。"
+                if api_captures or embedded_data.get("embedded_sources")
                 else None
             ),
-        }
-
-    async def _get_network_data(self, args: dict[str, Any]) -> dict[str, Any]:
-        url_contains = args.get("url_contains")
-        limit = int(args.get("limit", 5))
-        clear_buffer = bool(args.get("clear_buffer", False))
-        items = self.session.network_capture.query(
-            url_contains=url_contains,
-            limit=max(1, min(limit, 20)),
-            include_data=True,
-        )
-        if clear_buffer:
-            self.session.network_capture.clear()
-        return {
-            "url_contains": url_contains,
-            "count": len(items),
-            "items": items,
-            "hint": "数据来自页面加载/滚动/点击后自动拦截的 XHR/Fetch JSON 响应",
         }
 
     async def _screenshot(self, page: Page) -> dict[str, Any]:

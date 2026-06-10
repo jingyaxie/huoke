@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     frontend_origin: str = "http://localhost:5173"
 
+    douyin_home_url: str = "https://www.douyin.com"
     douyin_hot_url: str = "https://www.douyin.com/hot"
     default_tenant_id: str = "default"
     default_platform: str = "douyin"
@@ -37,22 +38,22 @@ class Settings(BaseSettings):
     douyin_storage_state_path: Path = BASE_DIR / "storage" / "douyin" / "storage_state.json"
     douyin_profile_dir: Path = BASE_DIR / "storage" / "douyin" / "profile"
     douyin_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
-    douyin_headless: bool = True
+    douyin_headless: bool = False
 
     xhs_home_url: str = "https://www.xiaohongshu.com"
     xhs_explore_url: str = "https://www.xiaohongshu.com/explore"
-    xhs_headless: bool = True
+    xhs_headless: bool = False
     xhs_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
 
     huoshan_home_url: str = "https://www.huoshan.com"
     huoshan_hot_url: str = "https://www.douyin.com/hot"
-    huoshan_headless: bool = True
+    huoshan_headless: bool = False
     huoshan_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
     huoshan_seed_user_ids: Optional[str] = None
     huoshan_hot_mode: str = "seed_then_fallback"
 
     kuaishou_home_url: str = "https://www.kuaishou.com"
-    kuaishou_headless: bool = True
+    kuaishou_headless: bool = False
     kuaishou_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
 
     antibot_enabled: bool = True
@@ -64,6 +65,9 @@ class Settings(BaseSettings):
     antibot_viewport_width: int = 1440
     antibot_viewport_height: int = 1200
     antibot_locale: str = "zh-CN"
+    antibot_browser_channel: Optional[str] = "chrome"
+    antibot_persistent_profile: bool = True
+    antibot_warmup_enabled: bool = True
 
     crawl_hour: int = 8
     crawl_minute: int = 0
@@ -78,7 +82,7 @@ class Settings(BaseSettings):
 
     agent_max_steps: int = 100
     agent_default_provider: str = "openai"
-    agent_headless: bool = True
+    agent_headless: bool = False
     agent_vision_enabled: bool = True
     agent_vision_model: Optional[str] = None
     agent_max_history_messages: int = 40

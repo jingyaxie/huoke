@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -10,10 +10,10 @@ from urllib.parse import urlparse
 
 from playwright.async_api import Page, Response
 
-MAX_ENTRIES = 80
-MAX_BODY_BYTES = 400_000
+MAX_ENTRIES = 120
+MAX_BODY_BYTES = 2_000_000
 MAX_SUMMARY_CHARS = 600
-MAX_STORED_PREVIEW_ITEMS = 12
+MAX_STORED_PREVIEW_ITEMS = 5
 
 _JSON_CONTENT_TYPES = ("application/json", "text/json", "application/javascript")
 
@@ -27,117 +27,20 @@ class CapturedEntry:
     content_type: str
     summary: str
     data: dict[str, Any] | list[Any] | None = None
+    preview: dict[str, Any] | list[Any] | None = None
     size_bytes: int = 0
     captured_at: float = field(default_factory=time.time)
 
 
-def _truncate(text: str, limit: int = MAX_SUMMARY_CHARS) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
-def _walk_aweme_ids(node: Any, out: list[str], limit: int = 30) -> None:
-    if len(out) >= limit:
-        return
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "aweme_id" and isinstance(value, (str, int)):
-                vid = str(value)
-                if re.fullmatch(r"\d{8,22}", vid) and vid not in out:
-                    out.append(vid)
-            else:
-                _walk_aweme_ids(value, out, limit)
-    elif isinstance(node, list):
-        for item in node:
-            _walk_aweme_ids(item, out, limit)
-
-
-def _pick_text(value: Any, *keys: str) -> str:
-    if not isinstance(value, dict):
-        return ""
-    for key in keys:
-        raw = value.get(key)
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return ""
-
-
-def _summarize_douyin_api(path: str, data: Any) -> tuple[str, dict[str, Any] | list[Any] | None]:
-    if not isinstance(data, (dict, list)):
-        return "非 JSON 对象", None
-
-    if "/comment/list" in path and isinstance(data, dict):
-        comments = data.get("comments") or []
-        total = int(data.get("total") or len(comments))
-        preview = []
-        for item in comments[:MAX_STORED_PREVIEW_ITEMS]:
-            if not isinstance(item, dict):
-                continue
-            user = item.get("user") or {}
-            preview.append(
-                {
-                    "comment_id": str(item.get("cid") or ""),
-                    "username": user.get("nickname") or "",
-                    "text": _truncate(str(item.get("text") or ""), 120),
-                    "digg_count": int(item.get("digg_count") or 0),
-                    "reply_total": int(item.get("reply_comment_total") or 0),
-                }
-            )
-        summary = f"评论接口：共 {total} 条，预览 {len(preview)} 条"
-        return summary, {"total": total, "comments_preview": preview}
-
-    if "search" in path and isinstance(data, dict):
-        aweme_ids: list[str] = []
-        _walk_aweme_ids(data, aweme_ids)
-        videos = []
-        for aweme_id in aweme_ids[:MAX_STORED_PREVIEW_ITEMS]:
-            videos.append(
-                {
-                    "aweme_id": aweme_id,
-                    "video_url": f"https://www.douyin.com/video/{aweme_id}",
-                }
-            )
-        summary = f"搜索接口：捕获 {len(aweme_ids)} 个视频 ID"
-        return summary, {"video_count": len(aweme_ids), "videos_preview": videos}
-
-    if isinstance(data, dict) and ("aweme_list" in data or "data" in data):
-        aweme_ids = []
-        _walk_aweme_ids(data, aweme_ids)
-        if aweme_ids:
-            preview = [
-                {"aweme_id": vid, "video_url": f"https://www.douyin.com/video/{vid}"}
-                for vid in aweme_ids[:MAX_STORED_PREVIEW_ITEMS]
-            ]
-            return f"视频列表接口：{len(aweme_ids)} 个 aweme_id", {
-                "video_count": len(aweme_ids),
-                "videos_preview": preview,
-            }
-
-    if isinstance(data, dict) and "comments" in data:
-        total = int(data.get("total") or len(data.get("comments") or []))
-        return f"评论数据：约 {total} 条", {"total": total}
-
-    if isinstance(data, list):
-        return f"JSON 数组，长度 {len(data)}", {"items_preview": data[:5]}
-
-    if isinstance(data, dict):
-        keys = list(data.keys())[:12]
-        return f"JSON 对象，字段: {', '.join(keys)}", {"keys": keys}
-
-    return "JSON 数据", None
-
-
 def summarize_api_payload(url: str, data: Any) -> tuple[str, dict[str, Any] | list[Any] | None]:
+    """通用 JSON 摘要，不做任何平台/业务字段解析。"""
     path = urlparse(url).path
-    if "/aweme/" in path or "douyin.com" in url or "iesdouyin.com" in url:
-        return _summarize_douyin_api(path, data)
     if isinstance(data, list):
-        return f"JSON 数组，长度 {len(data)}", {"items_preview": data[:5]}
+        return f"JSON 数组，长度 {len(data)}", {"path": path, "items_preview": data[:MAX_STORED_PREVIEW_ITEMS]}
     if isinstance(data, dict):
         keys = list(data.keys())[:12]
-        return f"JSON 对象，字段: {', '.join(keys)}", {"keys": keys}
-    return "JSON 数据", None
+        return f"JSON 对象，字段: {', '.join(keys)}", {"path": path, "keys": keys}
+    return "JSON 数据", {"path": path}
 
 
 class NetworkCapture:
@@ -168,6 +71,32 @@ class NetworkCapture:
     def clear(self) -> None:
         self._entries.clear()
 
+    @property
+    def entries(self) -> list[CapturedEntry]:
+        return list(self._entries)
+
+    def _matching_entries(self, url_contains: str | None) -> list[CapturedEntry]:
+        items = self._entries
+        if url_contains:
+            needle = url_contains.lower()
+            items = [e for e in items if needle in e.url.lower() or needle in e.path.lower()]
+        return items
+
+    async def wait_until(
+        self,
+        *,
+        url_contains: str | None = None,
+        min_count: int = 1,
+        timeout_ms: float = 15000,
+        poll_ms: float = 400,
+    ) -> bool:
+        deadline = time.time() + timeout_ms / 1000.0
+        while time.time() < deadline:
+            if len(self._matching_entries(url_contains)) >= min_count:
+                return True
+            await asyncio.sleep(poll_ms / 1000.0)
+        return len(self._matching_entries(url_contains)) >= min_count
+
     async def _capture_response(self, resp: Response) -> None:
         try:
             if resp.request.resource_type not in {"xhr", "fetch"}:
@@ -195,7 +124,8 @@ class NetworkCapture:
                 status=status,
                 content_type=content_type.split(";")[0],
                 summary=summary,
-                data=preview,
+                data=data,
+                preview=preview,
                 size_bytes=len(body),
             )
             self._entries.append(entry)
@@ -210,10 +140,7 @@ class NetworkCapture:
         limit: int = 10,
         url_contains: str | None = None,
     ) -> list[dict[str, Any]]:
-        items = self._entries
-        if url_contains:
-            needle = url_contains.lower()
-            items = [e for e in items if needle in e.url.lower() or needle in e.path.lower()]
+        items = self._matching_entries(url_contains)
         rows = items[-limit:]
         return [
             {
@@ -232,11 +159,7 @@ class NetworkCapture:
         limit: int = 5,
         include_data: bool = True,
     ) -> list[dict[str, Any]]:
-        items = self._entries
-        if url_contains:
-            needle = url_contains.lower()
-            items = [e for e in items if needle in e.url.lower() or needle in e.path.lower()]
-        selected = list(reversed(items[-limit:]))
+        selected = list(reversed(self._matching_entries(url_contains)[-limit:]))
         result: list[dict[str, Any]] = []
         for entry in selected:
             row: dict[str, Any] = {
@@ -254,62 +177,39 @@ class NetworkCapture:
 
 
 async def extract_embedded_page_data(page: Page) -> dict[str, Any]:
-    """Extract SSR / inline JSON payloads that SPAs embed in HTML."""
+    """提取页面内嵌 JSON 来源名，不做业务字段解析（解析由 Skill/Agent 完成）。"""
     script = """
     () => {
-      const out = { sources: [], aweme_ids: [], video_urls: [] };
-      const pushIds = (value) => {
-        const text = String(value || '');
-        const ids = text.match(/"aweme_id"\\s*:\\s*"(\\d{8,22})"/g) || [];
-        for (const m of ids) {
-          const id = (m.match(/"(\\d{8,22})"/) || [])[1];
-          if (id && !out.aweme_ids.includes(id)) out.aweme_ids.push(id);
-        }
-        const hrefs = text.match(/\\/video\\/(\\d{8,22})/g) || [];
-        for (const m of hrefs) {
-          const id = m.replace('/video/', '');
-          const url = `https://www.douyin.com/video/${id}`;
-          if (!out.video_urls.includes(url)) out.video_urls.push(url);
-        }
-      };
-
-      const globals = ['__INITIAL_STATE__', '__NEXT_DATA__', '__UNIVERSAL_DATA_FOR_REHYDRATION__'];
+      const sources = [];
+      const globals = [
+        '__INITIAL_STATE__',
+        '__NEXT_DATA__',
+        '__UNIVERSAL_DATA_FOR_REHYDRATION__',
+        'pageConfig',
+        '__PINIA__',
+        '__NUXT__',
+      ];
       for (const key of globals) {
-        const value = window[key];
-        if (value !== undefined) {
-          out.sources.push(key);
-          try { pushIds(JSON.stringify(value).slice(0, 500000)); } catch (_) {}
-        }
+        if (window[key] !== undefined) sources.push(`window.${key}`);
       }
-
       const scripts = Array.from(document.querySelectorAll('script'));
       for (const el of scripts.slice(0, 40)) {
         const text = el.textContent || '';
         if (!text || text.length < 40) continue;
-        if (text.includes('aweme_id') || text.includes('/video/') || text.includes('RENDER_DATA')) {
-          pushIds(text.slice(0, 300000));
-          if (text.includes('RENDER_DATA')) out.sources.push('script:RENDER_DATA');
-        }
+        if (text.includes('RENDER_DATA')) sources.push('script:RENDER_DATA');
+        if (text.includes('__INITIAL_STATE__')) sources.push('script:__INITIAL_STATE__');
+        if (text.includes('pageConfig')) sources.push('script:pageConfig');
       }
-
-      out.aweme_ids = out.aweme_ids.slice(0, 30);
-      out.video_urls = out.video_urls.slice(0, 30);
-      out.sources = [...new Set(out.sources)].slice(0, 8);
-      return out;
+      return { sources: [...new Set(sources)].slice(0, 12) };
     }
     """
     try:
         payload = await page.evaluate(script)
         if not isinstance(payload, dict):
             return {}
-        aweme_ids = payload.get("aweme_ids") or []
-        video_urls = payload.get("video_urls") or []
-        if aweme_ids and not video_urls:
-            video_urls = [f"https://www.douyin.com/video/{vid}" for vid in aweme_ids[:20]]
         return {
             "embedded_sources": payload.get("sources") or [],
-            "aweme_ids": aweme_ids[:20],
-            "video_urls": video_urls[:20],
+            "hint": "内嵌 JSON 仅报告来源，字段解析请在 Skill 中通过 browser_get_network_data 或 Agent 读取",
         }
     except Exception:
         return {}

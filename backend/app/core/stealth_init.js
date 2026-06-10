@@ -1,4 +1,5 @@
 (() => {
+  const meta = window.__ANTIBOT_STEALTH_META__ || {};
   const define = (object, key, value) => {
     try {
       Object.defineProperty(object, key, { get: () => value, configurable: true });
@@ -7,7 +8,19 @@
 
   // navigator.webdriver
   define(navigator, "webdriver", undefined);
-  delete Object.getPrototypeOf(navigator).webdriver;
+  try {
+    delete Object.getPrototypeOf(navigator).webdriver;
+  } catch (_) {}
+
+  // Playwright / CDP artifacts
+  try {
+    const cdcProps = Object.getOwnPropertyNames(window).filter((name) => /^cdc_|^__pw/.test(name));
+    for (const name of cdcProps) {
+      try {
+        delete window[name];
+      } catch (_) {}
+    }
+  } catch (_) {}
 
   // window.chrome
   if (!window.chrome) {
@@ -20,19 +33,40 @@
       onMessage: { addListener: () => {}, removeListener: () => {} },
     };
   }
+  if (!window.chrome.app) {
+    window.chrome.app = {
+      isInstalled: false,
+      InstallState: { DISABLED: "disabled", INSTALLED: "installed", NOT_INSTALLED: "not_installed" },
+      RunningState: { CANNOT_RUN: "cannot_run", READY_TO_RUN: "ready_to_run", RUNNING: "running" },
+    };
+  }
 
-  // languages / platform
-  define(navigator, "languages", ["zh-CN", "zh", "en-US", "en"]);
-  define(navigator, "language", "zh-CN");
-  define(navigator, "platform", "MacIntel");
-  define(navigator, "hardwareConcurrency", 8);
-  define(navigator, "deviceMemory", 8);
-  define(navigator, "maxTouchPoints", 0);
+  const languages = meta.languages || ["zh-CN", "zh", "en-US", "en"];
+  const platform = meta.platform || "MacIntel";
+  const hardwareConcurrency = meta.hardware_concurrency || 8;
+  const deviceMemory = meta.device_memory || 8;
+  const maxTouchPoints = meta.max_touch_points ?? 0;
+
+  define(navigator, "languages", languages);
+  define(navigator, "language", languages[0] || "zh-CN");
+  define(navigator, "platform", platform);
+  define(navigator, "hardwareConcurrency", hardwareConcurrency);
+  define(navigator, "deviceMemory", deviceMemory);
+  define(navigator, "maxTouchPoints", maxTouchPoints);
 
   // plugins / mimeTypes length (headless often returns 0)
-  const fakePlugins = [{ name: "Chrome PDF Plugin" }, { name: "Chrome PDF Viewer" }, { name: "Native Client" }];
+  const pluginData = [
+    { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer", description: "Portable Document Format" },
+    { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai", description: "" },
+    { name: "Native Client", filename: "internal-nacl-plugin", description: "" },
+  ];
+  const fakePlugins = Object.assign(pluginData, { item: (i) => pluginData[i], namedItem: (name) => pluginData.find((p) => p.name === name) });
+  const mimeTypes = Object.assign([{ type: "application/pdf", suffixes: "pdf", description: "" }], {
+    item: (i) => ({ type: "application/pdf" }),
+    namedItem: (type) => ({ type }),
+  });
   define(navigator, "plugins", fakePlugins);
-  define(navigator, "mimeTypes", [{ type: "application/pdf" }]);
+  define(navigator, "mimeTypes", mimeTypes);
 
   // permissions.query for notifications
   if (navigator.permissions && navigator.permissions.query) {
@@ -64,12 +98,14 @@
   } catch (_) {}
 
   // WebGL vendor / renderer
+  const webglVendor = meta.webgl_vendor || "Intel Inc.";
+  const webglRenderer = meta.webgl_renderer || "Intel Iris OpenGL Engine";
   const patchWebGL = (contextPrototype) => {
     if (!contextPrototype || !contextPrototype.getParameter) return;
     const getParameter = contextPrototype.getParameter;
     contextPrototype.getParameter = function (parameter) {
-      if (parameter === 37445) return "Intel Inc.";
-      if (parameter === 37446) return "Intel Iris OpenGL Engine";
+      if (parameter === 37445) return webglVendor;
+      if (parameter === 37446) return webglRenderer;
       return getParameter.call(this, parameter);
     };
   };
@@ -81,6 +117,6 @@
   // outer/inner dimensions sanity
   if (window.outerWidth === 0 && window.innerWidth > 0) {
     define(window, "outerWidth", window.innerWidth);
-    define(window, "outerHeight", window.innerHeight + 88);
+    define(window, "outerHeight", window.innerHeight + (meta.outer_height_offset || 88));
   }
 })();

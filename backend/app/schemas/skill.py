@@ -13,10 +13,10 @@ SkillSource = Literal["local", "skillhub"]
 ParamType = Literal["string", "integer", "number", "boolean"]
 
 BUILTIN_HANDLERS = {
-    "crawl_hot": "抓取当前平台热榜并入库",
-    "crawl_video_comments": "抓取单个视频/笔记的全部评论",
-    "crawl_keyword_comments": "按关键词搜索并批量抓取评论",
-    "search_videos": "按关键词搜索并返回结构化视频列表（接口拦截）",
+    "crawl_hot": "[legacy] 抓取热榜入库，新业务请用 *-api instruction 技能",
+    "crawl_video_comments": "[legacy] 内置评论爬虫，新业务请用 douyin-comments-api / xhs-comments-api",
+    "crawl_keyword_comments": "[legacy] 内置批量评论爬虫",
+    "search_videos": "[legacy] 内置搜索爬虫，新业务请用 douyin-search-keyword / xhs-search-api",
     "login_status": "检查当前平台登录状态",
 }
 
