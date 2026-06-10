@@ -108,6 +108,7 @@ SkillHub：skillhub_search / skillhub_install / read_skill_resource / run_skill_
 注意：
 - 不要编造未观察到的数据；解析必须基于 browser_get_network_data 返回的 JSON
 - 登录墙/验证码 → task_failed
+- 抖音关键词搜索：禁止 browser_goto/browser_browse 直达 /search/ 或 /aisearch；必须首页搜索框操作（见租户规则 douyin-platform）
 - 回复使用中文
 """
 
@@ -360,6 +361,26 @@ class AgentService:
             "failure_streak": dict(failure_streak or {}),
             "skill_priority": list(skill_priority or []),
         }
+
+    @staticmethod
+    def _is_douyin_direct_search_url(url: str) -> bool:
+        u = (url or "").lower()
+        if "douyin.com" not in u:
+            return False
+        return "/search/" in u or "/aisearch" in u or "://www.douyin.com/search" in u
+
+    @staticmethod
+    def _should_block_douyin_direct_search(
+        *,
+        platform: str,
+        fn_name: str,
+        fn_args: dict[str, Any],
+    ) -> bool:
+        if platform not in {"douyin", "huoshan"}:
+            return False
+        if fn_name not in {"browser_goto", "browser_browse"}:
+            return False
+        return AgentService._is_douyin_direct_search_url(str(fn_args.get("url") or ""))
 
     @staticmethod
     def _should_block_redundant_search(
@@ -950,6 +971,7 @@ class AgentService:
         max_steps = self.settings.agent_max_steps
         terminal_status: str | None = None
         terminal_summary: str | None = None
+        terminal_result: dict[str, Any] | None = None
         browser_session_id = session.session_id
         controller = self.run_controller
         recent_tool_calls: deque[str] = deque(maxlen=self._repeat_guard_window)
@@ -1052,6 +1074,46 @@ class AgentService:
                         phase = "review"
                         continue
                     current_snapshot = self._extract_task_snapshot(history)
+                    if self._should_block_douyin_direct_search(
+                        platform=self.platform,
+                        fn_name=fn_name,
+                        fn_args=fn_args,
+                    ):
+                        block_result = {
+                            "status": "failed",
+                            "error": (
+                                "抖音禁止直接打开搜索页 URL（/search/、/aisearch）。"
+                                "请 browser_browse 到 https://www.douyin.com 后用搜索框操作。"
+                            ),
+                            "guard": "douyin_no_direct_search",
+                            "tool": fn_name,
+                        }
+                        yield AgentEvent(
+                            type="tool_result",
+                            data={
+                                "tool": fn_name,
+                                "tool_call_id": tool_call_id,
+                                "result": block_result,
+                                "is_skill": fn_name.startswith("skill_") or fn_name in {"list_skills", "invoke_skill"},
+                                "phase": "review",
+                                "task_snapshot": current_snapshot,
+                                "agent_meta": self._agent_meta_payload(
+                                    tool_usage=tool_usage,
+                                    failure_streak=failure_streak,
+                                    skill_priority=skill_priority,
+                                ),
+                            },
+                        )
+                        tool_entry = {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "tool_name": fn_name,
+                            "content": json.dumps(block_result, ensure_ascii=False),
+                        }
+                        history.append(tool_entry)
+                        messages.append(tool_entry)
+                        phase = "review"
+                        continue
                     if self._should_block_redundant_search(
                         fn_name=fn_name,
                         fn_args=fn_args,
@@ -1353,6 +1415,9 @@ class AgentService:
                         phase = "review"
                         terminal_status = "completed"
                         terminal_summary = fn_args.get("summary", "")
+                        raw_result = fn_args.get("result")
+                        if isinstance(raw_result, dict):
+                            terminal_result = raw_result
                         break
                     if fn_name == "task_failed":
                         phase = "review"
@@ -1430,20 +1495,20 @@ class AgentService:
                 summary=terminal_summary or "",
                 provider=provider,
             )
-            yield AgentEvent(
-                type="done",
-                data={
-                    "status": final_status,
-                    "summary": terminal_summary,
-                    "session_id": browser_session_id,
-                    "run_id": run.run_id,
-                    "history_count": len(run.messages),
-                    "phase": phase,
-                    "task_snapshot": final_snapshot,
-                    "review_report": run.review_report,
-                    "validation_report": run.validation_report,
-                },
-            )
+            done_data: dict[str, Any] = {
+                "status": final_status,
+                "summary": terminal_summary,
+                "session_id": browser_session_id,
+                "run_id": run.run_id,
+                "history_count": len(run.messages),
+                "phase": phase,
+                "task_snapshot": final_snapshot,
+                "review_report": run.review_report,
+                "validation_report": run.validation_report,
+            }
+            if terminal_result is not None:
+                done_data["result"] = terminal_result
+            yield AgentEvent(type="done", data=done_data)
         except Exception as exc:
             self._persist_run(run, history, "failed")
             await self._maybe_auto_dream(run.run_id, summary=str(exc), provider=provider)

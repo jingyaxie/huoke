@@ -48,16 +48,31 @@ DEFAULT_GLOBAL_SKILLS: list[dict] = [
             }
         ],
         "content": (
-            "执行抖音关键词搜索任务：\n"
-            "1. 若不在 douyin.com，先 browser_goto 到 https://www.douyin.com\n"
-            "2. 找到搜索框（通常是 input 或 placeholder 含「搜索」），browser_fill 填入 {{keyword}}\n"
-            "3. browser_press Enter\n"
-            "4. browser_wait 等待结果加载\n"
-            "5. browser_get_page_info 查看搜索结果\n"
-            "6. 汇总前几条视频标题后 task_complete"
+            "抖音关键词搜索（已验证）：热榜入口→搜索框→拦截 general/search/single。\n"
+            "1. browser_browse url=https://www.douyin.com/hot scroll_rounds=1\n"
+            "2. browser_click [data-e2e=\"searchbar-input\"] → browser_fill {{keyword}} → Enter\n"
+            "3. browser_wait_api url_contains=general/search/single 或 search/item\n"
+            "4. browser_get_network_data 解析 aweme_id 后 task_complete\n"
+            "禁止打开 /search/ URL；须 DOUYIN_HEADLESS=false"
         ),
         "actions": [],
         "builtin_handler": None,
+    },
+    {
+        "id": "douyin-keyword-comments",
+        "name": "抖音关键词视频+评论（已验证）",
+        "description": "热榜入口搜索框→抓评论，一键 builtin，PlaywrightPool 持久 Profile",
+        "type": "builtin",
+        "enabled": True,
+        "scope": "global",
+        "parameters": [
+            {"name": "keyword", "type": "string", "description": "搜索关键词", "required": True},
+            {"name": "limit", "type": "integer", "description": "抓取视频数量", "required": False, "default": 3},
+            {"name": "show_browser", "type": "boolean", "description": "使用 VNC 可见浏览器", "required": False, "default": False},
+        ],
+        "content": "已验证生产链路，直接调用即可。",
+        "actions": [],
+        "builtin_handler": "douyin_keyword_comments",
     },
     {
         "id": "crawl-hot",

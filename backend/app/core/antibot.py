@@ -45,6 +45,79 @@ _BASE_LAUNCH_ARGS = [
 ]
 _LINUX_LAUNCH_ARGS = ["--no-sandbox", "--disable-setuid-sandbox"]
 
+_ALLOWED_NAV_SCHEMES = frozenset(
+    {"http", "https", "about", "data", "blob", "chrome", "chrome-extension", "file", "javascript", "ws", "wss"}
+)
+_BLOCKED_PROTOCOL_SCHEMES = (
+    "snssdk1128",
+    "snssdk",
+    "aweme",
+    "bytedance",
+    "douyin",
+    "tiktok",
+)
+
+_EXTERNAL_PROTOCOL_GUARD_JS = """
+(() => {
+  const allowed = new Set(['http','https','about','data','blob','file','javascript']);
+  const isBlocked = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    const m = url.match(/^([a-z][a-z0-9+.-]*):/i);
+    if (!m) return false;
+    return !allowed.has(m[1].toLowerCase());
+  };
+  const origOpen = window.open;
+  window.open = function(url, ...rest) {
+    if (isBlocked(url)) return null;
+    return origOpen.call(window, url, ...rest);
+  };
+  document.addEventListener('click', (ev) => {
+    const el = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+    if (el && isBlocked(el.getAttribute('href') || '')) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    }
+  }, true);
+})();
+"""
+
+
+def _is_external_protocol_url(url: str) -> bool:
+    if not url or "://" not in url:
+        return False
+    scheme = url.split("://", 1)[0].lower()
+    return scheme not in _ALLOWED_NAV_SCHEMES
+
+
+def seed_profile_protocol_prefs(profile_dir: Path) -> None:
+    """在 persistent profile 中静默拒绝外部协议，避免 Linux xdg-open 弹窗。"""
+    local_state_path = profile_dir / "Local State"
+    data: dict = {}
+    if local_state_path.exists():
+        try:
+            data = json.loads(local_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    handler = data.setdefault("protocol_handler", {})
+    excluded = handler.setdefault("excluded_schemes", {})
+    for scheme in _BLOCKED_PROTOCOL_SCHEMES:
+        excluded[scheme] = True
+    try:
+        local_state_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+async def install_external_protocol_guard(context: BrowserContext) -> None:
+    async def _route_handler(route) -> None:
+        if _is_external_protocol_url(route.request.url):
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
+
+    await context.route("**/*", _route_handler)
+    await context.add_init_script(_EXTERNAL_PROTOCOL_GUARD_JS)
+
 _DELAY_PROFILES: dict[str, tuple[float, float]] = {
     "default": (1.0, 1.0),
     "page_load": (1.4, 2.0),
@@ -53,6 +126,7 @@ _DELAY_PROFILES: dict[str, tuple[float, float]] = {
     "poll": (0.9, 1.1),
     "between_items": (1.0, 1.6),
     "warmup": (1.2, 1.8),
+    "fast": (0.12, 0.28),
 }
 
 class LoginRequiredError(RuntimeError):
@@ -86,10 +160,19 @@ def launch_kwargs(settings: Settings, *, headless: bool) -> dict:
     return kwargs
 
 
-def default_user_agent_for_env() -> str:
-    if py_platform.system() == "Linux":
-        return DEFAULT_LINUX_USER_AGENT
-    return DEFAULT_MAC_USER_AGENT
+def fingerprint_platform(settings: Settings) -> str:
+    mode = (settings.antibot_fingerprint_platform or "mac").strip().lower()
+    if mode == "auto":
+        return "mac" if py_platform.system() == "Darwin" else "linux"
+    if mode in {"mac", "darwin", "macos"}:
+        return "mac"
+    return "linux"
+
+
+def default_user_agent_for_settings(settings: Settings) -> str:
+    if fingerprint_platform(settings) == "mac":
+        return DEFAULT_MAC_USER_AGENT
+    return DEFAULT_LINUX_USER_AGENT
 
 
 def _chrome_version_binaries() -> list[list[str]]:
@@ -141,7 +224,7 @@ def user_agent(settings: Settings) -> str:
     custom = (settings.antibot_user_agent or "").strip()
     if custom:
         return _sync_chrome_version_in_ua(custom)
-    return _sync_chrome_version_in_ua(default_user_agent_for_env())
+    return _sync_chrome_version_in_ua(default_user_agent_for_settings(settings))
 
 
 def chrome_major_from_ua(ua: str) -> str:
@@ -154,7 +237,7 @@ def chrome_major_from_ua(ua: str) -> str:
 def client_hints_headers(settings: Settings) -> dict[str, str]:
     ua = user_agent(settings)
     major = chrome_major_from_ua(ua)
-    is_mac = "Mac OS" in ua or "Macintosh" in ua
+    is_mac = fingerprint_platform(settings) == "mac"
     platform_label = '"macOS"' if is_mac else '"Linux"'
     return {
         "sec-ch-ua": f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not_A Brand";v="24"',
@@ -168,8 +251,8 @@ def viewport(settings: Settings) -> dict[str, int]:
 
 
 def stealth_fingerprint_meta(settings: Settings) -> dict:
-    ua = user_agent(settings)
-    is_mac = "Mac OS" in ua or "Macintosh" in ua
+    major = chrome_major_from_ua(user_agent(settings))
+    is_mac = fingerprint_platform(settings) == "mac"
     if is_mac:
         return {
             "languages": ["zh-CN", "zh", "en-US", "en"],
@@ -180,6 +263,9 @@ def stealth_fingerprint_meta(settings: Settings) -> dict:
             "webgl_vendor": "Intel Inc.",
             "webgl_renderer": "Intel Iris OpenGL Engine",
             "outer_height_offset": 88,
+            "chrome_major": major,
+            "ua_data_platform": "macOS",
+            "ua_data_platform_version": "13.0.0",
         }
     return {
         "languages": ["zh-CN", "zh", "en-US", "en"],
@@ -190,6 +276,9 @@ def stealth_fingerprint_meta(settings: Settings) -> dict:
         "webgl_vendor": "Google Inc. (Intel)",
         "webgl_renderer": "ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6)",
         "outer_height_offset": 85,
+        "chrome_major": major,
+        "ua_data_platform": "Linux",
+        "ua_data_platform_version": "",
     }
 
 
@@ -300,6 +389,7 @@ async def launch_persistent_context(
 ) -> BrowserContext:
     profile_dir = profile_dir_for(settings, platform, tenant_id, account_id)
     profile_dir.mkdir(parents=True, exist_ok=True)
+    seed_profile_protocol_prefs(profile_dir)
     state = store.load(tenant_id, account_id)
     kwargs = launch_kwargs(settings, headless=headless)
     kwargs.update(persistent_context_kwargs(settings))
@@ -475,6 +565,7 @@ async def apply_stealth(
     *,
     tenant_id: str | None = None,
 ) -> None:
+    await install_external_protocol_guard(context)
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if ctx.stealth_enabled:
         await context.add_init_script(stealth_init_script(settings))

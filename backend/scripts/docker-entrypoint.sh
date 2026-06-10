@@ -87,6 +87,22 @@ PY
 
 sh /app/scripts/install-cjk-fonts.sh || echo "[fonts] WARN: CJK font install skipped" >&2
 
+# 禁止抖音等自定义协议唤起 xdg-open（自动化环境无法点击系统弹窗）
+if [ -d /opt/google/chrome ] || command -v google-chrome >/dev/null 2>&1; then
+  mkdir -p /etc/opt/chrome/policies/managed
+  cat >/etc/opt/chrome/policies/managed/huoke-protocol.json <<'EOF'
+{
+  "URLBlocklist": [
+    "snssdk://*",
+    "snssdk1128://*",
+    "aweme://*",
+    "bytedance://*",
+    "douyin://*"
+  ]
+}
+EOF
+fi
+
 # 运行时兜底：某些旧镜像未包含 PyJWT，先补齐依赖再启动 API。
 python - <<'PY'
 import importlib.util

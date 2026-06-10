@@ -239,11 +239,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "task_complete",
-            "description": "任务已成功完成，停止执行并返回结果摘要",
+            "description": "任务已成功完成，停止执行并返回结果摘要；对外接口任务请在 result 中返回结构化 JSON",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "任务完成摘要"},
+                    "result": {
+                        "type": "object",
+                        "description": "结构化交付结果（视频列表、评论等），供外部 API 直接消费",
+                    },
                 },
                 "required": ["summary"],
             },
@@ -350,7 +354,13 @@ class PlaywrightToolExecutor:
             if name == "browser_screenshot":
                 return await self._screenshot(page), None
             if name == "task_complete":
-                return {"status": "completed", "summary": arguments.get("summary", "")}, None
+                payload: dict[str, Any] = {
+                    "status": "completed",
+                    "summary": arguments.get("summary", ""),
+                }
+                if isinstance(arguments.get("result"), dict):
+                    payload["result"] = arguments["result"]
+                return payload, None
             if name == "task_failed":
                 return {"status": "failed", "reason": arguments.get("reason", "")}, None
             return {"error": f"未知工具: {name}"}, None

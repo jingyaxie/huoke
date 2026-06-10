@@ -68,6 +68,37 @@
   define(navigator, "plugins", fakePlugins);
   define(navigator, "mimeTypes", mimeTypes);
 
+  // navigator.userAgentData — 抖音等用其上报 browser_platform / os_name
+  const chromeMajor = String(meta.chrome_major || "131");
+  const uaPlatform = meta.ua_data_platform || "macOS";
+  const uaPlatformVersion = meta.ua_data_platform_version || "13.0.0";
+  const uaBrands = [
+    { brand: "Google Chrome", version: chromeMajor },
+    { brand: "Chromium", version: chromeMajor },
+    { brand: "Not_A Brand", version: "24" },
+  ];
+  const fakeUaData = {
+    brands: uaBrands,
+    mobile: false,
+    platform: uaPlatform,
+    getHighEntropyValues: async () => ({
+      architecture: "x86",
+      bitness: "64",
+      brands: uaBrands,
+      fullVersionList: uaBrands.map((item) => ({
+        brand: item.brand,
+        version: `${chromeMajor}.0.0.0`,
+      })),
+      mobile: false,
+      model: "",
+      platform: uaPlatform,
+      platformVersion: uaPlatformVersion,
+      uaFullVersion: `${chromeMajor}.0.0.0`,
+      wow64: false,
+    }),
+  };
+  define(navigator, "userAgentData", fakeUaData);
+
   // permissions.query for notifications
   if (navigator.permissions && navigator.permissions.query) {
     const originalQuery = navigator.permissions.query.bind(navigator.permissions);

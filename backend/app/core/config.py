@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     antibot_delay_min_ms: float = 2000
     antibot_delay_max_ms: float = 6000
     antibot_user_agent: Optional[str] = None
+    # mac | linux | auto — 服务器部署建议 mac，避免站点识别为 Linux 数据中心
+    antibot_fingerprint_platform: str = "mac"
     antibot_viewport_width: int = 1440
     antibot_viewport_height: int = 1200
     antibot_locale: str = "zh-CN"

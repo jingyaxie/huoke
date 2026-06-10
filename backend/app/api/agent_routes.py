@@ -59,6 +59,7 @@ from app.schemas.skill import (
     SkillRecordFromStepsRequest,
     SkillUpdate,
 )
+from app.schemas.open_pipeline import KeywordVideoCommentsRequest, KeywordVideoCommentsResponse
 from app.schemas.skillhub import (
     SkillHubConfigOut,
     SkillHubConfigUpdate,
@@ -78,6 +79,7 @@ from app.services.agent_service import AgentService
 from app.services.agent_run_store import AgentRunStore
 from app.services.agent_async_job_service import AgentAsyncJobService
 from app.services.agent_eval_service import AgentEvalService
+from app.services.open_pipeline_service import OpenPipelineService
 from app.services.skill_effect_service import SkillEffectService
 from app.services.skill_md_parser import extract_actions_from_steps, parse_skill_md, render_skill_md
 from app.services.skill_store import SkillStore
@@ -320,6 +322,22 @@ async def agent_chat_sync(
         message_count=len(run.messages),
         updated_at=run.updated_at,
     )
+
+
+@router.post("/pipeline/keyword-video-comments", response_model=KeywordVideoCommentsResponse)
+async def pipeline_keyword_video_comments(
+    payload: KeywordVideoCommentsRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
+) -> KeywordVideoCommentsResponse:
+    """对外 Pipeline：按关键词搜索热门视频并抓取评论（固定 Skill 驱动）。"""
+    from app.platforms.account_id import normalize_account_id
+
+    effective_account = normalize_account_id(payload.account_id or account_id)
+    svc = OpenPipelineService(settings, tenant_id, db_session=session)
+    return await svc.run_keyword_video_comments(payload, account_id=effective_account)
 
 
 @router.post("/jobs", response_model=AgentAsyncJobOut)

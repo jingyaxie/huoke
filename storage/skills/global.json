@@ -51,11 +51,59 @@
           "required": true
         }
       ],
-      "content": "抖音关键词搜索（接口优先）：\n1. browser_browse url=https://www.douyin.com warmup_first=true scroll_rounds=1\n2. browser_fill selector=[data-e2e=\"searchbar-input\"] text={{keyword}}；若无则 browser_goto https://www.douyin.com/search/{{keyword}}\n3. browser_press key=Enter 或 browser_click [data-e2e=\"searchbar-button\"]\n4. browser_wait_api url_contains=search timeout_ms=20000\n5. browser_get_network_data url_contains=search limit=5\n6. 从 items[].data 解析 aweme_id、desc、author.nickname、statistics.digg_count，生成 video_url\n7. 接口无结果才 browser_get_page_info；禁止直接扫 DOM 列表\n8. 汇总搜索结果后 task_complete",
+      "content": "抖音关键词搜索（已验证方案，实测 keyword=护肤 通过）\n\n【环境】有头 Chrome + 持久 Profile（DOUYIN_HEADLESS=false）；须已登录。VNC 已开抖音时优先复用当前浏览器窗口。\n\n【禁止】\n- 禁止 browser_goto / browser_browse 打开 /search/、/aisearch\n- 禁止从 www.douyin.com 冷启动（易进验证码中间页）；入口必须用热榜页\n\n【步骤】\n1. browser_browse url=https://www.douyin.com/hot scroll_rounds=1\n2. browser_click [data-e2e=\"searchbar-input\"]\n3. browser_fill {{keyword}} → browser_press Enter\n4. browser_scroll 3~5 次\n5. browser_wait_api url_contains=general/search/single 或 search/item timeout_ms=20000\n6. browser_get_network_data url_contains=search limit=5\n7. 从 items[].data 解析 aweme_id、desc、author.nickname、statistics.digg_count → video_url\n8. 汇总视频列表后 task_complete",
       "actions": [],
       "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
+      "updated_at": "2026-06-10T16:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-keyword-comments",
+      "name": "抖音关键词视频+评论（已验证）",
+      "description": "热榜入口→搜索框真人输入→拦截搜索接口→逐条抓评论。PlaywrightPool 持久 Profile，一键执行，无需 LLM 逐步点浏览器",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取视频数量",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选（上下文标记）",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地区筛选，可选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "是否使用 VNC 可见浏览器（可复用已开窗口）",
+          "required": false,
+          "default": false
+        }
+      ],
+      "content": "已验证生产链路（2026-06-10 实测 keyword=护肤 limit=2 成功）：\n1. PlaywrightPool 持久 Chrome Profile（DOUYIN_HEADLESS=false）\n2. 打开热榜 https://www.douyin.com/hot\n3. human_click + human_type 搜索框输入关键词 → Enter\n4. 拦截 general/search/single 或 search/item 拿 aweme_id\n5. 对每个视频拦截 comment/list 抓全量评论\n\n一键调用本 builtin 即可；仅当需要逐步调试时才用 /douyin-search-keyword + /douyin-comments-api。",
+      "actions": [],
+      "builtin_handler": "douyin_keyword_comments",
+      "created_at": "2026-06-10T16:30:00.000000+00:00",
+      "updated_at": "2026-06-10T16:30:00.000000+00:00"
     },
     {
       "id": "crawl-hot",
@@ -395,6 +443,40 @@
       "builtin_handler": null,
       "created_at": "2026-06-10T00:00:00.000000+00:00",
       "updated_at": "2026-06-10T00:00:00.000000+00:00"
+    },
+    {
+      "id": "open-douyin-keyword-video-comments",
+      "name": "【对外】抖音关键词视频+评论",
+      "description": "按关键词搜索抖音热门视频，抓取指定数量视频的全部评论，返回结构化 JSON",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "video_limit", "type": "integer", "description": "抓取视频数量上限", "required": false, "default": 5}
+      ],
+      "content": "对外 Pipeline：抖音关键词 → 热门视频 → 评论\n\n参数：keyword={{keyword}}，video_limit={{video_limit}}\n\n【推荐·已验证】直接 invoke_skill douyin-keyword-comments keyword={{keyword}} limit={{video_limit}}，拿到 output_files 与 results 后 task_complete。\n\n【仅当 builtin 失败时】才逐步：\n1. invoke_skill check-login\n2. invoke_skill douyin-search-keyword keyword={{keyword}}（热榜入口搜索框，禁止 /search/ URL）\n3. 对每条视频 invoke_skill douyin-comments-api\n\n5. task_complete.result：\n   {\"platform\":\"douyin\",\"keyword\":\"...\",\"videos\":[...],\"comments_by_video\":[...]}",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T12:00:00.000000+00:00",
+      "updated_at": "2026-06-10T12:00:00.000000+00:00"
+    },
+    {
+      "id": "open-xhs-keyword-video-comments",
+      "name": "【对外】小红书关键词笔记+评论",
+      "description": "按关键词搜索小红书热门笔记，抓取指定数量笔记的评论，返回结构化 JSON",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "video_limit", "type": "integer", "description": "抓取笔记数量上限", "required": false, "default": 5}
+      ],
+      "content": "对外 Pipeline：小红书关键词 → 热门笔记 → 评论（禁止偏离流程）\n\n参数：keyword={{keyword}}，video_limit={{video_limit}}\n\n1. invoke_skill check-login；status 非 ready 则 task_failed 说明需 VNC 登录小红书\n2. invoke_skill xhs-search-api keyword={{keyword}} limit={{video_limit}}\n3. 从搜索结果提取 note_url、note_id、title、author，取前 {{video_limit}} 条\n4. 对每条笔记依次 invoke_skill xhs-comments-api note_url=该链接；汇总 comments（id、content、nickname、like_count）\n5. task_complete：\n   - summary：一句话中文摘要\n   - result 必须为 JSON 对象：\n     {\n       \"platform\": \"xiaohongshu\",\n       \"keyword\": \"...\",\n       \"videos\": [{\"note_id\",\"note_url\",\"title\",\"author\"}],\n       \"comments_by_video\": [{\"note_url\",\"note_id\",\"comments\":[{\"comment_id\",\"text\",\"username\",\"like_count\"}]}]\n     }",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T12:00:00.000000+00:00",
+      "updated_at": "2026-06-10T12:00:00.000000+00:00"
     }
   ]
 }
