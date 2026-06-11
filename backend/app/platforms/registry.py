@@ -107,6 +107,24 @@ def get_dm_tool(settings: Settings, platform: str, tenant_id: str, account_id: s
     raise ValueError(f"平台 {platform} 尚未实现私信工具")
 
 
+def get_account_dashboard_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.account_dashboard import DouyinAccountDashboardTool
+
+        return DouyinAccountDashboardTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        from app.platforms.xiaohongshu.account_dashboard import XhsAccountDashboardTool
+
+        return XhsAccountDashboardTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        from app.platforms.kuaishou.account_dashboard import KuaishouAccountDashboardTool
+
+        return KuaishouAccountDashboardTool(settings, tenant_id, store, account_id=account_id)
+    raise ValueError(f"平台 {platform} 尚未实现账号主页监控")
+
+
 def get_comment_crawler(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
     platform = normalize_platform(platform)
     store = get_session_store(settings, platform)
@@ -128,16 +146,16 @@ def list_platforms() -> list[dict]:
         {
             "id": "douyin",
             "name": "抖音",
-            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm", "account_dashboard"],
         },
         {
             "id": "xiaohongshu",
             "name": "小红书",
-            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm", "account_dashboard"],
         },
         {
             "id": "kuaishou",
             "name": "快手",
-            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm", "account_bind"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm", "account_bind", "account_dashboard"],
         },
     ]

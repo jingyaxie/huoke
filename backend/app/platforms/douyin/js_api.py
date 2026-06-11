@@ -51,6 +51,7 @@ class DouyinJsApiTool:
         self.platform = PLATFORM
         self.store = store or DouyinSessionStore(settings)
 
+    @staticmethod
     def _is_usable_api_template(url: str) -> bool:
         if any(ex in url for ex in _API_TEMPLATE_EXCLUDES):
             return False

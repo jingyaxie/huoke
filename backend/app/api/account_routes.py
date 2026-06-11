@@ -3,10 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_authenticated_tenant_id
+from app.core.antibot import LoginRequiredError
 from app.core.config import Settings, get_settings
 from app.platforms.account_id import normalize_account_id
 from app.platforms.constants import BINDABLE_PLATFORMS, PLATFORM_LABELS
 from app.platforms.registry import get_session_store
+from app.schemas.account_dashboard import AccountDashboardRequest, AccountDashboardResponse
 from app.schemas.platform_account import (
     PlatformAccountBindingsOut,
     PlatformAccountCreate,
@@ -14,6 +16,7 @@ from app.schemas.platform_account import (
     PlatformAccountOut,
     UploadAccountStorageStateRequest,
 )
+from app.services.account_dashboard_service import AccountDashboardService
 from app.services.platform_account_store import PlatformAccountStore
 
 
@@ -133,6 +136,58 @@ async def account_platform_server_login(
         raise HTTPException(status_code=404, detail="账号不存在") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{account_id}/platforms/{platform}/dashboard",
+    response_model=AccountDashboardResponse,
+    summary="已登录账号主页监控",
+)
+async def fetch_account_dashboard(
+    account_id: str,
+    platform: str,
+    payload: AccountDashboardRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> AccountDashboardResponse:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    service = AccountDashboardService(tenant_id=tenant_id, account_id=normalize_account_id(account_id))
+    try:
+        result, output = await service.fetch_dashboard(
+            platform,
+            show_browser=payload.show_browser,
+            works_limit=payload.works_limit,
+        )
+    except LoginRequiredError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    data = {
+        "account": result.get("account") or {},
+        "notifications": result.get("notifications") or {},
+        "im": result.get("im") or {},
+        "works": result.get("works") or [],
+        "works_count": len(result.get("works") or []),
+        "capture_method": result.get("capture_method"),
+        "works_limit": result.get("works_limit"),
+        "logged_in": result.get("logged_in"),
+        "profile_url": result.get("profile_url"),
+    }
+    return AccountDashboardResponse(
+        ok=bool(result.get("ok")),
+        platform=platform,
+        tenant_id=tenant_id,
+        account_id=normalize_account_id(account_id),
+        data=data,
+        diagnostic=result.get("diagnostic"),
+        report_file=str(output),
+    )
 
 
 @router.put("/{account_id}/platforms/{platform}/storage-state")
