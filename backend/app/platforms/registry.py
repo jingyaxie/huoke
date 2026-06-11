@@ -53,6 +53,10 @@ def get_search_tool(settings: Settings, platform: str, tenant_id: str, account_i
         from app.platforms.xiaohongshu.search import XhsSearchTool
 
         return XhsSearchTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        from app.platforms.kuaishou.search import KuaishouSearchTool
+
+        return KuaishouSearchTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现搜索工具")
 
 
@@ -70,7 +74,9 @@ def get_comment_tool(settings: Settings, platform: str, tenant_id: str, account_
     if platform == "huoshan":
         return HuoshanCommentCrawler(settings, tenant_id, store, account_id=account_id)
     if platform == "kuaishou":
-        raise ValueError("快手评论抓取尚未实现")
+        from app.platforms.kuaishou.comment_tool import KuaishouCommentTool
+
+        return KuaishouCommentTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现评论工具")
 
 
@@ -85,6 +91,10 @@ def get_follow_tool(settings: Settings, platform: str, tenant_id: str, account_i
         from app.platforms.xiaohongshu.follow import XhsFollowTool
 
         return XhsFollowTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        from app.platforms.kuaishou.follow import KuaishouFollowTool
+
+        return KuaishouFollowTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现关注工具")
 
 
@@ -99,6 +109,10 @@ def get_dm_tool(settings: Settings, platform: str, tenant_id: str, account_id: s
         from app.platforms.xiaohongshu.dm import XhsDmTool
 
         return XhsDmTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        from app.platforms.kuaishou.dm import KuaishouDmTool
+
+        return KuaishouDmTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现私信工具")
 
 
@@ -114,7 +128,9 @@ def get_comment_crawler(settings: Settings, platform: str, tenant_id: str, accou
     if platform == "huoshan":
         return HuoshanCommentCrawler(settings, tenant_id, store, account_id=account_id)
     if platform == "kuaishou":
-        raise ValueError("快手评论抓取尚未实现")
+        from app.platforms.kuaishou.comments import KuaishouCommentCrawler
+
+        return KuaishouCommentCrawler(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现评论爬虫")
 
 
@@ -133,7 +149,7 @@ def list_platforms() -> list[dict]:
         {
             "id": "kuaishou",
             "name": "快手",
-            "capabilities": ["hot", "login", "account_bind"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm", "account_bind"],
         },
         {
             "id": "huoshan",
