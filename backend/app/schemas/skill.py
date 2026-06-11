@@ -20,6 +20,17 @@ BUILTIN_HANDLERS = {
     "login_status": "检查当前平台登录状态",
 }
 
+# 兼容旧版 global.json 中的废弃 handler 名
+LEGACY_BUILTIN_HANDLER_ALIASES = {
+    "douyin_keyword_comments": "crawl_keyword_comments",
+}
+
+
+def normalize_builtin_handler(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return LEGACY_BUILTIN_HANDLER_ALIASES.get(value, value)
+
 SKILL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 
 
@@ -66,6 +77,7 @@ class SkillBase(BaseModel):
     @field_validator("builtin_handler")
     @classmethod
     def validate_builtin_handler(cls, value: str | None) -> str | None:
+        value = normalize_builtin_handler(value)
         if value is not None and value not in BUILTIN_HANDLERS:
             raise ValueError(f"不支持的内置处理器: {value}")
         return value
@@ -102,6 +114,7 @@ class SkillUpdate(BaseModel):
     @field_validator("builtin_handler")
     @classmethod
     def validate_builtin_handler(cls, value: str | None) -> str | None:
+        value = normalize_builtin_handler(value)
         if value is not None and value not in BUILTIN_HANDLERS:
             raise ValueError(f"不支持的内置处理器: {value}")
         return value

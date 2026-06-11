@@ -101,7 +101,7 @@
       ],
       "content": "已验证生产链路（2026-06-10 实测 keyword=护肤 limit=2 成功）：\n1. PlaywrightPool 持久 Chrome Profile（DOUYIN_HEADLESS=false）\n2. 打开热榜 https://www.douyin.com/hot\n3. human_click + human_type 搜索框输入关键词 → Enter\n4. 拦截 general/search/single 或 search/item 拿 aweme_id\n5. 对每个视频拦截 comment/list 抓全量评论\n\n一键调用本 builtin 即可；仅当需要逐步调试时才用 /douyin-search-keyword + /douyin-comments-api。",
       "actions": [],
-      "builtin_handler": "douyin_keyword_comments",
+      "builtin_handler": "crawl_keyword_comments",
       "created_at": "2026-06-10T16:30:00.000000+00:00",
       "updated_at": "2026-06-10T16:30:00.000000+00:00"
     },

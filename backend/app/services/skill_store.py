@@ -8,7 +8,14 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.platforms.tenant import normalize_tenant_id
-from app.schemas.skill import SkillCreate, SkillOut, SkillScope, SkillUpdate, skill_tool_name
+from app.schemas.skill import (
+    LEGACY_BUILTIN_HANDLER_ALIASES,
+    SkillCreate,
+    SkillOut,
+    SkillScope,
+    SkillUpdate,
+    skill_tool_name,
+)
 
 
 def _utc_now() -> datetime:
@@ -383,6 +390,25 @@ class SkillStore:
             )
             return
         self._merge_missing_global_defaults()
+        self._repair_legacy_global_handlers()
+
+    def _repair_legacy_global_handlers(self) -> None:
+        skills = self._load_raw(self.global_path)
+        changed = False
+        now = _utc_now().isoformat()
+        for raw in skills:
+            handler = raw.get("builtin_handler")
+            mapped = LEGACY_BUILTIN_HANDLER_ALIASES.get(handler or "")
+            if not mapped:
+                continue
+            raw["builtin_handler"] = mapped
+            raw["updated_at"] = now
+            changed = True
+        if changed:
+            self.global_path.write_text(
+                json.dumps({"skills": skills}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     def _merge_missing_global_defaults(self) -> None:
         existing = self._load_raw(self.global_path)
