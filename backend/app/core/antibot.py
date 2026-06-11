@@ -370,9 +370,14 @@ async def _seed_cookies_from_state(context: BrowserContext, state: dict | None) 
     if not cookies:
         return
     try:
+        # 持久化 Profile 可能残留游客态 Cookie，先清空再以 storage_state 为准。
+        await context.clear_cookies()
         await context.add_cookies(cookies)
     except Exception:
-        pass
+        try:
+            await context.add_cookies(cookies)
+        except Exception:
+            pass
 
 
 async def launch_persistent_context(

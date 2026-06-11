@@ -25,6 +25,7 @@ from app.services.crawl_service import CrawlService
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.playwright_pool import PlaywrightPool
 from app.services.scheduler import build_scheduler
+from app.services.bootstrap_service import ensure_bootstrap_admin
 from app.services.tenant_auth_service import TenantAuthService
 
 
@@ -37,11 +38,16 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     session = SessionLocal()
     try:
+        if ensure_bootstrap_admin(session, settings):
+            session.commit()
         if settings.tenant_bootstrap_api_keys:
             auth = TenantAuthService(session, settings)
             for tenant_id, api_key in json.loads(settings.tenant_bootstrap_api_keys).items():
                 auth.ensure_api_key(tenant_id, api_key)
             session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

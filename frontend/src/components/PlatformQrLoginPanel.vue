@@ -99,10 +99,16 @@ async function pollOnce() {
     validityHint.value = data.validity_hint || validityHint.value;
     statusMessage.value = data.message || statusMessage.value;
 
-    if (data.login_ready || data.status === "confirmed") {
-      statusMessage.value = data.message || "登录成功，正在保存登录态…";
+    const loginReady =
+      data.login_ready ||
+      data.status === "confirmed" ||
+      data.login_status?.status === "ready";
+
+    if (loginReady) {
+      loginStatus.value = "confirmed";
+      statusMessage.value = data.message || data.login_status?.message || "登录成功";
       stopPolling();
-      emit("success", data);
+      window.setTimeout(() => emit("success", data), 1200);
       return;
     }
 

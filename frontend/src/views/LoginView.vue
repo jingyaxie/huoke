@@ -2,71 +2,211 @@
   <MainLayout>
     <section class="panel login-page">
       <div class="page-title">登录中心</div>
-      <el-tabs v-model="activeTab">
-        <el-tab-pane label="账号登录" name="account">
-          <el-form label-width="90px" class="login-form" @submit.prevent>
-            <el-form-item label="用户名">
-              <el-input v-model="username" placeholder="请输入用户名" />
-            </el-form-item>
-            <el-form-item label="密码">
-              <el-input v-model="password" show-password type="password" placeholder="请输入密码" />
-            </el-form-item>
-            <el-form-item>
-              <el-button :loading="accountLoading" type="primary" @click="onAccountLogin">登录</el-button>
-              <el-button :loading="meLoading" @click="loadMe">查询当前登录</el-button>
-            </el-form-item>
-          </el-form>
-          <el-alert v-if="meText" :title="meText" type="success" :closable="false" />
-        </el-tab-pane>
+      <p class="page-subtitle">系统账号登录，用于获取 JWT 并自动同步租户信息。</p>
 
-        <el-tab-pane label="抖音扫码登录" name="douyin">
-          <div class="row">
-            <el-button :loading="serverLoading" type="primary" @click="openServerLogin">打开扫码窗口</el-button>
-            <el-button :loading="statusLoading" @click="refreshStatus">刷新登录状态</el-button>
-          </div>
-          <el-alert
-            v-if="statusMessage"
-            :title="statusMessage"
-            :type="loginStatus === 'ready' ? 'success' : 'warning'"
-            :closable="false"
+      <el-form label-width="90px" class="login-form" @submit.prevent="onAccountLogin">
+        <el-form-item label="用户名">
+          <el-input v-model="username" placeholder="请输入用户名" @keyup.enter="onAccountLogin" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="password"
+            show-password
+            type="password"
+            placeholder="请输入密码"
+            @keyup.enter="onAccountLogin"
           />
-          <ServerLoginDialog
-            v-model="dialogVisible"
-            :url="serverLoginUrl"
-            :tenant-id="tenantId"
-            :account-id="accountId"
-            platform-label="抖音"
-          />
-        </el-tab-pane>
-      </el-tabs>
+        </el-form-item>
+        <el-form-item>
+          <el-button :loading="accountLoading" type="primary" @click="onAccountLogin">登录</el-button>
+          <el-button :loading="meLoading" @click="loadMe">查询当前登录</el-button>
+          <el-button v-if="isLoggedIn" @click="onLogout">退出登录</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-alert
+        v-if="meText"
+        :title="meText"
+        type="success"
+        show-icon
+        :closable="false"
+        class="status-alert"
+      />
+      <el-alert
+        title="默认管理员：admin / admin123（首次启动自动创建，密码至少 8 位；可通过 BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD 修改）"
+        type="info"
+        :closable="false"
+        class="hint-alert"
+      />
+
+      <div class="platform-section">
+        <div class="section-title">平台登录（抖音 / 小红书 / 快手）</div>
+        <p class="section-subtitle">
+          平台「已登录」表示 Cookie 文件存在；若浏览器 Profile 与 Cookie 不同步，或 Cookie 已过期，页面仍可能弹出登录框。
+          遇到此情况请先<strong>清除登录记录</strong>，再重新扫码登录。
+        </p>
+
+        <div class="platform-toolbar">
+          <span class="platform-meta">
+            租户 <strong>{{ tenantId }}</strong> · 账号 <strong>{{ activeAccountId }}</strong>
+          </span>
+          <el-button size="small" :loading="bindingsLoading" @click="loadPlatformBindings">刷新状态</el-button>
+        </div>
+
+        <el-table v-loading="bindingsLoading" :data="platformBindings" stripe size="small" class="platform-table">
+          <el-table-column prop="platform_label" label="平台" width="100" />
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag
+                size="small"
+                :type="row.status === 'ready' ? 'success' : row.status === 'missing' ? 'info' : 'warning'"
+              >
+                {{ statusLabel(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                size="small"
+                @click="openQrLogin(row)"
+              >
+                {{ qrLoginTarget?.platform === row.platform ? "扫码中" : "扫码登录" }}
+              </el-button>
+              <el-button
+                link
+                type="danger"
+                size="small"
+                :disabled="row.status === 'missing'"
+                :loading="clearingPlatform === row.platform"
+                @click="clearPlatformLogin(row)"
+              >
+                清除登录记录
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <PlatformQrLoginPanel
+          v-if="qrLoginTarget"
+          :account-id="activeAccountId"
+          :tenant-id="tenantId"
+          :platform="qrLoginTarget.platform"
+          :platform-label="qrLoginTarget.platformLabel"
+          @close="qrLoginTarget = null"
+          @success="onQrLoginSuccess"
+        />
+      </div>
     </section>
   </MainLayout>
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { ElMessage } from "element-plus";
+import { onMounted, ref } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import MainLayout from "../components/MainLayout.vue";
-import ServerLoginDialog from "../components/ServerLoginDialog.vue";
-import { fetchAuthMe, loginUser } from "../api/auth";
-import { fetchLoginStatus, fetchServerLoginUrl, triggerServerLogin } from "../api/douyin";
-import { getAccountId, getTenantId } from "../api/http";
+import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
+import { fetchAuthMe, loginUser, logoutUser } from "../api/auth";
+import {
+  clearAccountPlatformLoginSession,
+  createAccount,
+  fetchAccountBindings,
+  fetchAccounts,
+} from "../api/accounts";
+import { getAccessToken, getTenantId } from "../api/http";
 
-const activeTab = ref("account");
-const username = ref("");
+const username = ref("admin");
 const password = ref("");
 const meText = ref("");
 const accountLoading = ref(false);
 const meLoading = ref(false);
-
-const serverLoading = ref(false);
-const statusLoading = ref(false);
-const dialogVisible = ref(false);
-const serverLoginUrl = ref("");
-const statusMessage = ref("");
-const loginStatus = ref("unknown");
+const isLoggedIn = ref(Boolean(getAccessToken()));
 const tenantId = ref(getTenantId());
-const accountId = ref(getAccountId());
+const activeAccountId = ref("default");
+const platformBindings = ref([]);
+const bindingsLoading = ref(false);
+const qrLoginTarget = ref(null);
+const clearingPlatform = ref("");
+
+function statusLabel(status) {
+  return (
+    {
+      ready: "已登录",
+      missing: "未登录",
+      incomplete: "不完整",
+      error: "错误",
+    }[status] || status
+  );
+}
+
+async function ensureDefaultAccount() {
+  try {
+    const data = await fetchAccounts();
+    if (data.items?.length) {
+      activeAccountId.value = data.active_account_id || data.items[0].id;
+      return;
+    }
+    await createAccount("default", "默认账号");
+    activeAccountId.value = "default";
+  } catch {
+    activeAccountId.value = "default";
+  }
+}
+
+async function loadPlatformBindings() {
+  bindingsLoading.value = true;
+  try {
+    await ensureDefaultAccount();
+    const data = await fetchAccountBindings(activeAccountId.value);
+    platformBindings.value = data.platforms || [];
+  } catch (err) {
+    platformBindings.value = [];
+    ElMessage.error(err?.message || "加载平台登录状态失败");
+  } finally {
+    bindingsLoading.value = false;
+  }
+}
+
+function openQrLogin(row) {
+  qrLoginTarget.value = {
+    platform: row.platform,
+    platformLabel: row.platform_label,
+  };
+}
+
+async function onQrLoginSuccess() {
+  ElMessage.success("平台登录成功");
+  await loadPlatformBindings();
+  qrLoginTarget.value = null;
+}
+
+async function clearPlatformLogin(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将删除 ${row.platform_label} 的 Cookie 文件与浏览器 Profile，解决「已登录仍弹登录框」问题。清除后需重新扫码登录，是否继续？`,
+      "清除登录记录",
+      { type: "warning", confirmButtonText: "清除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  clearingPlatform.value = row.platform;
+  try {
+    await clearAccountPlatformLoginSession(activeAccountId.value, row.platform);
+    ElMessage.success(`${row.platform_label} 登录记录已清除，请重新扫码登录`);
+    if (qrLoginTarget.value?.platform === row.platform) {
+      qrLoginTarget.value = null;
+    }
+    await loadPlatformBindings();
+  } catch (err) {
+    ElMessage.error(err?.message || "清除失败");
+  } finally {
+    clearingPlatform.value = "";
+  }
+}
 
 async function onAccountLogin() {
   if (!username.value || !password.value) {
@@ -76,9 +216,14 @@ async function onAccountLogin() {
   accountLoading.value = true;
   try {
     const data = await loginUser(username.value, password.value);
+    isLoggedIn.value = true;
+    tenantId.value = data.tenant?.id || data.user?.tenant_id || getTenantId();
     ElMessage.success(`登录成功：${data.user?.username || username.value}`);
-    await loadMe();
+    meText.value = `当前用户：${data.user?.username || "-"}，租户：${tenantId.value}`;
+    await loadPlatformBindings();
   } catch (err) {
+    meText.value = "";
+    isLoggedIn.value = false;
     ElMessage.error(err?.message || "登录失败");
   } finally {
     accountLoading.value = false;
@@ -86,50 +231,44 @@ async function onAccountLogin() {
 }
 
 async function loadMe() {
+  if (!getAccessToken()) {
+    meText.value = "";
+    isLoggedIn.value = false;
+    ElMessage.warning("当前未登录，请先输入账号密码登录");
+    return;
+  }
   meLoading.value = true;
   try {
     const data = await fetchAuthMe();
-    meText.value = `当前用户：${data.user?.username || "-"}，租户：${data.tenant?.tenant_id || "-"}`;
+    isLoggedIn.value = true;
+    tenantId.value = data.tenant?.id || data.user?.tenant_id || getTenantId();
+    meText.value = `当前用户：${data.user?.username || "-"}，租户：${tenantId.value}`;
+    await loadPlatformBindings();
   } catch (err) {
     meText.value = "";
-    ElMessage.error(err?.message || "查询失败");
+    isLoggedIn.value = false;
+    ElMessage.error(err?.message || "查询失败，请重新登录");
   } finally {
     meLoading.value = false;
   }
 }
 
-async function openServerLogin() {
-  serverLoading.value = true;
-  try {
-    tenantId.value = getTenantId();
-    accountId.value = getAccountId();
-    const data = await fetchServerLoginUrl();
-    serverLoginUrl.value = data.url || "";
-    dialogVisible.value = true;
-    await triggerServerLogin();
-    ElMessage.success("请在弹窗内完成扫码/验证");
-    await refreshStatus();
-  } catch (err) {
-    ElMessage.error(err?.message || "打开扫码登录失败");
-  } finally {
-    serverLoading.value = false;
-  }
+function onLogout() {
+  logoutUser();
+  isLoggedIn.value = false;
+  meText.value = "";
+  platformBindings.value = [];
+  qrLoginTarget.value = null;
+  ElMessage.success("已退出登录");
 }
 
-async function refreshStatus() {
-  statusLoading.value = true;
-  try {
-    const data = await fetchLoginStatus();
-    loginStatus.value = data.status || "unknown";
-    statusMessage.value = data.message || "状态未知";
-  } catch (err) {
-    statusMessage.value = "登录状态查询失败";
-    loginStatus.value = "error";
-    ElMessage.error(err?.message || "登录状态查询失败");
-  } finally {
-    statusLoading.value = false;
+onMounted(async () => {
+  if (getAccessToken()) {
+    await loadMe();
+  } else {
+    await loadPlatformBindings();
   }
-}
+});
 </script>
 
 <style scoped>
@@ -140,16 +279,59 @@ async function refreshStatus() {
 .page-title {
   font-size: 22px;
   font-weight: 700;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
+}
+
+.page-subtitle {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .login-form {
   max-width: 520px;
 }
 
-.row {
+.status-alert,
+.hint-alert {
+  max-width: 720px;
+  margin-top: 12px;
+}
+
+.platform-section {
+  margin-top: 28px;
+  max-width: 900px;
+  padding-top: 20px;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.section-subtitle {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.platform-toolbar {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
+}
+
+.platform-meta {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.platform-table {
+  width: 100%;
 }
 </style>

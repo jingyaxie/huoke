@@ -126,6 +126,23 @@ def account_platform_login_status(
     return session_store.login_status(tenant_id, normalize_account_id(account_id))
 
 
+@router.delete("/{account_id}/platforms/{platform}/login-session", summary="清除平台登录记录")
+def clear_account_platform_login_session(
+    account_id: str,
+    platform: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    account = normalize_account_id(account_id)
+    session_store = get_session_store(settings, platform)
+    cleared = session_store.clear_session(tenant_id, account)
+    return {**cleared, **session_store.login_status(tenant_id, account)}
+
+
 @router.post("/{account_id}/platforms/{platform}/server-login")
 async def account_platform_server_login(
     account_id: str,

@@ -127,3 +127,15 @@ export async function cancelAccountPlatformQrLogin(accountId, platform, sessionI
   }
   return resp.json();
 }
+
+export async function clearAccountPlatformLoginSession(accountId, platform) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/login-session`,
+    { method: "DELETE", headers: headers() }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "清除登录记录失败");
+  }
+  return resp.json();
+}
