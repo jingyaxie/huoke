@@ -89,6 +89,24 @@ def _is_external_protocol_url(url: str) -> bool:
     return scheme not in _ALLOWED_NAV_SCHEMES
 
 
+_CHROME_SINGLETON_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
+
+def clear_stale_chrome_profile_locks(profile_dir: Path) -> None:
+    """Remove stale Chromium singleton files before launching a persistent profile.
+
+    Docker bind mounts and hot reload can leave broken SingletonLock symlinks that
+    block the next launch with ProcessSingleton errors. Avoid path.exists() here —
+    broken symlinks on bind mounts can raise OSError EINVAL.
+    """
+    for name in _CHROME_SINGLETON_FILES:
+        path = profile_dir / name
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def seed_profile_protocol_prefs(profile_dir: Path) -> None:
     """在 persistent profile 中静默拒绝外部协议，避免 Linux xdg-open 弹窗。"""
     local_state_path = profile_dir / "Local State"
@@ -396,12 +414,29 @@ async def launch_persistent_context(
     state = store.load(tenant_id, account_id)
     kwargs = launch_kwargs(settings, headless=headless)
     kwargs.update(persistent_context_kwargs(settings))
-    try:
-        context = await playwright.chromium.launch_persistent_context(str(profile_dir), **kwargs)
-    except Exception:
-        fallback = dict(kwargs)
-        fallback.pop("channel", None)
-        context = await playwright.chromium.launch_persistent_context(str(profile_dir), **fallback)
+
+    context: BrowserContext | None = None
+    last_error: Exception | None = None
+    for attempt in range(2):
+        clear_stale_chrome_profile_locks(profile_dir)
+        try:
+            context = await playwright.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+        except Exception as exc:
+            last_error = exc
+            fallback = dict(kwargs)
+            fallback.pop("channel", None)
+            try:
+                context = await playwright.chromium.launch_persistent_context(str(profile_dir), **fallback)
+            except Exception as fallback_exc:
+                last_error = fallback_exc
+                if attempt == 0 and "ProcessSingleton" in str(fallback_exc):
+                    continue
+                raise last_error from None
+        if context is not None:
+            break
+    if context is None:
+        raise last_error from None  # type: ignore[misc]
+
     await apply_stealth(context, settings, tenant_id=tenant_id)
     await _seed_cookies_from_state(context, state)
     return context

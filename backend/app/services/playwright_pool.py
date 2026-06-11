@@ -34,8 +34,8 @@ class PlaywrightPool:
             cls._instance = PlaywrightPool()
         return cls._instance
 
-    def _lock_for(self, platform: str, tenant_id: str) -> asyncio.Lock:
-        key = f"{platform}:{tenant_id}"
+    def _lock_for(self, platform: str, tenant_id: str, account_id: str = "default") -> asyncio.Lock:
+        key = f"{platform}:{tenant_id}:{account_id}"
         if key not in self._locks:
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
@@ -67,7 +67,7 @@ class PlaywrightPool:
         persist_state: bool = True,
         account_id: str = "default",
     ) -> AsyncIterator[tuple[BrowserContext, Page]]:
-        async with self._lock_for(platform, tenant_id):
+        async with self._lock_for(platform, tenant_id, account_id):
             resolved_headless = headless_for_platform(settings, platform, headless)
             playwright = await self._ensure_playwright()
             browser: Browser | None = None

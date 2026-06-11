@@ -92,9 +92,23 @@ class KuaishouFollowTool(KuaishouJsApiTool):
 
     async def _relation_on_page(self, page, *, user_id: str, username: str, action: str) -> dict:
         captured_urls: list[str] = []
-        await self.warmup_for_js_api(page, captured_urls)
-        template_url = await self.pick_api_template_url(page, captured_urls)
-        profile_url = await self._profile.open_profile(page, user_id)
+
+        async def on_response(resp) -> None:
+            url = resp.url
+            if "kuaishou.com/rest/" in url:
+                captured_urls.append(url)
+
+        page.on("response", on_response)
+        try:
+            await self.warmup_for_js_api(page, captured_urls)
+            profile_url = await self._profile.open_profile(page, user_id)
+            await page.wait_for_timeout(1500)
+            template_url = await self.pick_api_template_url(page, captured_urls)
+        finally:
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
         follow_status_before = await self._detect_follow_status(page)
 
@@ -221,23 +235,37 @@ class KuaishouFollowTool(KuaishouJsApiTool):
     async def _follow_via_ui(self, page) -> dict:
         if await self._detect_follow_status(page) == "followed":
             return {"ok": True, "skipped": True, "reason": "already_followed", "method": "profile_ui"}
-        btn = page.locator('button:has-text("关注")').first
-        if not await btn.count():
-            return {"ok": False, "error": "follow_button_not_found"}
-        try:
-            await btn.click()
-            await page.wait_for_timeout(2000)
-            followed = await self._detect_follow_status(page) == "followed"
-            return {"ok": followed, "method": "profile_ui", "verified_in_page": followed}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+        for selector in (
+            "span.follow-btn",
+            ".follow-btn",
+            "span.btn-main-box:has-text('关注')",
+            "button:has-text('关注')",
+            "div.btns:has-text('关注')",
+        ):
+            btn = page.locator(selector).first
+            if not await btn.count():
+                continue
+            try:
+                await btn.click()
+                await page.wait_for_timeout(2000)
+                followed = await self._detect_follow_status(page) == "followed"
+                return {"ok": followed, "method": "profile_ui", "verified_in_page": followed}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": "follow_button_not_found"}
 
     async def _unfollow_via_ui(self, page) -> dict:
         if await self._detect_follow_status(page) != "followed":
             return {"ok": True, "skipped": True, "reason": "not_followed", "method": "profile_ui"}
         for label in ("已关注", "互相关注"):
-            btn = page.locator(f'button:has-text("{label}")').first
-            if await btn.count():
+            for selector in (
+                f"span:has-text('{label}')",
+                f"button:has-text('{label}')",
+                f"div.btns:has-text('{label}')",
+            ):
+                btn = page.locator(selector).first
+                if not await btn.count():
+                    continue
                 try:
                     await btn.click()
                     await page.wait_for_timeout(2000)
