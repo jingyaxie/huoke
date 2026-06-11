@@ -6,6 +6,7 @@ PROD_ROOT="${PROD_ROOT:-/root/workspace/huoke}"
 PROD_PROJECT_NAME="${PROD_PROJECT_NAME:-huoke}"
 SKIP_BUILD="${SKIP_BUILD:-1}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
+UP_FRONTEND_PROD="${UP_FRONTEND_PROD:-$BUILD_FRONTEND}"
 SETUP_NGINX="${SETUP_NGINX:-1}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/api/health}"
 NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-_}"
@@ -39,6 +40,10 @@ done
 if [[ "$BUILD_FRONTEND" == "1" ]]; then
   echo "--- docker build frontend_prod（服务器上构建）---"
   "${COMPOSE[@]}" --profile prod build frontend_prod
+fi
+
+if [[ "$UP_FRONTEND_PROD" == "1" ]]; then
+  echo "--- 启动 frontend_prod ---"
   "${COMPOSE[@]}" --profile prod up -d --no-deps frontend_prod
 fi
 
@@ -49,7 +54,7 @@ fi
 
 echo "--- containers ---"
 "${COMPOSE[@]}" ps
-if [[ "$BUILD_FRONTEND" == "1" ]]; then
+if [[ "$UP_FRONTEND_PROD" == "1" ]]; then
   "${COMPOSE[@]}" --profile prod ps frontend_prod
 fi
 

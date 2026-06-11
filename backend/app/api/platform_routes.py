@@ -7,31 +7,19 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import (
     db_session,
-    effective_platform_id,
     effective_tenant_id,
     get_account_id,
     get_authenticated_tenant_id,
-    get_platform_id,
-    platform_session_store,
     require_path_tenant,
     resolve_path_platform_id,
 )
 from app.core.config import Settings, get_settings
 from app.platforms.registry import get_hot_crawler, get_session_store, list_platforms
-from app.platforms.session_store import PlatformSessionStore
 from app.repositories.report_repository import ReportRepository
-from app.schemas.comment_crawl import (
-    CommentCrawlResult,
-    DouyinLoginRequest,
-    KeywordCommentCrawlRequest,
-    KeywordCommentCrawlResponse,
-    UploadStorageStateRequest,
-    VideoCommentCrawlRequest,
-)
+from app.schemas.comment_crawl import DouyinLoginRequest, UploadStorageStateRequest
 from app.schemas.report import DailyReportOut
 from app.schemas.snapshot import SnapshotOut
 from app.schemas.trend import TrendPoint, TrendSeriesResponse
-from app.services.comment_crawler_service import CommentCrawlerService
 from app.services.crawl_service import CrawlService
 from app.services.report_service import ReportService
 from app.services.trend_service import TrendService
@@ -111,129 +99,14 @@ async def platform_login(
     return {"platform": pid, "tenant_id": tid, "storage_state_path": str(store.path_for(tid))}
 
 
-@router.post("/platforms/{platform}/douyin/login")
-async def platform_douyin_login(
-    platform: str,
-    payload: DouyinLoginRequest,
-    authenticated_tenant_id: str = Depends(get_authenticated_tenant_id),
-    settings: Settings = Depends(get_settings),
-):
-    pid = resolve_path_platform_id(platform)
-    if pid != "douyin":
-        raise HTTPException(status_code=400, detail="该平台请使用对应平台的登录接口")
-    tid = effective_tenant_id(authenticated_tenant_id, payload.tenant_id, settings)
-    crawler = get_hot_crawler(settings, pid, tid)
-    await crawler.login_and_save_cookies(show_browser=payload.show_browser)
-    store = get_session_store(settings, pid)
-    return {"platform": pid, "tenant_id": tid, "storage_state_path": str(store.path_for(tid))}
-
-
-@router.post("/platforms/{platform}/comments/video", response_model=CommentCrawlResult, deprecated=True)
-async def platform_crawl_video_comments(
-    platform: str,
-    payload: VideoCommentCrawlRequest,
-    tenant_id: str = Depends(get_authenticated_tenant_id),
-    account_id: str = Depends(get_account_id),
-    settings: Settings = Depends(get_settings),
-    session: Session = Depends(db_session),
-):
-    """已弃用：抖音请使用 POST /api/platforms/douyin/comments/videos"""
-    pid = resolve_path_platform_id(platform)
-    tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    if pid == "douyin":
-        from app.services.douyin_tool_service import DouyinToolService
-
-        service = DouyinToolService(settings, tenant_id=tid, account_id=account_id, session=session)
-        result, output, cache_meta = await service.crawl_video_comments(
-            video_url=payload.video_url,
-            show_browser=payload.show_browser,
-            force_refresh=payload.force_refresh,
-            cache_ttl_hours=payload.cache_ttl_hours,
-        )
-    else:
-        service = CommentCrawlerService(
-            settings, tenant_id=tid, platform=pid, account_id=account_id, session=session
-        )
-        result, output, cache_meta = await service.crawl_video_comments(
-            payload.video_url,
-            show_browser=payload.show_browser,
-            force_refresh=payload.force_refresh,
-            cache_ttl_hours=payload.cache_ttl_hours,
-        )
-    return {
-        "platform": pid,
-        "tenant_id": tid,
-        "account_id": account_id,
-        "video_url": result["video_url"],
-        "output_file": str(output),
-        "total_comments_captured": result["total_comments_captured"],
-        "api_total_top_comments": result["api_total_top_comments"],
-        "cache": cache_meta,
-    }
-
-
-@router.post("/platforms/{platform}/comments/keyword", response_model=KeywordCommentCrawlResponse, deprecated=True)
-async def platform_crawl_keyword_comments(
-    platform: str,
-    payload: KeywordCommentCrawlRequest,
-    tenant_id: str = Depends(get_authenticated_tenant_id),
-    account_id: str = Depends(get_account_id),
-    settings: Settings = Depends(get_settings),
-    session: Session = Depends(db_session),
-):
-    """已弃用：抖音请使用 POST /api/platforms/douyin/comments/keyword"""
-    pid = resolve_path_platform_id(platform)
-    tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    cache_meta = None
-    if pid == "douyin":
-        from app.services.douyin_tool_service import DouyinToolService
-
-        service = DouyinToolService(settings, tenant_id=tid, account_id=account_id, session=session)
-        results, outputs, diagnostic, session_meta, cache_meta = await service.crawl_keyword_comments(
-            keyword=payload.keyword,
-            limit=payload.limit,
-            show_browser=payload.show_browser,
-            days=payload.days,
-            region=payload.region,
-            guest_mode=payload.guest_mode,
-            force_refresh=payload.force_refresh,
-            cache_ttl_hours=payload.cache_ttl_hours,
-        )
-    else:
-        service = CommentCrawlerService(
-            settings, tenant_id=tid, platform=pid, account_id=account_id, session=session
-        )
-        results, outputs, diagnostic, session_meta, cache_meta = await service.crawl_keyword_comments(
-            keyword=payload.keyword,
-            limit=payload.limit,
-            show_browser=payload.show_browser,
-            days=payload.days,
-            region=payload.region,
-            guest_mode=payload.guest_mode,
-            force_refresh=payload.force_refresh,
-            cache_ttl_hours=payload.cache_ttl_hours,
-        )
-    items = [
-        {
-            "video_url": result["video_url"],
-            "output_file": str(output),
-            "total_comments_captured": result["total_comments_captured"],
-            "api_total_top_comments": result["api_total_top_comments"],
-        }
-        for result, output in zip(results, outputs, strict=False)
-    ]
-    return {
-        "platform": pid,
-        "tenant_id": tid,
-        "keyword": payload.keyword,
-        "videos_found": len(results),
-        "crawled": len(items),
-        "diagnostic": diagnostic,
-        "guest_mode": session_meta.get("guest_mode", payload.guest_mode),
-        "session_mode": session_meta.get("session_mode", "logged_in"),
-        "items": items,
-        "cache": cache_meta,
-    }
+@router.get("/comments/download")
+def download_comment_file(file_name: str = Query(..., min_length=1)):
+    settings = get_settings()
+    safe_name = Path(file_name).name
+    path = settings.report_output_dir / safe_name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Result file not found")
+    return FileResponse(path, media_type="application/json", filename=safe_name)
 
 
 @router.get("/platforms/{platform}/hot/videos", response_model=list[SnapshotOut])
@@ -271,6 +144,24 @@ def platform_hot_authors(
         }
         for row in rows
     ]
+
+
+@router.get("/platforms/{platform}/videos/{video_id}/trend", response_model=TrendSeriesResponse)
+def platform_video_trend(
+    platform: str,
+    video_id: int,
+    days: int = Query(default=30, ge=1, le=365),
+    session: Session = Depends(db_session),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+):
+    pid = resolve_path_platform_id(platform)
+    service = TrendService(session, tenant_id=tenant_id, platform=pid)
+    video = service.video_repo.get_by_id(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    rows = service.video_trend(video_id, days)
+    points = [TrendPoint(day=row.snapshot_date, rank=row.rank, rank_change=row.rank_change) for row in rows]
+    return TrendSeriesResponse(video_id=video_id, title=video.title, points=points)
 
 
 @router.get("/platforms/{platform}/overview")

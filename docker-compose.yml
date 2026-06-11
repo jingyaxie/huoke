@@ -74,6 +74,7 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+    image: huoke-frontend-prod:latest
     container_name: douyin_frontend_prod
     restart: unless-stopped
     depends_on:

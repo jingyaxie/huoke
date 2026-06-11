@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models.user import User
-from app.platforms.constants import DEFAULT_PLATFORM
 from app.platforms.registry import get_session_store
 from app.platforms.session_store import PlatformSessionStore
 from app.platforms.account_id import normalize_account_id
@@ -184,6 +183,3 @@ def platform_session_store(
 ) -> PlatformSessionStore:
     return get_session_store(settings, platform)
 
-
-def douyin_session_store(settings: Settings = Depends(get_settings)) -> PlatformSessionStore:
-    return get_session_store(settings, DEFAULT_PLATFORM)

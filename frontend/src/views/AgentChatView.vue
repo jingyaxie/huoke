@@ -609,21 +609,28 @@
           <el-table-column prop="message" label="说明" min-width="160" show-overflow-tooltip />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-button link type="primary" size="small" :loading="bindingLoginPlatform === row.platform" @click="bindPlatformLogin(row)">
-                扫码登录
+              <el-button
+                link
+                type="primary"
+                size="small"
+                @click="bindPlatformLogin(row)"
+              >
+                {{ qrLoginTarget?.platform === row.platform ? "扫码中" : "扫码登录" }}
               </el-button>
             </template>
           </el-table-column>
         </el-table>
-      </el-drawer>
 
-      <ServerLoginDialog
-        v-model="loginDialogVisible"
-        :url="serverLoginUrl"
-        :tenant-id="tenantId"
-        :account-id="activeAccountId"
-        :platform-label="bindingLoginPlatformLabel"
-      />
+        <PlatformQrLoginPanel
+          v-if="qrLoginTarget"
+          :account-id="activeAccountId"
+          :tenant-id="tenantId"
+          :platform="qrLoginTarget.platform"
+          :platform-label="qrLoginTarget.platformLabel"
+          @close="qrLoginTarget = null"
+          @success="onQrLoginSuccess"
+        />
+      </el-drawer>
 
       <el-drawer v-model="experiencesDrawerVisible" title="经验库（做梦）" size="620px" @open="loadExperiences">
         <p class="skills-hint">
@@ -979,14 +986,13 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowDown, ChatLineRound, DArrowLeft, DArrowRight, Delete, Loading, Plus, Setting, Top } from "@element-plus/icons-vue";
 import AgentMessageBlock from "../components/AgentMessageBlock.vue";
 import AgentStreamingBlock from "../components/AgentStreamingBlock.vue";
-import ServerLoginDialog from "../components/ServerLoginDialog.vue";
+import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
 import { getAccountId, getApiKey, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
 import {
   createAccount,
   fetchAccountBindings,
   fetchAccounts,
   setActiveAccount,
-  triggerAccountPlatformLogin,
 } from "../api/accounts";
 import { renderChatMarkdown } from "../utils/chatMarkdown";
 import {
@@ -1170,12 +1176,9 @@ const accountBindings = ref([]);
 const newAccountId = ref("");
 const newAccountLabel = ref("");
 const accountCreating = ref(false);
-const bindingLoginPlatform = ref("");
-const bindingLoginPlatformLabel = ref("");
+const qrLoginTarget = ref(null);
 const bindingStatus = ref(null);
 const bindingBlocked = computed(() => bindingStatus.value && !bindingStatus.value.ready);
-const loginDialogVisible = ref(false);
-const serverLoginUrl = ref("");
 const experiences = ref([]);
 const selectedExperience = ref(null);
 const dreamConsolidating = ref(false);
@@ -1529,20 +1532,17 @@ async function createNewAccount() {
   }
 }
 
-async function bindPlatformLogin(row) {
-  bindingLoginPlatform.value = row.platform;
-  bindingLoginPlatformLabel.value = row.platform_label || row.platform;
-  try {
-    const result = await triggerAccountPlatformLogin(activeAccountId.value, row.platform);
-    serverLoginUrl.value = result.vnc_url || row.vnc_url || "";
-    loginDialogVisible.value = true;
-    ElMessage.success(result.message || "请在 VNC 窗口完成扫码登录");
-  } catch (err) {
-    ElMessage.error(err.message || "启动登录失败");
-  } finally {
-    bindingLoginPlatform.value = "";
-    bindingLoginPlatformLabel.value = "";
-  }
+function bindPlatformLogin(row) {
+  qrLoginTarget.value = {
+    platform: row.platform,
+    platformLabel: row.platform_label || row.platform,
+  };
+}
+
+async function onQrLoginSuccess() {
+  ElMessage.success("平台账号绑定成功");
+  qrLoginTarget.value = null;
+  await loadAccountBindings();
 }
 
 async function loadExperiences() {
@@ -2917,9 +2917,9 @@ watch(provider, (value) => {
   updateProviderNote();
 });
 
-watch(loginDialogVisible, (open, wasOpen) => {
-  if (wasOpen && !open) {
-    loadAccountBindings();
+watch(accountsDrawerVisible, (open) => {
+  if (!open) {
+    qrLoginTarget.value = null;
   }
 });
 

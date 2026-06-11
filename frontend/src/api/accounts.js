@@ -87,3 +87,43 @@ export async function fetchAccountPlatformLoginStatus(accountId, platform) {
   if (!resp.ok) throw new Error("查询登录状态失败");
   return resp.json();
 }
+
+export async function createAccountPlatformQrLogin(accountId, platform, { refresh = true } = {}) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/qr-login`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ refresh }),
+    }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "获取登录二维码失败");
+  }
+  return resp.json();
+}
+
+export async function fetchAccountPlatformQrLoginStatus(accountId, platform, sessionId) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/qr-login/${encodeURIComponent(sessionId)}`,
+    { headers: headers() }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "查询二维码状态失败");
+  }
+  return resp.json();
+}
+
+export async function cancelAccountPlatformQrLogin(accountId, platform, sessionId) {
+  const resp = await fetch(
+    `${baseURL}/accounts/${encodeURIComponent(accountId)}/platforms/${encodeURIComponent(platform)}/qr-login/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE", headers: headers() }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "取消二维码登录失败");
+  }
+  return resp.json();
+}

@@ -393,24 +393,27 @@ const kuaishouEndpoints = [
 
 const generalEndpoints = [
   { method: "GET", path: "/api/health", summary: "健康检查" },
-  { method: "POST", path: "/api/crawl/hot", summary: "抓取热榜" },
-  { method: "GET", path: "/api/hot/videos", summary: "热门视频列表" },
-  { method: "GET", path: "/api/hot/authors", summary: "热门作者列表" },
   {
     method: "POST",
-    path: "/api/comments/video",
-    summary: "单视频评论抓取（通用）",
-    body: { video_url: "https://www.douyin.com/video/xxx", show_browser: false },
+    path: "/api/platforms/{platform}/crawl/hot",
+    summary: "抓取热榜",
+    query: { limit: 100, force_refresh: false },
   },
   {
-    method: "POST",
-    path: "/api/comments/keyword",
-    summary: "关键词批量评论抓取（通用）",
-    body: { keyword: "淋浴房", limit: 3, days: 3 },
+    method: "GET",
+    path: "/api/platforms/{platform}/hot/videos",
+    summary: "热门视频列表",
+    query: { limit: 100 },
   },
-  { method: "GET", path: "/api/comments/download", summary: "下载评论文件", query: { file: "xxx.json" } },
-  { method: "POST", path: "/api/reports/daily", summary: "生成热点日报" },
-  { method: "GET", path: "/api/reports", summary: "日报列表" },
+  {
+    method: "GET",
+    path: "/api/platforms/{platform}/hot/authors",
+    summary: "热门作者列表",
+    query: { limit: 50 },
+  },
+  { method: "GET", path: "/api/comments/download", summary: "下载评论 JSON 文件", query: { file_name: "xxx.json" } },
+  { method: "POST", path: "/api/platforms/{platform}/reports/daily", summary: "生成热点日报" },
+  { method: "GET", path: "/api/platforms/{platform}/reports", summary: "日报列表" },
 ];
 
 function refreshContext() {
