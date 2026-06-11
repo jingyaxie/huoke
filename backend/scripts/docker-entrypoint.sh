@@ -117,6 +117,7 @@ PY
 
 start_vnc
 wait_mysql
+python /app/scripts/repair_db_before_migrate.py || echo "[db-repair] skipped or failed; continuing" >&2
 alembic upgrade head
 if [ "${UVICORN_RELOAD:-0}" = "1" ]; then
   exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

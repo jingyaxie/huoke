@@ -15,17 +15,27 @@ from app.schemas.open_pipeline import (
 from app.services.agent_async_job_service import AgentAsyncJobService
 from app.services.agent_service import AgentService
 from app.services.cached_crawl_coordinator import CachedCrawlCoordinator
+from app.services.comment_crawler_service import CommentCrawlerService
 
 _PLATFORM_SKILL: dict[str, str] = {
     "douyin": "open-douyin-keyword-video-comments",
     "xiaohongshu": "open-xhs-keyword-video-comments",
 }
 
+_BUILTIN_PIPELINE_PLATFORMS = frozenset({"xiaohongshu"})
+
+
+def _pipeline_skill_args(req: KeywordVideoCommentsRequest) -> str:
+    parts = [f"keyword={req.keyword}", f"video_limit={req.video_limit}", f"days={req.days}"]
+    if req.region:
+        parts.append(f"region={req.region}")
+    return " ".join(parts)
+
 
 def _build_agent_message(req: KeywordVideoCommentsRequest, platform: str) -> str:
     skill_id = _PLATFORM_SKILL[platform]
     return (
-        f"/{skill_id} keyword={req.keyword} video_limit={req.video_limit}\n"
+        f"/{skill_id} {_pipeline_skill_args(req)}\n"
         f"请严格执行技能指南，最终在 task_complete.result 返回结构化 JSON。"
     )
 
@@ -57,6 +67,8 @@ class OpenPipelineService:
                 keyword=req.keyword,
                 platforms=list(req.platforms),
                 video_limit=req.video_limit,
+                days=req.days,
+                region=req.region,
                 force_refresh=req.force_refresh,
                 cache_ttl_hours=req.cache_ttl_hours,
             )
@@ -100,6 +112,8 @@ class OpenPipelineService:
                     keyword=req.keyword,
                     platforms=list(req.platforms),
                     video_limit=req.video_limit,
+                    days=req.days,
+                    region=req.region,
                     payload=response.model_dump(mode="json"),
                     cache_ttl_hours=req.cache_ttl_hours,
                 )
@@ -120,6 +134,8 @@ class OpenPipelineService:
             "keyword": req.keyword,
             "platforms": list(req.platforms),
             "video_limit": req.video_limit,
+            "days": req.days,
+            "region": req.region,
         }
         stale = coordinator.cache.lookup_stale("pipeline_keyword_comments", params)
         if stale is None:
@@ -140,6 +156,119 @@ class OpenPipelineService:
             cache=meta,
         )
 
+    @staticmethod
+    def _pipeline_result_from_crawl(
+        *,
+        platform: str,
+        keyword: str,
+        region: str | None,
+        results: list[dict],
+        outputs: list,
+        diagnostic: str | None,
+    ) -> PlatformPipelineResult:
+        videos: list[dict] = []
+        comments_by_video: list[dict] = []
+        for row in results:
+            note_url = row.get("note_url") or row.get("video_url") or ""
+            note_id = row.get("content_id") or row.get("note_id") or row.get("aweme_id") or ""
+            videos.append(
+                {
+                    "note_id": note_id,
+                    "note_url": note_url,
+                    "title": row.get("title") or "",
+                    "author": row.get("author") or row.get("author_name") or "",
+                }
+            )
+            comments_by_video.append(
+                {
+                    "note_url": note_url,
+                    "note_id": note_id,
+                    "comments": [
+                        {
+                            "comment_id": c.get("comment_id"),
+                            "text": c.get("comment") or c.get("text"),
+                            "username": c.get("nickname") or c.get("username"),
+                            "like_count": c.get("digg_count"),
+                        }
+                        for c in (row.get("comments") or [])[:50]
+                        if isinstance(c, dict)
+                    ],
+                    "total_comments_captured": row.get("total_comments_captured", 0),
+                    "report_file": None,
+                }
+            )
+        if outputs:
+            for idx, path in enumerate(outputs):
+                if idx < len(comments_by_video):
+                    comments_by_video[idx]["report_file"] = str(path)
+
+        total_comments = sum(int(r.get("total_comments_captured") or 0) for r in results)
+        ok = bool(results)
+        return PlatformPipelineResult(
+            platform=platform,
+            status="completed" if ok else "failed",
+            summary=(
+                f"关键词「{keyword}」共处理 {len(results)} 条内容，抓取 {total_comments} 条评论"
+                if ok
+                else (diagnostic or "未抓取到数据")
+            ),
+            result={
+                "platform": platform,
+                "keyword": keyword,
+                "region": region,
+                "videos": videos,
+                "comments_by_video": comments_by_video,
+                "output_files": [str(p) for p in outputs],
+                "diagnostic": diagnostic,
+            },
+            error="" if ok else (diagnostic or "未抓取到数据"),
+        )
+
+    async def _run_builtin_platform(
+        self,
+        req: KeywordVideoCommentsRequest,
+        platform: str,
+        *,
+        account_id: str,
+    ) -> PlatformPipelineResult:
+        if self.db_session is None:
+            return PlatformPipelineResult(
+                platform=platform,
+                status="failed",
+                error="内置抓取需要数据库会话",
+            )
+        service = CommentCrawlerService(
+            self.settings,
+            tenant_id=self.tenant_id,
+            platform=platform,
+            account_id=account_id,
+            session=self.db_session,
+        )
+        try:
+            results, outputs, diagnostic, _session_meta, _meta = await service.crawl_keyword_comments(
+                keyword=req.keyword,
+                limit=req.video_limit,
+                show_browser=req.headless is False,
+                days=req.days,
+                region=req.region,
+                force_refresh=req.force_refresh,
+                cache_ttl_hours=req.cache_ttl_hours,
+            )
+        except Exception as exc:
+            return PlatformPipelineResult(
+                platform=platform,
+                status="failed",
+                error=str(exc),
+            )
+        return self._pipeline_result_from_crawl(
+            platform=platform,
+            keyword=req.keyword,
+            region=req.region,
+            results=results,
+            outputs=outputs,
+            diagnostic=diagnostic,
+        )
+
     async def _run_single_platform(
         self,
         req: KeywordVideoCommentsRequest,
@@ -147,6 +276,9 @@ class OpenPipelineService:
         *,
         account_id: str,
     ) -> PlatformPipelineResult:
+        if platform in _BUILTIN_PIPELINE_PLATFORMS:
+            return await self._run_builtin_platform(req, platform, account_id=account_id)
+
         skill_id = _PLATFORM_SKILL.get(platform)
         if not skill_id:
             return PlatformPipelineResult(
@@ -223,7 +355,7 @@ class OpenPipelineService:
         platform = req.platforms[0] if req.platforms else "douyin"
         skill_id = _PLATFORM_SKILL[platform]
         message = (
-            f"/{skill_id} keyword={req.keyword} video_limit={req.video_limit}\n"
+            f"/{skill_id} {_pipeline_skill_args(req)}\n"
             "请严格执行技能指南，最终在 task_complete.result 返回结构化 JSON。"
         )
         job = AgentAsyncJobService.get(self.settings).submit(

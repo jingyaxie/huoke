@@ -2,6 +2,15 @@ import { getApiBaseUrl, getAccessToken, setAccessToken, setTenantId } from "./ht
 
 const baseURL = getApiBaseUrl();
 
+function formatApiError(data, fallback) {
+  const detail = data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item?.msg || JSON.stringify(item)).join("；");
+  }
+  return fallback;
+}
+
 function authHeaders() {
   const headers = { "Content-Type": "application/json" };
   const token = getAccessToken();
@@ -16,7 +25,7 @@ export async function registerUser(payload) {
     body: JSON.stringify(payload),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || "注册失败");
+  if (!resp.ok) throw new Error(formatApiError(data, "注册失败"));
   if (data.access_token) setAccessToken(data.access_token);
   if (data.user?.tenant_id) setTenantId(data.user.tenant_id);
   return data;
@@ -29,7 +38,7 @@ export async function loginUser(username, password) {
     body: JSON.stringify({ username, password }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || "登录失败");
+  if (!resp.ok) throw new Error(formatApiError(data, "登录失败"));
   if (data.access_token) setAccessToken(data.access_token);
   if (data.user?.tenant_id) setTenantId(data.user.tenant_id);
   return data;
@@ -38,7 +47,7 @@ export async function loginUser(username, password) {
 export async function fetchAuthMe() {
   const resp = await fetch(`${baseURL}/auth/me`, { headers: authHeaders() });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.detail || "获取当前用户失败");
+  if (!resp.ok) throw new Error(formatApiError(data, "获取当前用户失败"));
   return data;
 }
 

@@ -1,7 +1,7 @@
 <template>
   <div class="agent-page">
       <aside class="history-sidebar" :class="{ collapsed: sidebarCollapsed }">
-        <router-link to="/videos" class="sidebar-brand" :title="`返回主应用 · 租户 ${tenantId}`">
+        <router-link to="/external-api" class="sidebar-brand" :title="`返回主应用 · 租户 ${tenantId}`">
           <span class="brand-mark">火</span>
           <span class="brand-text">抖音热点 · 智能体</span>
         </router-link>
@@ -607,7 +607,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="message" label="说明" min-width="160" show-overflow-tooltip />
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="200">
             <template #default="{ row }">
               <el-button
                 link
@@ -616,6 +616,16 @@
                 @click="bindPlatformLogin(row)"
               >
                 {{ qrLoginTarget?.platform === row.platform ? "扫码中" : "扫码登录" }}
+              </el-button>
+              <el-button
+                link
+                type="danger"
+                size="small"
+                :disabled="row.status === 'missing'"
+                :loading="clearingPlatform === row.platform"
+                @click="clearPlatformLogin(row)"
+              >
+                清除登录记录
               </el-button>
             </template>
           </el-table-column>
@@ -989,6 +999,7 @@ import AgentStreamingBlock from "../components/AgentStreamingBlock.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
 import { getAccountId, getApiKey, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
 import {
+  clearAccountPlatformLoginSession,
   createAccount,
   fetchAccountBindings,
   fetchAccounts,
@@ -1177,6 +1188,7 @@ const newAccountId = ref("");
 const newAccountLabel = ref("");
 const accountCreating = ref(false);
 const qrLoginTarget = ref(null);
+const clearingPlatform = ref("");
 const bindingStatus = ref(null);
 const bindingBlocked = computed(() => bindingStatus.value && !bindingStatus.value.ready);
 const experiences = ref([]);
@@ -1539,10 +1551,35 @@ function bindPlatformLogin(row) {
   };
 }
 
+async function clearPlatformLogin(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将删除 ${row.platform_label || row.platform} 的 Cookie 与浏览器 Profile，解决「已登录仍弹登录框」。清除后需重新扫码，是否继续？`,
+      "清除登录记录",
+      { type: "warning", confirmButtonText: "清除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  clearingPlatform.value = row.platform;
+  try {
+    await clearAccountPlatformLoginSession(activeAccountId.value, row.platform);
+    ElMessage.success("登录记录已清除，请重新扫码登录");
+    if (qrLoginTarget.value?.platform === row.platform) {
+      qrLoginTarget.value = null;
+    }
+    await loadAccountBindings();
+  } catch (err) {
+    ElMessage.error(err.message || "清除失败");
+  } finally {
+    clearingPlatform.value = "";
+  }
+}
+
 async function onQrLoginSuccess() {
   ElMessage.success("平台账号绑定成功");
-  qrLoginTarget.value = null;
   await loadAccountBindings();
+  qrLoginTarget.value = null;
 }
 
 async function loadExperiences() {

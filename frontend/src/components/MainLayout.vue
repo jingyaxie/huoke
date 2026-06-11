@@ -23,14 +23,10 @@
       </div>
       <el-menu :default-active="activePath" router>
         <el-menu-item index="/login">登录</el-menu-item>
-        <el-menu-item index="/videos">热门视频</el-menu-item>
-        <el-menu-item index="/authors">热门作者</el-menu-item>
-        <el-menu-item index="/trend">趋势分析</el-menu-item>
-        <el-menu-item index="/comments">评论抓取</el-menu-item>
+        <el-menu-item index="/crawl-data">抓取数据</el-menu-item>
         <el-menu-item index="/external-api">对外接口 API</el-menu-item>
         <el-menu-item index="/agent" class="agent-nav-item">智能体助手</el-menu-item>
         <el-menu-item index="/antibot">AntiBot</el-menu-item>
-        <el-menu-item index="/reports">热点日报</el-menu-item>
       </el-menu>
     </aside>
     <main class="content">
@@ -45,7 +41,10 @@ import { useRoute } from "vue-router";
 import { getTenantId, setTenantId, getPlatformId, setPlatformId, getApiKey, setApiKey } from "../api/http";
 
 const route = useRoute();
-const activePath = computed(() => route.path);
+const activePath = computed(() => {
+  if (route.path.startsWith("/crawl-data")) return "/crawl-data";
+  return route.path;
+});
 const tenantId = ref(getTenantId());
 const platformId = ref(getPlatformId());
 const apiKey = ref(getApiKey());
@@ -57,6 +56,7 @@ function onTenantChange() {
 
 function onPlatformChange() {
   setPlatformId(platformId.value);
+  window.dispatchEvent(new CustomEvent("huoke-platform-changed", { detail: platformId.value }));
 }
 
 function onApiKeyChange() {
@@ -68,13 +68,18 @@ function onApiKeyChange() {
 .layout {
   display: grid;
   grid-template-columns: 240px 1fr;
-  min-height: 100vh;
+  height: 100%;
   gap: 12px;
   padding: 12px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .sidebar {
+  height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .brand {
@@ -96,6 +101,9 @@ function onApiKeyChange() {
 
 .content {
   min-width: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 :deep(.agent-nav-item) {

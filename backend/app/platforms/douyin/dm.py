@@ -14,9 +14,23 @@ from app.services.playwright_pool import PlaywrightPool
 
 PLATFORM = "douyin"
 
+_DM_BUTTON_SELECTORS = (
+    '[data-e2e="user-info-message-btn"]',
+    '[data-e2e="user-detail"] button:has-text("私信")',
+    '[data-e2e="user-info"] button:has-text("私信")',
+    'button:has-text("私信")',
+)
+
+_IM_INPUT_SELECTORS = (
+    '[data-e2e="im-dialog"] [data-e2e="message-input"]',
+    '[data-e2e="im-dialog"] textarea',
+    '[data-e2e="im-dialog"] div[contenteditable="true"]',
+    '[data-e2e="message-input"]',
+)
+
 
 class DouyinDmTool(DouyinJsApiTool):
-    """抖音私信工具（主页打开 IM 面板 + 轻量 UI 发送）。"""
+    """抖音私信工具（主页点击私信 → im-dialog 弹层内发送）。"""
 
     def __init__(
         self,
@@ -77,26 +91,90 @@ class DouyinDmTool(DouyinJsApiTool):
             "sec_uid": sec_uid,
             "profile_url": profile_url,
             "page_url": page.url,
-            "capture_method": "profile_dm_panel",
+            "capture_method": "profile_im_dialog",
             "message": await self._send_dm_on_profile(page, message),
         }
 
+    @staticmethod
+    async def _first_visible(page, selectors: tuple[str, ...]):
+        for selector in selectors:
+            loc = page.locator(selector)
+            count = await loc.count()
+            for idx in range(count):
+                item = loc.nth(idx)
+                try:
+                    if await item.is_visible():
+                        return item, selector
+                except Exception:
+                    continue
+        return None, None
+
+    async def _open_dm_dialog(self, page) -> dict:
+        dm, selector = await self._first_visible(page, _DM_BUTTON_SELECTORS)
+        if dm is None:
+            clicked = await page.evaluate(
+                """() => {
+                    const root = document.querySelector('[data-e2e="user-detail"]');
+                    if (!root) return false;
+                    const btn = Array.from(root.querySelectorAll('button'))
+                        .find((el) => (el.textContent || '').includes('私信'));
+                    if (!btn) return false;
+                    btn.click();
+                    return true;
+                }"""
+            )
+            if not clicked:
+                return {"ok": False, "error": "dm_button_not_found"}
+            selector = "user-detail.button.js_click"
+        else:
+            await dm.click(force=True)
+
+        try:
+            await page.locator('[data-e2e="im-dialog"]').wait_for(state="attached", timeout=15000)
+        except Exception:
+            return {"ok": False, "error": "im_dialog_not_found", "selector": selector}
+
+        await page.wait_for_timeout(2000)
+        return {"ok": True, "selector": selector}
+
+    async def _wait_dm_input(self, page, *, timeout_ms: int = 25000):
+        deadline = timeout_ms
+        step = 1000
+        while deadline > 0:
+            inp, selector = await self._first_visible(page, _IM_INPUT_SELECTORS)
+            if inp is not None:
+                return inp, selector
+            await page.wait_for_timeout(step)
+            deadline -= step
+        return None, None
+
+    @staticmethod
+    async def _dialog_hint(page) -> str:
+        try:
+            dialog = page.locator('[data-e2e="im-dialog"]').first
+            if not await dialog.count():
+                return ""
+            text = await dialog.inner_text()
+            for hint in ("无法私信", "互相关注", "隐私", "未开启私信", "加载中"):
+                if hint in text:
+                    return text[:200]
+            return text[:200]
+        except Exception:
+            return ""
+
     async def _send_dm_on_profile(self, page, message: str) -> dict:
-        dm = page.locator('[data-e2e="user-info"] button:has-text("私信")').first
-        if not await dm.count():
-            dm = page.locator('button:has-text("私信")').last
-        if not await dm.count():
-            return {"ok": False, "error": "dm_button_not_found"}
+        opened = await self._open_dm_dialog(page)
+        if not opened.get("ok"):
+            return opened
 
-        await dm.click()
-        await page.wait_for_timeout(2500)
-
-        inp = page.locator('[data-e2e="message-input"], textarea, div[contenteditable="true"]').first
-        if not await inp.count():
+        inp, input_selector = await self._wait_dm_input(page)
+        if inp is None:
+            hint = await self._dialog_hint(page)
             return {
                 "ok": False,
                 "error": "dm_input_not_found",
-                "hint": "私信面板未打开，可能受隐私/互关限制",
+                "hint": hint or "私信弹层已打开但未出现输入框，可能受隐私/互关限制",
+                "dm_selector": opened.get("selector"),
             }
 
         await inp.click()
@@ -105,11 +183,15 @@ class DouyinDmTool(DouyinJsApiTool):
         await page.keyboard.press("Enter")
         await page.wait_for_timeout(3000)
 
-        body_text = await page.evaluate("() => document.body.innerText || ''")
-        visible = message in body_text
+        dialog = page.locator('[data-e2e="im-dialog"]').first
+        dialog_text = await dialog.inner_text() if await dialog.count() else ""
+        visible = message in dialog_text
         return {
             "ok": visible,
-            "method": "profile_dm_panel",
-            "verified_in_page": visible,
+            "method": "profile_im_dialog",
+            "dm_selector": opened.get("selector"),
+            "input_selector": input_selector,
+            "verified_in_dialog": visible,
             "text_preview": message[:80],
+            "dialog_snippet": dialog_text[:200],
         }

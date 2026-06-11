@@ -91,10 +91,34 @@ http.interceptors.request.use((config) => {
     config.headers["X-API-Key"] = apiKey;
   }
   const accessToken = getAccessToken();
-  if (accessToken) {
+  if (accessToken && !config._skipAuth) {
     config.headers.Authorization = `Bearer ${accessToken}`;
   }
   return config;
 });
+
+http.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const status = error.response?.status;
+    const detail = String(error.response?.data?.detail || "");
+    const hadToken = Boolean(getAccessToken());
+    const tokenRejected =
+      status === 401 &&
+      hadToken &&
+      (detail.includes("登录令牌") || detail.includes("登录用户无效") || detail.includes("请先登录"));
+    if (tokenRejected) {
+      setAccessToken("");
+      const config = error.config;
+      if (config && !config._retriedWithoutAuth) {
+        config._retriedWithoutAuth = true;
+        config._skipAuth = true;
+        delete config.headers.Authorization;
+        return http.request(config);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export default http;

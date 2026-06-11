@@ -24,7 +24,12 @@ class DouyinProfileTool(DouyinJsApiTool):
 
     async def open_profile(self, page, sec_uid: str, *, wait_ms: int = 5000) -> str:
         profile_url = build_profile_url(sec_uid)
+        await page.set_viewport_size({"width": 1440, "height": 1200})
         await page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            await page.wait_for_selector('[data-e2e="user-detail"]', state="attached", timeout=20000)
+        except Exception:
+            pass
         await page.wait_for_timeout(wait_ms)
         return profile_url
 

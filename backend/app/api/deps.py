@@ -98,11 +98,14 @@ def get_authenticated_tenant_id(
         try:
             payload = auth.decode_access_token(token)
             user = auth.get_user_by_id(int(payload["sub"]))
-            if user is None or not user.is_active:
+            if user is not None and user.is_active:
+                return user.tenant_id
+            if settings.tenant_auth_enabled:
                 raise HTTPException(status_code=401, detail="登录用户无效或已禁用")
-            return user.tenant_id
         except (UserAuthError, ValueError, KeyError) as exc:
-            raise HTTPException(status_code=401, detail="无效或已过期的登录令牌") from exc
+            if settings.tenant_auth_enabled:
+                raise HTTPException(status_code=401, detail="无效或已过期的登录令牌") from exc
+        # 未启用租户鉴权时，过期/无效登录令牌回退到 X-Tenant-Id，避免抓取数据等页面整页 401。
 
     if settings.tenant_auth_enabled:
         if not x_api_key:

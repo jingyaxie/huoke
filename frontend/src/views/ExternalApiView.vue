@@ -106,6 +106,17 @@
               <el-form-item label="视频数量">
                 <el-input-number v-model="pipelineForm.video_limit" :min="1" :max="20" />
               </el-form-item>
+              <el-form-item label="地区">
+                <el-input
+                  v-model="pipelineForm.region"
+                  placeholder="可选，如：辽宁、沈阳、辽宁省淋浴房"
+                  clearable
+                />
+                <span class="field-hint">会拼入搜索词并作为筛选上下文，留空则不限制</span>
+              </el-form-item>
+              <el-form-item label="最近天数">
+                <el-input-number v-model="pipelineForm.days" :min="1" :max="30" />
+              </el-form-item>
               <el-form-item label="超时 (秒)">
                 <el-input-number v-model="pipelineForm.timeout_seconds" :min="60" :max="3600" :step="60" />
               </el-form-item>
@@ -260,6 +271,8 @@ const pipelineForm = reactive({
   keyword: "",
   platforms: ["douyin", "xiaohongshu"],
   video_limit: 5,
+  region: "",
+  days: 3,
   timeout_seconds: 1200,
   async_job: false,
   force_refresh: false,
@@ -289,6 +302,8 @@ const pipelineEndpoints = [
       keyword: "淋浴房",
       platforms: ["douyin", "xiaohongshu"],
       video_limit: 5,
+      region: "辽宁",
+      days: 3,
       timeout_seconds: 1200,
       async_job: false,
       force_refresh: false,
@@ -315,7 +330,7 @@ const douyinEndpoints = [
     method: "POST",
     path: "/api/platforms/douyin/search/videos",
     summary: "关键词搜索视频",
-    body: { keyword: "淋浴房", limit: 10, days: 3, show_browser: false },
+    body: { keyword: "淋浴房", limit: 10, days: 3, region: "辽宁", show_browser: false },
   },
   {
     method: "POST",
@@ -327,7 +342,7 @@ const douyinEndpoints = [
     method: "POST",
     path: "/api/platforms/douyin/comments/keyword",
     summary: "关键词搜索并抓取评论",
-    body: { keyword: "淋浴房", limit: 3, max_comments: 200, days: 3 },
+    body: { keyword: "淋浴房", limit: 3, max_comments: 200, days: 3, region: "辽宁" },
   },
   {
     method: "POST",
@@ -354,7 +369,7 @@ const xhsEndpoints = [
     method: "POST",
     path: "/api/platforms/xiaohongshu/search/notes",
     summary: "关键词搜索笔记",
-    body: { keyword: "护肤", limit: 10, days: 3, show_browser: false },
+    body: { keyword: "护肤", limit: 10, days: 3, region: "上海", show_browser: false },
   },
   {
     method: "POST",
@@ -366,7 +381,7 @@ const xhsEndpoints = [
     method: "POST",
     path: "/api/platforms/xiaohongshu/comments/keyword",
     summary: "关键词搜索并抓取评论",
-    body: { keyword: "护肤", limit: 3, max_comments: 200, days: 3 },
+    body: { keyword: "护肤", limit: 3, max_comments: 200, days: 3, region: "上海" },
   },
 ];
 
@@ -375,7 +390,7 @@ const kuaishouEndpoints = [
     method: "POST",
     path: "/api/platforms/kuaishou/search/videos",
     summary: "关键词搜索视频",
-    body: { keyword: "美食", limit: 10, show_browser: false },
+    body: { keyword: "美食", limit: 10, days: 3, region: "北京", show_browser: false },
   },
   {
     method: "POST",
@@ -387,7 +402,7 @@ const kuaishouEndpoints = [
     method: "POST",
     path: "/api/platforms/kuaishou/comments/keyword",
     summary: "关键词搜索并抓取评论",
-    body: { keyword: "美食", limit: 3, max_comments: 200 },
+    body: { keyword: "美食", limit: 3, max_comments: 200, days: 3, region: "北京" },
   },
 ];
 
@@ -469,6 +484,8 @@ const pipelineCurl = computed(() =>
       keyword: pipelineForm.keyword || "淋浴房",
       platforms: pipelineForm.platforms,
       video_limit: pipelineForm.video_limit,
+      region: pipelineForm.region || null,
+      days: pipelineForm.days,
       timeout_seconds: pipelineForm.timeout_seconds,
       async_job: pipelineForm.async_job,
       force_refresh: pipelineForm.force_refresh,
@@ -526,6 +543,8 @@ async function runPipeline() {
       keyword: pipelineForm.keyword.trim(),
       platforms: pipelineForm.platforms,
       video_limit: pipelineForm.video_limit,
+      region: pipelineForm.region.trim() || null,
+      days: pipelineForm.days,
       timeout_seconds: pipelineForm.timeout_seconds,
       async_job: pipelineForm.async_job,
       force_refresh: pipelineForm.force_refresh,

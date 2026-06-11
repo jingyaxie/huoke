@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +20,8 @@ from app.schemas.comment_crawl import DouyinLoginRequest, UploadStorageStateRequ
 from app.schemas.report import DailyReportOut
 from app.schemas.snapshot import SnapshotOut
 from app.schemas.trend import TrendPoint, TrendSeriesResponse
+from app.schemas.content_library import ContentDetailOut, ContentListResponse
+from app.services.content_library_service import ContentLibraryService
 from app.services.crawl_service import CrawlService
 from app.services.report_service import ReportService
 from app.services.trend_service import TrendService
@@ -66,6 +68,19 @@ def platform_login_status(
     return store.login_status(tenant_id, account_id)
 
 
+@router.delete("/platforms/{platform}/login-session", summary="清除平台登录记录")
+def platform_clear_login_session(
+    platform: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
+    settings: Settings = Depends(get_settings),
+):
+    pid = resolve_path_platform_id(platform)
+    store = get_session_store(settings, pid)
+    cleared = store.clear_session(tenant_id, account_id)
+    return {**cleared, **store.login_status(tenant_id, account_id)}
+
+
 @router.put("/platforms/{platform}/tenants/{tenant_id}/storage-state")
 def platform_upload_storage_state(
     platform: str,
@@ -97,6 +112,45 @@ async def platform_login(
     await crawler.login_and_save_cookies(show_browser=payload.show_browser)
     store = get_session_store(settings, pid)
     return {"platform": pid, "tenant_id": tid, "storage_state_path": str(store.path_for(tid))}
+
+
+@router.get("/platforms/{platform}/contents", response_model=ContentListResponse)
+def platform_list_contents(
+    platform: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    updated_after: datetime | None = Query(default=None, description="最后更新时间下限（含）"),
+    updated_before: datetime | None = Query(default=None, description="最后更新时间上限（含）"),
+    session: Session = Depends(db_session),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+):
+    pid = resolve_path_platform_id(platform)
+    service = ContentLibraryService(session, settings, tenant_id=tenant_id)
+    return service.list_contents(
+        platform=pid,
+        offset=offset,
+        limit=limit,
+        updated_after=updated_after,
+        updated_before=updated_before,
+    )
+
+
+@router.get("/platforms/{platform}/contents/{content_id}", response_model=ContentDetailOut)
+def platform_get_content_detail(
+    platform: str,
+    content_id: str,
+    max_comments: int | None = Query(default=None, ge=1, le=2000),
+    session: Session = Depends(db_session),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+):
+    pid = resolve_path_platform_id(platform)
+    service = ContentLibraryService(session, settings, tenant_id=tenant_id)
+    detail = service.get_content_detail(platform=pid, content_id=content_id, max_comments=max_comments)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+    return detail
 
 
 @router.get("/comments/download")

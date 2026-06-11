@@ -378,6 +378,8 @@ class CachedCrawlCoordinator:
         keyword: str,
         platforms: list[str],
         video_limit: int,
+        days: int = 3,
+        region: str | None = None,
         force_refresh: bool = False,
         cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
     ) -> CachedCrawlResult | None:
@@ -385,6 +387,8 @@ class CachedCrawlCoordinator:
             "keyword": keyword,
             "platforms": platforms,
             "video_limit": video_limit,
+            "days": days,
+            "region": region,
         }
         cached = self.cache.lookup(
             "pipeline_keyword_comments",
@@ -402,6 +406,8 @@ class CachedCrawlCoordinator:
         keyword: str,
         platforms: list[str],
         video_limit: int,
+        days: int = 3,
+        region: str | None = None,
         payload: dict[str, Any],
         cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
     ) -> CacheMeta:
@@ -409,6 +415,8 @@ class CachedCrawlCoordinator:
             "keyword": keyword,
             "platforms": platforms,
             "video_limit": video_limit,
+            "days": days,
+            "region": region,
         }
         meta = self.cache.store(
             "pipeline_keyword_comments",
