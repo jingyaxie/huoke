@@ -315,8 +315,6 @@ def headless_for_platform(settings: Settings, platform: str, headless: bool | No
         return settings.xhs_headless
     if platform == "kuaishou":
         return settings.kuaishou_headless
-    if platform == "huoshan":
-        return settings.huoshan_headless
     if platform == "douyin":
         return settings.douyin_headless
     return settings.agent_headless

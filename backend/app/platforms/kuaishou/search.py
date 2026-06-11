@@ -16,6 +16,13 @@ from app.platforms.kuaishou.js_constants import (
     _is_search_result_api,
 )
 from app.platforms.kuaishou.utils import build_search_url, build_video_url, parse_search_feed_item
+from app.platforms.search_filters import (
+    SearchFilterOptions,
+    fetch_multiplier,
+    filter_diagnostic_suffix,
+    filter_search_items,
+    select_rows_after_filter,
+)
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
@@ -26,7 +33,16 @@ class KuaishouSearchTool(KuaishouJsApiTool):
     def entry_url(self) -> str:
         return self.settings.kuaishou_home_url
 
-    async def search_videos_from_existing_page(self, page, keyword: str, limit: int) -> tuple[list[str], str | None]:
+    async def search_videos_from_existing_page(
+        self,
+        page,
+        keyword: str,
+        limit: int,
+        region: str | None = None,
+        days: int | None = None,
+    ) -> tuple[list[str], str | None]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
+        search_keyword = filters.composed_keyword()
         api_items: dict[str, dict] = {}
 
         async def on_response(resp):
@@ -40,7 +56,7 @@ class KuaishouSearchTool(KuaishouJsApiTool):
 
         page.on("response", on_response)
         try:
-            await page.goto(build_search_url(keyword), wait_until="domcontentloaded", timeout=120000)
+            await page.goto(build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
             await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
             for _ in range(8):
                 if len(api_items) >= limit:
@@ -48,7 +64,7 @@ class KuaishouSearchTool(KuaishouJsApiTool):
                 await human_scroll(page, self.settings, tenant_id=self.tenant_id)
             if not api_items:
                 await self._collect_video_links_from_dom(page, api_items, limit)
-            urls = self._items_to_urls(api_items, limit)
+            urls, _ = self._items_to_urls(api_items, limit, region=region, days=days)
             diagnostic = "已在可见浏览器中完成快手关键词搜索。" if urls else "可见浏览器未提取到视频链接。"
             return urls, diagnostic
         finally:
@@ -64,10 +80,14 @@ class KuaishouSearchTool(KuaishouJsApiTool):
         keyword: str,
         limit: int,
         captured_api_urls: list[str],
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
+        search_keyword = filters.composed_keyword()
         await self.warmup_for_js_api(page, captured_api_urls)
         api_items: dict[str, dict] = {}
-        target_count = max(limit * 2, 10)
+        target_count = max(limit * fetch_multiplier(filters), 10)
         processed: set[int] = set()
         pending: list[asyncio.Task] = []
 
@@ -82,12 +102,19 @@ class KuaishouSearchTool(KuaishouJsApiTool):
 
         page.on("response", on_response)
         try:
-            await page.goto(build_search_url(keyword), wait_until="domcontentloaded", timeout=120000)
+            await page.goto(build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
             await self._drain_tasks(pending)
             if len(api_items) < limit:
                 template_url = await self.pick_api_template_url(page, captured_api_urls)
                 await self._fire_search_feed_request(
-                    page, keyword, template_url, api_items, captured_api_urls, pending, processed, target_count
+                    page,
+                    search_keyword,
+                    template_url,
+                    api_items,
+                    captured_api_urls,
+                    pending,
+                    processed,
+                    target_count,
                 )
                 await self._drain_tasks(pending)
             for _ in range(6):
@@ -105,9 +132,13 @@ class KuaishouSearchTool(KuaishouJsApiTool):
             except Exception:
                 pass
 
-        urls = self._items_to_urls(api_items, limit)
+        urls, stats = self._items_to_urls(api_items, limit, region=region, days=days)
         if urls:
-            return urls, f"关键词「{keyword}」搜索成功（thin_nav_api，{len(urls)} 条视频）"
+            diagnostic = f"关键词「{search_keyword}」搜索成功（thin_nav_api，{len(urls)} 条视频）"
+            filter_note = filter_diagnostic_suffix(stats, requested=limit)
+            if filter_note:
+                diagnostic = f"{diagnostic}；{filter_note}"
+            return urls, diagnostic
         return [], "薄浏览器搜索未返回视频，请确认 Cookie 有效或在 VNC 手动搜索后设 show_browser=true。"
 
     @staticmethod
@@ -195,15 +226,31 @@ class KuaishouSearchTool(KuaishouJsApiTool):
             if len(api_items) >= limit:
                 break
 
-    def _items_to_urls(self, api_items: dict[str, dict], limit: int) -> list[str]:
+    def _items_to_urls(
+        self,
+        api_items: dict[str, dict],
+        limit: int,
+        *,
+        region: str | None = None,
+        days: int | None = None,
+    ) -> tuple[list[str], dict]:
+        items = list(api_items.values())
+        filtered, stats = filter_search_items(
+            items,
+            region=region,
+            days=days,
+            platform=PLATFORM,
+            limit=limit,
+        )
+        rows = select_rows_after_filter(items, filtered, region=region, limit=limit)
         urls: list[str] = []
-        for row in list(api_items.values())[: limit * 2]:
+        for row in rows:
             url = row.get("video_url") or build_video_url(row.get("photo_id") or "")
             if url:
                 urls.append(url.split("?")[0])
             if len(urls) >= limit:
                 break
-        return urls[:limit]
+        return urls[:limit], stats
 
     async def search_videos_by_keyword(
         self,
@@ -211,6 +258,8 @@ class KuaishouSearchTool(KuaishouJsApiTool):
         limit: int,
         headless: bool | None = None,
         manual_search: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         resolved_headless = headless_for_platform(self.settings, PLATFORM, headless)
@@ -231,6 +280,8 @@ class KuaishouSearchTool(KuaishouJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
 
     def _search_output_path(self, keyword: str) -> Path:
@@ -247,8 +298,11 @@ class KuaishouSearchTool(KuaishouJsApiTool):
         keyword: str,
         limit: int = 10,
         show_browser: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[dict, Path]:
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         headless = headless_for_platform(self.settings, PLATFORM, not show_browser)
         captured_api_urls: list[str] = []
         pool = PlaywrightPool.get()
@@ -265,6 +319,8 @@ class KuaishouSearchTool(KuaishouJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
 
         videos: list[dict] = []
@@ -282,6 +338,9 @@ class KuaishouSearchTool(KuaishouJsApiTool):
         payload = {
             "platform": PLATFORM,
             "keyword": keyword,
+            "search_keyword": filters.composed_keyword(),
+            "region": region,
+            "days": days,
             "video_count": len(videos),
             "capture_method": "thin_nav_api" if videos else "empty",
             "diagnostic": diagnostic,

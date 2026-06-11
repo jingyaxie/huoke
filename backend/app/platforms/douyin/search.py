@@ -31,6 +31,13 @@ from app.platforms.douyin.js_constants import (
     _encode_search_keyword,
     _extract_search_id_from_sug,
 )
+from app.platforms.search_filters import (
+    SearchFilterOptions,
+    fetch_multiplier,
+    filter_diagnostic_suffix,
+    filter_search_items,
+    select_rows_after_filter,
+)
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
@@ -56,14 +63,17 @@ class DouyinSearchTool(DouyinJsApiTool):
         keyword: str,
         limit: int,
         captured_api_urls: list[str],
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None, str]:
         """薄浏览器：首页预热 → 搜索页拦截 API（主路径）→ 回首页 fetch 评论。"""
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         await self.warmup_for_js_api(page, captured_api_urls)
         comment_template = await self.pick_api_template_url(page, captured_api_urls)
         api_items: dict[str, dict] = {}
         nav_result = await self._search_videos_via_thin_nav(
             page,
-            keyword,
+            filters,
             limit,
             api_items,
             captured_api_urls,
@@ -72,7 +82,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         if not nav_result:
             search_template = await self.pick_api_template_url(page, captured_api_urls) or comment_template
             js_result = await self._search_videos_via_js_api(
-                page, keyword, limit, search_template, api_items, max_attempts=1
+                page, filters, limit, search_template, api_items, max_attempts=1
             )
             nav_result = js_result
         if nav_result:
@@ -213,7 +223,7 @@ class DouyinSearchTool(DouyinJsApiTool):
     async def _search_videos_via_thin_nav(
         self,
         page,
-        keyword: str,
+        filters: SearchFilterOptions,
         limit: int,
         api_items: dict[str, dict],
         captured_api_urls: list[str],
@@ -221,8 +231,9 @@ class DouyinSearchTool(DouyinJsApiTool):
         template_url: str,
     ) -> tuple[list[str], str | None] | None:
         """主路径：搜索页建立上下文 → 触发已签名 search 请求 → response 拦截解析。"""
+        keyword = filters.composed_keyword()
         search_url = f"https://www.douyin.com/search/{_encode_search_keyword(keyword)}?type=video"
-        target_count = max(limit * 3, 15)
+        target_count = max(limit * fetch_multiplier(filters), 15)
         processed_responses: set[int] = set()
         listener, pending_tasks = self._make_search_response_listener(
             api_items, target_count, captured_api_urls, processed_responses
@@ -235,7 +246,7 @@ class DouyinSearchTool(DouyinJsApiTool):
             if not api_items:
                 await self._fire_search_api_requests(
                     page,
-                    keyword,
+                    filters,
                     template_url,
                     api_items,
                     captured_api_urls,
@@ -252,7 +263,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 await page.wait_for_timeout(1500)
                 await self._fire_search_api_requests(
                     page,
-                    keyword,
+                    filters,
                     template_url,
                     api_items,
                     captured_api_urls,
@@ -274,7 +285,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 pass
 
         if api_items:
-            return self._finalize_search_results(api_items, keyword, limit, mode="thin_nav_api")
+            return self._finalize_search_results(api_items, filters, limit, mode="thin_nav_api")
         if await self._is_captcha_page(page):
             return None
         return None
@@ -283,7 +294,7 @@ class DouyinSearchTool(DouyinJsApiTool):
     async def _fire_search_api_requests(
         self,
         page,
-        keyword: str,
+        filters: SearchFilterOptions,
         template_url: str,
         api_items: dict[str, dict],
         captured_api_urls: list[str],
@@ -294,6 +305,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         offset: int = 0,
     ) -> None:
         """仅触发 fetch，不在 evaluate 内解析；响应由监听器拦截。"""
+        keyword = filters.composed_keyword()
         sug_data = await self.fetch_json_via_page(
             page, _build_search_sug_url(template_url, keyword), timeout_ms=8000
         )
@@ -310,6 +322,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 count=fetch_count,
                 search_channel=channel,
                 search_id=search_id,
+                days=filters.days,
             )
             try:
                 async with page.expect_response(
@@ -435,15 +448,23 @@ class DouyinSearchTool(DouyinJsApiTool):
     def _finalize_search_results(
         self,
         api_items: dict[str, dict],
-        keyword: str,
+        filters: SearchFilterOptions,
         limit: int,
         *,
         mode: str,
     ) -> tuple[list[str], str | None] | None:
-        ranked = self._rank_search_items(list(api_items.values()), keyword)
+        ranked = self._rank_search_items(list(api_items.values()), filters.keyword)
+        filtered, stats = filter_search_items(
+            ranked,
+            region=filters.region,
+            days=filters.days,
+            platform=PLATFORM,
+            limit=limit,
+        )
+        rows = select_rows_after_filter(ranked, filtered, region=filters.region, limit=limit)
         uniq: list[str] = []
         seen: set[str] = set()
-        for row in ranked:
+        for row in rows:
             url = row.get("video_url") or ""
             if not url or url in seen:
                 continue
@@ -454,11 +475,15 @@ class DouyinSearchTool(DouyinJsApiTool):
         if not uniq:
             return None
         label = "thin_nav_api" if mode == "thin_nav_api" else "thin_js_api"
-        diagnostic = f"关键词「{keyword}」搜索成功（{label}，{len(uniq)} 条视频）"
-        if ranked and not self._title_matches_keyword(ranked[0].get("title") or "", keyword):
+        search_kw = filters.composed_keyword()
+        diagnostic = f"关键词「{search_kw}」搜索成功（{label}，{len(uniq)} 条视频）"
+        filter_note = filter_diagnostic_suffix(stats, requested=limit)
+        if filter_note:
+            diagnostic = f"{diagnostic}；{filter_note}"
+        if rows and not self._title_matches_keyword(rows[0].get("title") or "", filters.keyword):
             diagnostic = (
-                f"{label} 已返回结果但标题与「{keyword}」匹配度低"
-                f"（首条：{ranked[0].get('title', '')[:40]}）"
+                f"{diagnostic}；标题与「{filters.keyword}」匹配度低"
+                f"（首条：{rows[0].get('title', '')[:40]}）"
             )
         return uniq[:limit], diagnostic
 
@@ -466,7 +491,7 @@ class DouyinSearchTool(DouyinJsApiTool):
     async def _search_videos_via_js_api(
         self,
         page,
-        keyword: str,
+        filters: SearchFilterOptions,
         limit: int,
         template_url: str,
         api_items: dict[str, dict],
@@ -474,11 +499,12 @@ class DouyinSearchTool(DouyinJsApiTool):
         max_attempts: int = 6,
     ) -> tuple[list[str], str | None] | None:
         """兜底：fetch 搜索 API（部分环境缺 a_bogus 会挂起，仅少量尝试）。"""
+        keyword = filters.composed_keyword()
         sug_data = await self.fetch_json_via_page(
             page, _build_search_sug_url(template_url, keyword), timeout_ms=8000
         )
         search_id = _extract_search_id_from_sug(sug_data)
-        fetch_count = max(limit * 3, 15)
+        fetch_count = max(limit * fetch_multiplier(filters), 15)
         attempts = 0
         for path, channel in _SEARCH_JS_CHANNELS:
             for offset in (0, 10):
@@ -493,6 +519,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                     count=fetch_count,
                     search_channel=channel,
                     search_id=search_id,
+                    days=filters.days,
                 )
                 data = await self.fetch_json_via_page(page, url, timeout_ms=8000)
                 if not data:
@@ -503,7 +530,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 for row in self._extract_aweme_items_from_json(data):
                     api_items.setdefault(row["aweme_id"], row)
                 if api_items:
-                    return self._finalize_search_results(api_items, keyword, limit, mode="thin_js_api")
+                    return self._finalize_search_results(api_items, filters, limit, mode="thin_js_api")
         return None
 
 
@@ -566,6 +593,8 @@ class DouyinSearchTool(DouyinJsApiTool):
         has_storage_state: bool,
         search_started: dict[str, bool],
         captured_api_urls: list[str] | None = None,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
         if not manual_search:
             urls, diag, _ = await self._thin_browser_keyword_search(
@@ -573,6 +602,8 @@ class DouyinSearchTool(DouyinJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls or [],
+                region=region,
+                days=days,
             )
             return urls, diag
         else:
@@ -654,6 +685,8 @@ class DouyinSearchTool(DouyinJsApiTool):
         limit: int,
         headless: bool | None = None,
         manual_search: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         resolved_headless = headless_for_platform(self.settings, PLATFORM, headless)
@@ -696,6 +729,8 @@ class DouyinSearchTool(DouyinJsApiTool):
                     api_items=api_items,
                     has_storage_state=has_storage_state,
                     search_started=search_started,
+                    region=region,
+                    days=days,
                 )
             finally:
                 try:
@@ -792,6 +827,7 @@ class DouyinSearchTool(DouyinJsApiTool):
             return None
         author = aweme.get("author") or {}
         stats = aweme.get("statistics") or {}
+        poi = aweme.get("poi_info") or {}
         return {
             "aweme_id": aweme_id,
             "video_url": f"https://www.douyin.com/video/{aweme_id}",
@@ -803,6 +839,9 @@ class DouyinSearchTool(DouyinJsApiTool):
             "comment_count": int(stats.get("comment_count") or 0),
             "share_count": int(stats.get("share_count") or 0),
             "create_time": aweme.get("create_time"),
+            "ip_label": (aweme.get("ip_label") or "").strip(),
+            "poi_name": (poi.get("poi_name") or "").strip(),
+            "poi_address": (poi.get("address") or poi.get("poi_address") or "").strip(),
         }
 
 
@@ -842,9 +881,12 @@ class DouyinSearchTool(DouyinJsApiTool):
         keyword: str,
         limit: int = 10,
         show_browser: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[dict, Path]:
         """关键词搜索视频（薄浏览器主路径），返回结构化结果与报告路径。"""
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         headless = headless_for_platform(self.settings, PLATFORM, not show_browser)
         captured_api_urls: list[str] = []
         pool = PlaywrightPool.get()
@@ -861,6 +903,8 @@ class DouyinSearchTool(DouyinJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
 
         videos: list[dict] = []
@@ -878,6 +922,9 @@ class DouyinSearchTool(DouyinJsApiTool):
         payload = {
             "platform": PLATFORM,
             "keyword": keyword,
+            "search_keyword": filters.composed_keyword(),
+            "region": region,
+            "days": days,
             "video_count": len(videos),
             "capture_method": "thin_nav_api" if videos else "empty",
             "diagnostic": diagnostic,

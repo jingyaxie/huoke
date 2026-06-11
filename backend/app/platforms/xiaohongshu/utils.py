@@ -83,10 +83,14 @@ def parse_note_card(item: dict, *, rank: int, tenant_id: str) -> dict | None:
         title = f"小红书笔记 {note_id[:8]}"
     xsec_token = card.get("xsec_token") or item.get("xsec_token")
     xsec_source = card.get("xsec_source") or item.get("xsec_source") or "pc_feed"
+    ip_location = card.get("ip_location") or card.get("ipLocation") or ""
+    create_time = card.get("time") or card.get("create_time") or card.get("last_update_time")
     return {
         "platform": "xiaohongshu",
         "rank": rank,
         "title": title[:500],
+        "ip_location": str(ip_location).strip(),
+        "create_time": create_time,
         "author_name": user.get("nickname") or user.get("nick_name") or user.get("name"),
         "external_id": note_id,
         "douyin_video_id": None,

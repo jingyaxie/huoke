@@ -32,8 +32,16 @@ class XiaohongshuToolService:
         keyword: str,
         limit: int = 10,
         show_browser: bool = False,
+        days: int | None = None,
+        region: str | None = None,
     ) -> tuple[dict, Path]:
-        return await self._search.search_notes(keyword=keyword, limit=limit, show_browser=show_browser)
+        return await self._search.search_notes(
+            keyword=keyword,
+            limit=limit,
+            show_browser=show_browser,
+            days=days,
+            region=region,
+        )
 
     async def crawl_note_comments(
         self,

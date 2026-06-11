@@ -51,12 +51,16 @@ def parse_search_feed_item(feed: dict, *, tenant_id: str) -> dict | None:
         return None
     user_id = str(author.get("id") or "")
     caption = (photo.get("caption") or photo.get("title") or "").strip()
+    location = photo.get("location") or feed.get("location") or ""
+    create_time = photo.get("timestamp") or photo.get("create_time")
     return {
         "photo_id": photo_id,
         "video_url": build_video_url(photo_id),
         "title": caption[:500] or f"快手视频 {photo_id[:8]}",
         "author": (author.get("name") or "").strip(),
         "author_id": user_id,
+        "location": str(location).strip(),
+        "create_time": create_time,
         "like_count": int(photo.get("likeCount") or photo.get("realLikeCount") or 0),
         "comment_count": int(photo.get("commentCount") or 0),
         "raw_data": {

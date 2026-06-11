@@ -30,7 +30,7 @@
           <h3 class="section-title">单个视频</h3>
           <el-form label-width="88px">
             <el-form-item label="视频链接">
-              <el-input v-model="single.videoUrl" placeholder="火山分享链接 / item_id / douyin.com/video/..." />
+              <el-input v-model="single.videoUrl" placeholder="item_id / douyin.com/video/..." />
             </el-form-item>
             <el-form-item label="可见浏览器">
               <el-switch v-model="single.showBrowser" />
@@ -117,7 +117,6 @@ const PLATFORM_LABELS = {
   douyin: "抖音",
   xiaohongshu: "小红书",
   kuaishou: "快手",
-  huoshan: "火山",
 };
 
 const RESULTS_STORAGE_KEY = "douyin_comment_crawl_results_v1";

@@ -17,6 +17,13 @@ from app.platforms.xiaohongshu.js_constants import (
     _build_search_url,
     _is_search_result_api,
 )
+from app.platforms.search_filters import (
+    SearchFilterOptions,
+    fetch_multiplier,
+    filter_diagnostic_suffix,
+    filter_search_items,
+    select_rows_after_filter,
+)
 from app.platforms.xiaohongshu.utils import build_note_url, parse_note_card, walk_note_ids
 from app.services.playwright_pool import PlaywrightPool
 
@@ -27,7 +34,16 @@ class XhsSearchTool(XhsJsApiTool):
     def entry_url(self) -> str:
         return self.settings.xhs_explore_url or self.settings.xhs_home_url
 
-    async def search_notes_from_existing_page(self, page, keyword: str, limit: int) -> tuple[list[str], str | None]:
+    async def search_notes_from_existing_page(
+        self,
+        page,
+        keyword: str,
+        limit: int,
+        region: str | None = None,
+        days: int | None = None,
+    ) -> tuple[list[str], str | None]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
+        search_keyword = filters.composed_keyword()
         note_meta: dict[str, dict] = {}
 
         async def on_response(resp):
@@ -41,7 +57,7 @@ class XhsSearchTool(XhsJsApiTool):
 
         page.on("response", on_response)
         try:
-            await page.goto(_build_search_url(keyword), wait_until="domcontentloaded", timeout=120000)
+            await page.goto(_build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
             await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
             for _ in range(10):
                 if len(note_meta) >= limit:
@@ -49,7 +65,7 @@ class XhsSearchTool(XhsJsApiTool):
                 await human_scroll(page, self.settings, tenant_id=self.tenant_id)
             if not note_meta:
                 await self._collect_note_links_from_dom(page, note_meta, limit)
-            urls = self._meta_to_urls(note_meta, limit)
+            urls, _ = self._meta_to_urls(note_meta, limit, region=region, days=days)
             diagnostic = "已在可见浏览器中完成小红书关键词搜索。" if urls else "可见浏览器未提取到笔记链接。"
             return urls, diagnostic
         finally:
@@ -65,10 +81,14 @@ class XhsSearchTool(XhsJsApiTool):
         keyword: str,
         limit: int,
         captured_api_urls: list[str],
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
+        search_keyword = filters.composed_keyword()
         await self.warmup_for_js_api(page, captured_api_urls)
         note_meta: dict[str, dict] = {}
-        target_count = max(limit * 2, 10)
+        target_count = max(limit * fetch_multiplier(filters), 10)
         processed: set[int] = set()
         pending: list[asyncio.Task] = []
 
@@ -83,7 +103,7 @@ class XhsSearchTool(XhsJsApiTool):
 
         page.on("response", on_response)
         try:
-            await page.goto(_build_search_url(keyword), wait_until="domcontentloaded", timeout=120000)
+            await page.goto(_build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
             await self._drain_tasks(pending)
             for _ in range(10):
                 if len(note_meta) >= limit:
@@ -100,9 +120,13 @@ class XhsSearchTool(XhsJsApiTool):
             except Exception:
                 pass
 
-        urls = self._meta_to_urls(note_meta, limit)
+        urls, stats = self._meta_to_urls(note_meta, limit, region=region, days=days)
         if urls:
-            return urls, f"关键词「{keyword}」搜索成功（thin_nav_api，{len(urls)} 条笔记）"
+            diagnostic = f"关键词「{search_keyword}」搜索成功（thin_nav_api，{len(urls)} 条笔记）"
+            filter_note = filter_diagnostic_suffix(stats, requested=limit)
+            if filter_note:
+                diagnostic = f"{diagnostic}；{filter_note}"
+            return urls, diagnostic
         return [], "薄浏览器搜索未返回笔记，请确认 Cookie 有效或在 VNC 手动搜索后设 show_browser=true。"
 
     @staticmethod
@@ -153,7 +177,15 @@ class XhsSearchTool(XhsJsApiTool):
             if not parsed:
                 continue
             note_id = parsed["external_id"]
-            note_meta[note_id] = parsed.get("raw_data") or {"note_id": note_id}
+            note_meta[note_id] = {
+                "note_id": note_id,
+                "title": parsed.get("title") or "",
+                "ip_location": parsed.get("ip_location") or "",
+                "create_time": parsed.get("create_time"),
+                "xsec_token": parsed.get("raw_data", {}).get("xsec_token"),
+                "xsec_source": parsed.get("raw_data", {}).get("xsec_source"),
+                "raw_data": parsed.get("raw_data"),
+            }
             if len(note_meta) >= target_count:
                 return
 
@@ -168,9 +200,28 @@ class XhsSearchTool(XhsJsApiTool):
             if len(note_meta) >= limit:
                 break
 
-    def _meta_to_urls(self, note_meta: dict[str, dict], limit: int) -> list[str]:
+    def _meta_to_urls(
+        self,
+        note_meta: dict[str, dict],
+        limit: int,
+        *,
+        region: str | None = None,
+        days: int | None = None,
+    ) -> tuple[list[str], dict]:
+        items = list(note_meta.values())
+        filtered, stats = filter_search_items(
+            items,
+            region=region,
+            days=days,
+            platform=PLATFORM,
+            limit=limit,
+        )
+        rows = select_rows_after_filter(items, filtered, region=region, limit=limit)
         urls: list[str] = []
-        for note_id, meta in list(note_meta.items())[: limit * 2]:
+        for meta in rows:
+            note_id = meta.get("note_id") or ""
+            if not note_id:
+                continue
             urls.append(
                 build_note_url(
                     note_id,
@@ -180,7 +231,7 @@ class XhsSearchTool(XhsJsApiTool):
             )
             if len(urls) >= limit:
                 break
-        return urls[:limit]
+        return urls[:limit], stats
 
     async def search_notes_by_keyword(
         self,
@@ -188,6 +239,8 @@ class XhsSearchTool(XhsJsApiTool):
         limit: int,
         headless: bool | None = None,
         manual_search: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[list[str], str | None]:
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         resolved_headless = headless_for_platform(self.settings, PLATFORM, headless)
@@ -208,6 +261,8 @@ class XhsSearchTool(XhsJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
 
     def _search_output_path(self, keyword: str) -> Path:
@@ -224,8 +279,11 @@ class XhsSearchTool(XhsJsApiTool):
         keyword: str,
         limit: int = 10,
         show_browser: bool = False,
+        region: str | None = None,
+        days: int | None = None,
     ) -> tuple[dict, Path]:
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         headless = headless_for_platform(self.settings, PLATFORM, not show_browser)
         captured_api_urls: list[str] = []
         pool = PlaywrightPool.get()
@@ -242,6 +300,8 @@ class XhsSearchTool(XhsJsApiTool):
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
 
         notes: list[dict] = []
@@ -259,6 +319,9 @@ class XhsSearchTool(XhsJsApiTool):
         payload = {
             "platform": PLATFORM,
             "keyword": keyword,
+            "search_keyword": filters.composed_keyword(),
+            "region": region,
+            "days": days,
             "note_count": len(notes),
             "capture_method": "thin_nav_api" if notes else "empty",
             "diagnostic": diagnostic,

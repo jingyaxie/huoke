@@ -109,7 +109,7 @@ DEFAULT_GLOBAL_SKILLS: list[dict] = [
     {
         "id": "crawl-video-comments",
         "name": "单个视频评论抓取",
-        "description": "抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等",
+        "description": "抓取单个视频/笔记的全部评论，支持 item_id、douyin.com/video 等",
         "type": "builtin",
         "enabled": True,
         "scope": "global",
@@ -117,7 +117,7 @@ DEFAULT_GLOBAL_SKILLS: list[dict] = [
             {
                 "name": "video_url",
                 "type": "string",
-                "description": "视频链接：火山分享链接 / item_id / douyin.com/video/...",
+                "description": "视频链接：item_id / douyin.com/video/...",
                 "required": True,
             },
             {
@@ -181,7 +181,7 @@ DEFAULT_GLOBAL_SKILLS: list[dict] = [
     {
         "id": "search-videos",
         "name": "关键词搜索视频列表",
-        "description": "按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）",
+        "description": "按关键词搜索抖音视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）",
         "type": "builtin",
         "enabled": True,
         "scope": "global",

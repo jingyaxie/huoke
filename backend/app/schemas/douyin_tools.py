@@ -2,13 +2,24 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.platforms.search_filters import normalize_region
 
 
 class DouyinSearchVideosRequest(BaseModel):
     keyword: str = Field(min_length=1, max_length=100, description="搜索关键词")
     limit: int = Field(default=10, ge=1, le=20, description="返回视频数量上限")
     show_browser: bool = Field(default=False, description="是否使用可见浏览器（调试用）")
+    days: Optional[int] = Field(default=None, ge=1, le=30, description="最近天数筛选，不传则不限制")
+    region: Optional[str] = Field(default=None, description="地域筛选，不传或留空则不限制")
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _normalize_region(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return normalize_region(str(value))
 
 
 class DouyinVideoCommentsRequest(BaseModel):
@@ -27,7 +38,14 @@ class DouyinKeywordCommentsRequest(BaseModel):
         description="游客态：跳过登录检查（仅搜索+评论读取，不支持关注/私信）",
     )
     days: int = Field(default=3, ge=1, le=30)
-    region: Optional[str] = None
+    region: Optional[str] = Field(default=None, description="地域筛选，不传或留空则不限制")
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _normalize_region(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return normalize_region(str(value))
 
 
 class DouyinUserTarget(BaseModel):

@@ -57,6 +57,8 @@ async def search_notes(
         keyword=payload.keyword,
         limit=payload.limit,
         show_browser=payload.show_browser,
+        days=payload.days,
+        region=payload.region,
     )
     notes = result.get("notes") or []
     return _envelope(
@@ -66,6 +68,9 @@ async def search_notes(
         tool="search",
         data={
             "keyword": payload.keyword,
+            "search_keyword": result.get("search_keyword"),
+            "region": payload.region,
+            "days": payload.days,
             "note_count": len(notes),
             "capture_method": result.get("capture_method"),
             "notes": notes,

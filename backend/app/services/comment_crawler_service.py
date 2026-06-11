@@ -55,8 +55,16 @@ class CommentCrawlerService:
         keyword: str,
         limit: int = 20,
         show_browser: bool = False,
+        days: int | None = None,
+        region: str | None = None,
     ) -> tuple[dict, Path]:
         backend = self._backend
         if not hasattr(backend, "search_videos"):
             raise NotImplementedError(f"平台 {self.platform} 暂不支持关键词视频搜索")
-        return await backend.search_videos(keyword=keyword, limit=limit, show_browser=show_browser)
+        return await backend.search_videos(
+            keyword=keyword,
+            limit=limit,
+            show_browser=show_browser,
+            days=days,
+            region=region,
+        )

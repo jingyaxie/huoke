@@ -10,6 +10,7 @@ from app.platforms.kuaishou.comment_tool import KuaishouCommentTool
 from app.platforms.kuaishou.constants import PLATFORM, REQUIRED_LOGIN_COOKIES
 from app.platforms.kuaishou.crawler import KuaishouCrawler
 from app.platforms.kuaishou.js_constants import DEFAULT_MAX_COMMENTS
+from app.platforms.search_filters import SearchFilterOptions
 from app.platforms.kuaishou.search import KuaishouSearchTool
 from app.platforms.kuaishou.session import KuaishouSessionStore
 from app.platforms.kuaishou.utils import extract_photo_id
@@ -75,7 +76,9 @@ class KuaishouCommentCrawler:
 
         if session:
             page = session["page"]
-            video_urls, diagnostic = await self._search.search_videos_from_existing_page(page, keyword, limit)
+            video_urls, diagnostic = await self._search.search_videos_from_existing_page(
+                page, keyword, limit, region=region, days=days
+            )
             results, files = await self._crawl_videos_on_page(
                 page,
                 video_urls,
@@ -103,6 +106,8 @@ class KuaishouCommentCrawler:
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
             results, files = await self._crawl_videos_on_page(
                 page,
@@ -127,6 +132,7 @@ class KuaishouCommentCrawler:
         max_comments: int,
         session_meta: dict,
     ) -> tuple[list[dict], list[Path]]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
         files: list[Path] = []
         for url in video_urls:
@@ -140,6 +146,7 @@ class KuaishouCommentCrawler:
             payload["platform"] = PLATFORM
             payload["keyword_context"] = {
                 "keyword": keyword,
+                "search_keyword": filters.composed_keyword(),
                 "days": days,
                 "region": region,
                 "guest_mode": session_meta.get("guest_mode", False),

@@ -129,6 +129,4 @@ class BrowserRuntime:
             return self.settings.xhs_home_url
         if platform == "kuaishou":
             return self.settings.kuaishou_home_url
-        if platform == "huoshan":
-            return self.settings.huoshan_home_url
         return None

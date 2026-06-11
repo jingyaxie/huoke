@@ -11,6 +11,7 @@ from app.platforms.xiaohongshu.comment_tool import XhsCommentTool
 from app.platforms.xiaohongshu.constants import PLATFORM
 from app.platforms.xiaohongshu.crawler import XhsCrawler
 from app.platforms.xiaohongshu.js_constants import DEFAULT_MAX_COMMENTS
+from app.platforms.search_filters import SearchFilterOptions
 from app.platforms.xiaohongshu.search import XhsSearchTool
 from app.platforms.xiaohongshu.session import XhsSessionStore, REQUIRED_LOGIN_COOKIES
 from app.platforms.xiaohongshu.utils import extract_note_id
@@ -72,7 +73,9 @@ class XhsCommentCrawler:
 
         if session:
             page = session["page"]
-            note_urls, diagnostic = await self._search.search_notes_from_existing_page(page, keyword, limit)
+            note_urls, diagnostic = await self._search.search_notes_from_existing_page(
+                page, keyword, limit, region=region, days=days
+            )
             results, files = await self._crawl_notes_on_page(
                 page,
                 note_urls,
@@ -100,6 +103,8 @@ class XhsCommentCrawler:
                 keyword=keyword,
                 limit=limit,
                 captured_api_urls=captured_api_urls,
+                region=region,
+                days=days,
             )
             results, files = await self._crawl_notes_on_page(
                 page,
@@ -126,6 +131,7 @@ class XhsCommentCrawler:
         session_meta: dict,
         template_url: str | None = None,
     ) -> tuple[list[dict], list[Path]]:
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
         files: list[Path] = []
         for url in note_urls:
@@ -140,6 +146,7 @@ class XhsCommentCrawler:
             payload["platform"] = PLATFORM
             payload["keyword_context"] = {
                 "keyword": keyword,
+                "search_keyword": filters.composed_keyword(),
                 "days": days,
                 "region": region,
                 "guest_mode": session_meta.get("guest_mode", False),

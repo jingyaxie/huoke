@@ -376,7 +376,7 @@ class AgentService:
         fn_name: str,
         fn_args: dict[str, Any],
     ) -> bool:
-        if platform not in {"douyin", "huoshan"}:
+        if platform != "douyin":
             return False
         if fn_name not in {"browser_goto", "browser_browse"}:
             return False

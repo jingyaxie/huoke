@@ -19,8 +19,7 @@
       "content": "- 优先使用 douyin.com 域名页面\n- 【禁止直接搜索】禁止 browser_goto / browser_browse 打开 `https://www.douyin.com/search/...`、`/aisearch` 等搜索页 URL；实测无法触发 search/item，且易触发风控/重定向精选\n- 【搜索唯一路径】browser_browse 到 https://www.douyin.com → 点击 `[data-e2e=\"searchbar-input\"]` 输入关键词 → Enter 或 `[data-e2e=\"searchbar-button\"]`；若落在 /jingxuan 仍在当前页搜索框操作，不要跳转搜索 URL\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 browser_get_network_data(url_contains=comment/list)，搜索用 url_contains=search/item 或 general/search\n- 关键词搜视频+抓评论（推荐）：invoke_skill douyin-keyword-comments（已验证一键方案）\n- 仅搜视频：douyin-search-keyword；仅抓单条评论：douyin-comments-api",
       "always_apply": true,
       "platforms": [
-        "douyin",
-        "huoshan"
+        "douyin"
       ],
       "enabled": true,
       "scope": "global",
@@ -48,8 +47,7 @@
       "content": "- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对 {{reply_text}} / {{message}} 内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete",
       "always_apply": true,
       "platforms": [
-        "douyin",
-        "huoshan"
+        "douyin"
       ],
       "enabled": true,
       "scope": "global",

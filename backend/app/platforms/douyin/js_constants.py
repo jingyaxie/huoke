@@ -131,23 +131,31 @@ def _build_search_api_url(
     count: int = 10,
     search_channel: str = "aweme_video_web",
     search_id: str | None = None,
+    days: int | None = None,
 ) -> str:
+    from app.platforms.search_filters import douyin_filter_selected_json
+
     split = urlsplit(template_url)
     query = dict(parse_qsl(split.query, keep_blank_values=True))
+    filter_json = douyin_filter_selected_json(days)
     query.update(
         {
             "keyword": keyword,
             "offset": str(offset),
             "count": str(count),
-            "search_source": "normal_search",
+            "search_source": "tab_search" if filter_json else "normal_search",
             "query_correct_type": "1",
-            "is_filter_search": "0",
+            "is_filter_search": "1" if filter_json else "0",
             "search_channel": search_channel,
             "enable_history": "1",
             "list_type": "single",
-            "need_filter_settings": "0",
+            "need_filter_settings": "1" if filter_json else "0",
         }
     )
+    if filter_json:
+        query["filter_selected"] = filter_json
+    else:
+        query.pop("filter_selected", None)
     for key in DROP_QUERY_KEYS:
         query.pop(key, None)
     if search_id:

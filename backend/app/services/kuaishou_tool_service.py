@@ -32,8 +32,16 @@ class KuaishouToolService:
         keyword: str,
         limit: int = 10,
         show_browser: bool = False,
+        days: int | None = None,
+        region: str | None = None,
     ) -> tuple[dict, Path]:
-        return await self._search.search_videos(keyword=keyword, limit=limit, show_browser=show_browser)
+        return await self._search.search_videos(
+            keyword=keyword,
+            limit=limit,
+            show_browser=show_browser,
+            days=days,
+            region=region,
+        )
 
     async def crawl_video_comments(
         self,

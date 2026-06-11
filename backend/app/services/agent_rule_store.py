@@ -43,7 +43,7 @@ DEFAULT_GLOBAL_RULES: list[dict] = [
             "- 仅搜视频：douyin-search-keyword；仅抓单条评论：douyin-comments-api"
         ),
         "always_apply": True,
-        "platforms": ["douyin", "huoshan"],
+        "platforms": ["douyin"],
         "enabled": True,
         "scope": "global",
     },
@@ -59,7 +59,7 @@ DEFAULT_GLOBAL_RULES: list[dict] = [
             "- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete"
         ),
         "always_apply": True,
-        "platforms": ["douyin", "huoshan"],
+        "platforms": ["douyin"],
         "enabled": True,
         "scope": "global",
     },

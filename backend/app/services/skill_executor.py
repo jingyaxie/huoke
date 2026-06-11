@@ -315,6 +315,8 @@ class SkillExecutor:
                     keyword=str(keyword),
                     limit=int(params.get("limit", 20)),
                     show_browser=show_browser,
+                    days=params.get("days"),
+                    region=params.get("region"),
                 )
             except NotImplementedError as exc:
                 return {"error": str(exc)}

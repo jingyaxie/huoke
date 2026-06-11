@@ -175,7 +175,7 @@
         {
           "name": "video_url",
           "type": "string",
-          "description": "视频链接：火山分享链接 / item_id / douyin.com/video/...",
+          "description": "视频链接：item_id / douyin.com/video/...",
           "required": true
         },
         {

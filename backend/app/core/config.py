@@ -45,13 +45,6 @@ class Settings(BaseSettings):
     xhs_headless: bool = False
     xhs_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
 
-    huoshan_home_url: str = "https://www.huoshan.com"
-    huoshan_hot_url: str = "https://www.douyin.com/hot"
-    huoshan_headless: bool = False
-    huoshan_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
-    huoshan_seed_user_ids: Optional[str] = None
-    huoshan_hot_mode: str = "seed_then_fallback"
-
     kuaishou_home_url: str = "https://www.kuaishou.com"
     kuaishou_headless: bool = False
     kuaishou_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"

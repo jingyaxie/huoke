@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.platforms.douyin.comment_tool import DouyinCommentTool
 from app.platforms.douyin.js_constants import DEFAULT_MAX_COMMENTS, PLATFORM, _extract_aweme_id
 from app.platforms.douyin.search import DouyinSearchTool
+from app.platforms.search_filters import SearchFilterOptions
 from app.platforms.douyin.session import DouyinSessionStore, USER_LOGIN_MARKERS
 from app.platforms.douyin.crawler import DouyinCrawler
 from app.platforms.session_store import PlatformSessionStore
@@ -224,6 +225,8 @@ class DouyinCommentCrawler:
                         has_storage_state=has_storage_state,
                         search_started=search_started,
                         captured_api_urls=captured_api_urls,
+                        region=region,
+                        days=days,
                     )
                 template_url = await self._search.pick_api_template_url(page, captured_api_urls)
             else:
@@ -232,12 +235,15 @@ class DouyinCommentCrawler:
                     keyword=keyword,
                     limit=limit,
                     captured_api_urls=captured_api_urls,
+                    region=region,
+                    days=days,
                 )
         finally:
             try:
                 page.remove_listener("response", on_response)
             except Exception:
                 pass
+        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
         files: list[Path] = []
         for url in video_urls:
@@ -250,7 +256,12 @@ class DouyinCommentCrawler:
                 max_comments=max_comments,
             )
             payload["platform"] = PLATFORM
-            ctx = {"keyword": keyword, "days": days, "region": region}
+            ctx = {
+                "keyword": keyword,
+                "search_keyword": filters.composed_keyword(),
+                "days": days,
+                "region": region,
+            }
             if session_meta:
                 ctx.update(
                     {

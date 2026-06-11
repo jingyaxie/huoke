@@ -1,6 +1,8 @@
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.platforms.search_filters import normalize_region
 
 
 class VideoCommentCrawlRequest(BaseModel):
@@ -25,8 +27,15 @@ class KeywordCommentCrawlRequest(BaseModel):
         description="游客态：跳过登录检查，使用抖音自动下发的会话 Cookie（仅抖音）",
     )
     days: int = Field(default=3, ge=1, le=30)
-    region: Optional[str] = None
+    region: Optional[str] = Field(default=None, description="地域筛选，不传或留空则不限制")
     tenant_id: Optional[str] = None
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _normalize_region(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return normalize_region(str(value))
     platform: Optional[str] = None
 
 

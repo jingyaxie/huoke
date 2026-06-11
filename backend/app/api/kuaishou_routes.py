@@ -57,6 +57,8 @@ async def search_videos(
         keyword=payload.keyword,
         limit=payload.limit,
         show_browser=payload.show_browser,
+        days=payload.days,
+        region=payload.region,
     )
     videos = result.get("videos") or []
     return _envelope(
@@ -66,6 +68,9 @@ async def search_videos(
         tool="search",
         data={
             "keyword": payload.keyword,
+            "search_keyword": result.get("search_keyword"),
+            "region": payload.region,
+            "days": payload.days,
             "video_count": len(videos),
             "capture_method": result.get("capture_method"),
             "videos": videos,
