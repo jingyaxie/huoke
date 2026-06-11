@@ -9,6 +9,7 @@ from app.platforms.account_id import normalize_account_id
 from app.platforms.constants import BINDABLE_PLATFORMS, PLATFORM_LABELS
 from app.platforms.registry import get_session_store
 from app.schemas.account_dashboard import AccountDashboardRequest, AccountDashboardResponse
+from app.schemas.qr_login import QrLoginCreateRequest, QrLoginCreateResponse, QrLoginStatusResponse
 from app.schemas.platform_account import (
     PlatformAccountBindingsOut,
     PlatformAccountCreate,
@@ -17,6 +18,7 @@ from app.schemas.platform_account import (
     UploadAccountStorageStateRequest,
 )
 from app.services.account_dashboard_service import AccountDashboardService
+from app.services.qr_login_service import QrLoginService
 from app.services.platform_account_store import PlatformAccountStore
 
 
@@ -188,6 +190,120 @@ async def fetch_account_dashboard(
         diagnostic=result.get("diagnostic"),
         report_file=str(output),
     )
+
+
+@router.post(
+    "/{account_id}/platforms/{platform}/qr-login",
+    response_model=QrLoginCreateResponse,
+    summary="获取平台登录二维码（可远程扫码）",
+)
+async def create_platform_qr_login(
+    account_id: str,
+    platform: str,
+    payload: QrLoginCreateRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> QrLoginCreateResponse:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    service = QrLoginService(tenant_id=tenant_id, account_id=normalize_account_id(account_id))
+    try:
+        session = await service.create_qr_login(platform, refresh=payload.refresh)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    data = service.session_payload(session)
+    return QrLoginCreateResponse(
+        ok=bool(data.get("ok")),
+        platform=platform,
+        tenant_id=tenant_id,
+        account_id=normalize_account_id(account_id),
+        session_id=session.session_id,
+        status=session.status,
+        qr_image_url=session.qr_image_url,
+        qr_image_base64=session.qr_image_base64,
+        qr_scan_url=session.qr_scan_url,
+        expires_at=data.get("expires_at"),
+        expires_in_seconds=data.get("expires_in_seconds"),
+        validity_hint=session.validity_hint,
+        poll_interval_seconds=2,
+        diagnostic=session.message,
+    )
+
+
+@router.get(
+    "/{account_id}/platforms/{platform}/qr-login/{session_id}",
+    response_model=QrLoginStatusResponse,
+    summary="轮询二维码登录状态",
+)
+async def get_platform_qr_login_status(
+    account_id: str,
+    platform: str,
+    session_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> QrLoginStatusResponse:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    service = QrLoginService(tenant_id=tenant_id, account_id=normalize_account_id(account_id))
+    try:
+        session = await service.get_status(platform, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    data = service.session_payload(session, include_login=True)
+    return QrLoginStatusResponse(
+        ok=bool(data.get("ok")),
+        platform=platform,
+        tenant_id=tenant_id,
+        account_id=normalize_account_id(account_id),
+        session_id=session.session_id,
+        status=session.status,
+        expires_at=data.get("expires_at"),
+        expires_in_seconds=data.get("expires_in_seconds"),
+        validity_hint=session.validity_hint,
+        poll_interval_seconds=2,
+        message=session.message,
+        login_ready=bool(data.get("login_ready")),
+        login_status=data.get("login_status"),
+    )
+
+
+@router.delete(
+    "/{account_id}/platforms/{platform}/qr-login/{session_id}",
+    summary="取消二维码登录会话",
+)
+async def cancel_platform_qr_login(
+    account_id: str,
+    platform: str,
+    session_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    service = QrLoginService(tenant_id=tenant_id, account_id=normalize_account_id(account_id))
+    try:
+        cancelled = await service.cancel(platform, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"cancelled": cancelled}
 
 
 @router.put("/{account_id}/platforms/{platform}/storage-state")
