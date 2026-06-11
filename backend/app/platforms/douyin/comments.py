@@ -56,6 +56,16 @@ _SEARCH_JS_CHANNELS = (
     (SEARCH_SINGLE_PATH, "aweme_general"),
     (SEARCH_ITEM_PATH, "aweme_video_web"),
 )
+_FIRE_FETCH_JS = """async ({ url, timeoutMs }) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        await fetch(url, { credentials: 'include', signal: controller.signal });
+    } catch {
+    } finally {
+        clearTimeout(timer);
+    }
+}"""
 
 
 def _extract_aweme_id(video_url: str) -> str:
@@ -320,17 +330,22 @@ class DouyinCommentCrawler:
         limit: int,
         captured_api_urls: list[str],
     ) -> tuple[list[str], str | None, str]:
-        """薄浏览器：首页预热 → 搜索页拿结果 → 回首页用 fetch 拉评论。"""
+        """薄浏览器：首页预热 → 搜索页拦截 API（主路径）→ 回首页 fetch 评论。"""
         await self._warmup_for_js_api(page, captured_api_urls)
         comment_template = await self._pick_api_template_url(page, captured_api_urls)
         api_items: dict[str, dict] = {}
         nav_result = await self._search_videos_via_thin_nav(
-            page, keyword, limit, api_items, captured_api_urls
+            page,
+            keyword,
+            limit,
+            api_items,
+            captured_api_urls,
+            template_url=comment_template,
         )
         if not nav_result:
             search_template = await self._pick_api_template_url(page, captured_api_urls) or comment_template
             js_result = await self._search_videos_via_js_api(
-                page, keyword, limit, search_template, api_items, max_attempts=2
+                page, keyword, limit, search_template, api_items, max_attempts=1
             )
             nav_result = js_result
         if nav_result:
@@ -559,55 +574,214 @@ class DouyinCommentCrawler:
         limit: int,
         api_items: dict[str, dict],
         captured_api_urls: list[str],
+        *,
+        template_url: str,
     ) -> tuple[list[str], str | None] | None:
-        """同 tab 打开搜索页，拦截浏览器已签名的 search API；不点搜索框、不新开 tab。"""
+        """主路径：搜索页建立上下文 → 触发已签名 search 请求 → response 拦截解析。"""
         search_url = f"https://www.douyin.com/search/{_encode_search_keyword(keyword)}?type=video"
-        listener = self._make_search_response_listener(api_items, limit, captured_api_urls)
+        target_count = max(limit * 3, 15)
+        processed_responses: set[int] = set()
+        listener, pending_tasks = self._make_search_response_listener(
+            api_items, target_count, captured_api_urls, processed_responses
+        )
         page.on("response", listener)
         try:
             await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-            for _ in range(24):
-                if len(api_items) >= limit or await self._is_captcha_page(page):
-                    break
-                await page.wait_for_timeout(500)
+            await self._drain_search_ingest_tasks(pending_tasks)
+
+            if not api_items:
+                await self._fire_search_api_requests(
+                    page,
+                    keyword,
+                    template_url,
+                    api_items,
+                    captured_api_urls,
+                    pending_tasks,
+                    processed_responses,
+                    target_count=target_count,
+                )
+            await self._wait_search_ingest(
+                page, pending_tasks, api_items, target_count=limit, rounds=12
+            )
+
             if len(api_items) < limit and not await self._is_captcha_page(page):
                 await page.mouse.wheel(0, 800)
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(1500)
+                await self._fire_search_api_requests(
+                    page,
+                    keyword,
+                    template_url,
+                    api_items,
+                    captured_api_urls,
+                    pending_tasks,
+                    processed_responses,
+                    target_count=target_count,
+                    offset=10,
+                )
+                await self._wait_search_ingest(
+                    page, pending_tasks, api_items, target_count=limit, rounds=8
+                )
         finally:
+            await self._wait_search_ingest(
+                page, pending_tasks, api_items, target_count=limit, rounds=10
+            )
             try:
                 page.remove_listener("response", listener)
             except Exception:
                 pass
 
+        if api_items:
+            return self._finalize_search_results(api_items, keyword, limit, mode="thin_nav_api")
         if await self._is_captcha_page(page):
             return None
-        if not api_items:
-            return None
-        return self._finalize_search_results(api_items, keyword, limit, mode="thin_nav_api")
+        return None
+
+    async def _fire_search_api_requests(
+        self,
+        page,
+        keyword: str,
+        template_url: str,
+        api_items: dict[str, dict],
+        captured_api_urls: list[str],
+        pending_tasks: list[asyncio.Task],
+        processed_responses: set[int],
+        *,
+        target_count: int,
+        offset: int = 0,
+    ) -> None:
+        """仅触发 fetch，不在 evaluate 内解析；响应由监听器拦截。"""
+        sug_data = await self._fetch_json_via_page(
+            page, _build_search_sug_url(template_url, keyword), timeout_ms=8000
+        )
+        search_id = _extract_search_id_from_sug(sug_data)
+        fetch_count = max(target_count, 15)
+        for path, channel in _SEARCH_JS_CHANNELS:
+            if len(api_items) >= target_count:
+                break
+            url = _build_search_api_url(
+                template_url,
+                keyword,
+                path=path,
+                offset=offset,
+                count=fetch_count,
+                search_channel=channel,
+                search_id=search_id,
+            )
+            try:
+                async with page.expect_response(
+                    lambda resp: self._is_search_result_api(resp.url),
+                    timeout=15000,
+                ) as resp_info:
+                    await page.evaluate(_FIRE_FETCH_JS, {"url": url, "timeoutMs": 15000})
+                await self._ingest_search_response(
+                    await resp_info.value,
+                    api_items,
+                    captured_api_urls,
+                    target_count,
+                    processed_responses,
+                )
+            except Exception:
+                await page.evaluate(_FIRE_FETCH_JS, {"url": url, "timeoutMs": 15000})
+                await self._wait_search_ingest(
+                    page, pending_tasks, api_items, target_count=1, rounds=6
+                )
+            if api_items:
+                break
+
+    @staticmethod
+    async def _drain_search_ingest_tasks(tasks: list[asyncio.Task]) -> None:
+        if not tasks:
+            return
+        batch = list(tasks)
+        tasks.clear()
+        await asyncio.gather(*batch, return_exceptions=True)
+
+    async def _wait_search_ingest(
+        self,
+        page,
+        pending_tasks: list[asyncio.Task],
+        api_items: dict[str, dict],
+        *,
+        target_count: int,
+        rounds: int,
+    ) -> None:
+        for _ in range(rounds):
+            await self._drain_search_ingest_tasks(pending_tasks)
+            if len(api_items) >= target_count:
+                return
+            await page.wait_for_timeout(500)
 
     def _make_search_response_listener(
         self,
         api_items: dict[str, dict],
-        limit: int,
+        target_count: int,
         captured_api_urls: list[str],
-    ):
-        target_count = max(limit * 3, 15)
+        processed_responses: set[int],
+    ) -> tuple[object, list[asyncio.Task]]:
+        pending_tasks: list[asyncio.Task] = []
 
-        async def on_response(resp) -> None:
-            url = resp.url
-            if not self._is_search_result_api(url):
+        def on_response(resp) -> None:
+            if not self._is_search_result_api(resp.url):
                 return
+            pending_tasks.append(
+                asyncio.create_task(
+                    self._ingest_search_response(
+                        resp,
+                        api_items,
+                        captured_api_urls,
+                        target_count,
+                        processed_responses,
+                    )
+                )
+            )
+
+        return on_response, pending_tasks
+
+    async def _ingest_search_response(
+        self,
+        resp,
+        api_items: dict[str, dict],
+        captured_api_urls: list[str],
+        target_count: int,
+        processed_responses: set[int],
+    ) -> None:
+        if id(resp) in processed_responses:
+            return
+        url = resp.url
+        if url not in captured_api_urls:
             captured_api_urls.append(url)
+        try:
+            data = await resp.json()
+        except Exception:
             try:
-                data = await resp.json()
+                raw = await resp.body()
+                data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
             except Exception:
                 return
-            for row in self._extract_aweme_items_from_json(data):
-                api_items.setdefault(row["aweme_id"], row)
-                if len(api_items) >= target_count:
-                    break
-
-        return on_response
+        if not isinstance(data, dict):
+            return
+        processed_responses.add(id(resp))
+        for row in self._extract_aweme_items_from_json(data):
+            api_items.setdefault(row["aweme_id"], row)
+            if len(api_items) >= target_count:
+                return
+        for vid in self._extract_aweme_ids_from_json(data):
+            if len(api_items) >= target_count:
+                return
+            if vid in api_items:
+                continue
+            api_items[vid] = {
+                "aweme_id": vid,
+                "video_url": f"https://www.douyin.com/video/{vid}",
+                "title": "",
+                "author": "",
+                "author_id": "",
+                "sec_uid": "",
+                "digg_count": 0,
+                "comment_count": 0,
+                "share_count": 0,
+                "create_time": None,
+            }
 
     def _finalize_search_results(
         self,
@@ -980,7 +1154,9 @@ class DouyinCommentCrawler:
 
         def walk(node) -> None:
             if isinstance(node, dict):
-                if "aweme_id" in node and ("desc" in node or "author" in node or "aweme_info" in node):
+                if "aweme_info" in node or (
+                    "aweme_id" in node and ("desc" in node or "author" in node)
+                ):
                     row = self._normalize_search_aweme(node)
                     if row and row["aweme_id"] not in seen:
                         seen.add(row["aweme_id"])

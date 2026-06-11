@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""分阶段测试：薄浏览器（首页预热 → JS搜索 → JS评论）。"""
+"""分阶段测试：薄浏览器（首页预热 → 搜索页拦截 → JS评论）。"""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +18,7 @@ async def main() -> int:
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 2
     settings = get_settings()
     crawler = DouyinCommentCrawler(settings, "default", DouyinSessionStore(settings))
-    report: dict = {"keyword": keyword, "limit": limit, "mode": "thin_js_api"}
+    report: dict = {"keyword": keyword, "limit": limit, "mode": "thin_nav_api"}
     t0 = time.time()
 
     pool = PlaywrightPool.get()
