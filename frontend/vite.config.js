@@ -17,6 +17,7 @@ export default defineConfig({
         target: "http://backend:6080",
         changeOrigin: true,
         ws: true,
+        rewrite: (path) => path.replace(/^\/vnc/, ""),
       },
     },
   },

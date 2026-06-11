@@ -12,7 +12,7 @@ from app.core.antibot import (
     human_delay,
     launch_args,
     require_login,
-    visible_browser_launch_kwargs,
+    launch_browser,
 )
 from app.core.config import Settings
 from app.platforms.douyin.session import DouyinSessionStore, REQUIRED_LOGIN_COOKIES
@@ -134,7 +134,7 @@ class DouyinCrawler:
         browser = None
         context = None
         try:
-            browser = await playwright.chromium.launch(**visible_browser_launch_kwargs())
+            browser = await launch_browser(playwright, self.settings, headless=False)
             context = await browser.new_context(**self._context_kwargs())
             await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
             page = await context.new_page()
