@@ -10,6 +10,7 @@ from app.api.agent_ws_routes import router as agent_ws_router
 from app.api.antibot_routes import router as antibot_router
 from app.api.auth_routes import router as auth_router
 from app.api.douyin_routes import router as douyin_router
+from app.api.xiaohongshu_routes import router as xiaohongshu_router
 from app.api.platform_routes import router as platform_router
 from app.api.tenant_routes import router as tenant_router
 from app.api.user_routes import router as user_router
@@ -77,6 +78,7 @@ app.include_router(user_router)
 app.include_router(tenant_router)
 app.include_router(platform_router)
 app.include_router(douyin_router)
+app.include_router(xiaohongshu_router)
 app.include_router(antibot_router)
 app.include_router(account_router)
 app.include_router(agent_router)

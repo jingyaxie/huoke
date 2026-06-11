@@ -10,6 +10,7 @@ from app.core.antibot import (
     context_kwargs,
     headless_for_platform,
     human_delay,
+    human_scroll,
     launch_args,
     require_login,
     user_agent,

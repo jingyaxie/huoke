@@ -49,6 +49,10 @@ def get_search_tool(settings: Settings, platform: str, tenant_id: str, account_i
         from app.platforms.douyin.search import DouyinSearchTool
 
         return DouyinSearchTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        from app.platforms.xiaohongshu.search import XhsSearchTool
+
+        return XhsSearchTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现搜索工具")
 
 
@@ -60,7 +64,9 @@ def get_comment_tool(settings: Settings, platform: str, tenant_id: str, account_
 
         return DouyinCommentTool(settings, tenant_id, store, account_id=account_id)
     if platform == "xiaohongshu":
-        return XhsCommentCrawler(settings, tenant_id, store, account_id=account_id)
+        from app.platforms.xiaohongshu.comment_tool import XhsCommentTool
+
+        return XhsCommentTool(settings, tenant_id, store, account_id=account_id)
     if platform == "huoshan":
         return HuoshanCommentCrawler(settings, tenant_id, store, account_id=account_id)
     if platform == "kuaishou":
@@ -75,6 +81,10 @@ def get_follow_tool(settings: Settings, platform: str, tenant_id: str, account_i
         from app.platforms.douyin.follow import DouyinFollowTool
 
         return DouyinFollowTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        from app.platforms.xiaohongshu.follow import XhsFollowTool
+
+        return XhsFollowTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现关注工具")
 
 
@@ -85,6 +95,10 @@ def get_dm_tool(settings: Settings, platform: str, tenant_id: str, account_id: s
         from app.platforms.douyin.dm import DouyinDmTool
 
         return DouyinDmTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        from app.platforms.xiaohongshu.dm import XhsDmTool
+
+        return XhsDmTool(settings, tenant_id, store, account_id=account_id)
     raise ValueError(f"平台 {platform} 尚未实现私信工具")
 
 
@@ -114,7 +128,7 @@ def list_platforms() -> list[dict]:
         {
             "id": "xiaohongshu",
             "name": "小红书",
-            "capabilities": ["hot", "comments", "login", "keyword_search"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm"],
         },
         {
             "id": "kuaishou",
