@@ -56,10 +56,21 @@ def _build_search_url(keyword: str) -> str:
     )
 
 
-def _build_comment_page_url(template_url: str, note_id: str, *, cursor: str = "") -> str:
+def _build_comment_page_url(
+    template_url: str,
+    note_id: str,
+    *,
+    cursor: str = "",
+    xsec_token: str | None = None,
+    xsec_source: str | None = None,
+) -> str:
     split = urlsplit(template_url)
     query = dict(parse_qsl(split.query, keep_blank_values=True))
     query.update({"note_id": note_id, "cursor": cursor, "top_comment_id": "", "image_formats": "jpg,webp,avif"})
+    if xsec_token:
+        query["xsec_token"] = xsec_token
+    if xsec_source:
+        query["xsec_source"] = xsec_source
     for key in DROP_QUERY_KEYS:
         query.pop(key, None)
     return urlunsplit(

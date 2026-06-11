@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 from app.utils.parsers import parse_count
 
@@ -14,6 +14,17 @@ def extract_note_id(url_or_path: str) -> str:
     if not match:
         raise ValueError(f"无法从小红书链接解析 note_id: {url_or_path}")
     return match.group(1)
+
+
+def extract_note_access_params(url_or_path: str) -> dict[str, str]:
+    """从笔记链接解析 xsec_token / xsec_source，评论接口与页面访问均依赖它们。"""
+    query = parse_qs(urlsplit(url_or_path).query)
+    out: dict[str, str] = {}
+    for key in ("xsec_token", "xsec_source"):
+        values = query.get(key) or []
+        if values and str(values[0]).strip():
+            out[key] = str(values[0]).strip()
+    return out
 
 
 def build_note_url(note_id: str, xsec_token: str | None = None, xsec_source: str | None = None) -> str:
@@ -66,7 +77,14 @@ def parse_note_card(item: dict, *, rank: int, tenant_id: str) -> dict | None:
     card = item.get("note_card") or item.get("note") or item
     if not isinstance(card, dict):
         return None
-    note_id = str(card.get("note_id") or card.get("id") or "")
+    # 搜索接口常在 item 顶层放 id/xsec_token，note_card 内未必带 note_id。
+    note_id = str(
+        card.get("note_id")
+        or card.get("id")
+        or item.get("note_id")
+        or item.get("id")
+        or ""
+    )
     if not re.fullmatch(r"[0-9a-fA-F]{16,32}", note_id):
         return None
     user = card.get("user") or card.get("author") or {}
@@ -130,13 +148,28 @@ def _pick_cover(card: dict) -> str | None:
     return None
 
 
+def _normalize_unix_seconds(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        ts = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    # 小红书评论时间为毫秒，MySQL Integer 列存秒级时间戳。
+    if ts > 10_000_000_000:
+        ts //= 1000
+    return ts
+
+
 def normalize_xhs_comment(item: dict, parent_comment_id: str | None = None) -> dict:
     user = item.get("user_info") or item.get("user") or {}
     return {
         "comment_id": str(item.get("id") or item.get("comment_id") or ""),
         "parent_comment_id": parent_comment_id,
         "comment": item.get("content") or item.get("text") or "",
-        "create_time": item.get("create_time") or item.get("createTime"),
+        "create_time": _normalize_unix_seconds(item.get("create_time") or item.get("createTime")),
         "digg_count": parse_count(str(item.get("like_count") or item.get("liked_count") or "0")),
         "reply_comment_total": int(item.get("sub_comment_count") or item.get("subCommentCount") or 0),
         "username": user.get("nickname") or user.get("nick_name") or "",

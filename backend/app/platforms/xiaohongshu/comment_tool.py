@@ -10,7 +10,7 @@ from app.platforms.session_store import PlatformSessionStore
 from app.platforms.xiaohongshu.constants import COMMENT_PAGE_PATH, COMMENT_SUB_PATH, PLATFORM
 from app.platforms.xiaohongshu.js_api import XhsJsApiTool
 from app.platforms.xiaohongshu.js_constants import DEFAULT_MAX_COMMENTS, _build_comment_page_url
-from app.platforms.xiaohongshu.utils import extract_note_id, normalize_xhs_comment
+from app.platforms.xiaohongshu.utils import extract_note_access_params, extract_note_id, normalize_xhs_comment
 from app.services.playwright_pool import PlaywrightPool
 
 
@@ -105,6 +105,7 @@ class XhsCommentTool(XhsJsApiTool):
         *,
         max_comments: int = DEFAULT_MAX_COMMENTS,
     ) -> dict:
+        access = extract_note_access_params(note_url)
         captured_pages: list[dict] = []
 
         async def on_response(resp):
@@ -137,8 +138,12 @@ class XhsCommentTool(XhsJsApiTool):
 
         comments_map: dict[str, dict] = {}
         api_total = 0
+        api_error: str | None = None
         for packet in captured_pages:
             body = packet.get("data") or {}
+            if body.get("success") is False:
+                api_error = str(body.get("msg") or body.get("code") or "comment_api_failed")
+                continue
             data = body.get("data") if isinstance(body.get("data"), dict) else body
             comments = data.get("comments") or []
             if not api_total:
@@ -153,11 +158,33 @@ class XhsCommentTool(XhsJsApiTool):
                         comments_map[sub_row["comment_id"]] = sub_row
 
         if not comments_map:
-            api_data = await self._fetch_comments_from_api(page, note_id, template_url, max_comments=max_comments)
+            api_data = await self._fetch_comments_from_api(
+                page,
+                note_id,
+                template_url,
+                max_comments=max_comments,
+                xsec_token=access.get("xsec_token"),
+                xsec_source=access.get("xsec_source"),
+            )
             if api_data.get("comments"):
-                return api_data
+                payload = {
+                    "platform": PLATFORM,
+                    "note_id": note_id,
+                    "note_url": note_url,
+                    "video_url": note_url,
+                    **api_data,
+                    "capture_method": api_data.get("capture_method") or "js_api",
+                }
+                if api_data.get("warning"):
+                    payload["warning"] = api_data["warning"]
+                return payload
 
             dom_rows = await self._extract_comments_from_dom(page)
+            warning = "未捕获到小红书评论接口，结果来自页面可见评论（可能不全）。"
+            if api_error:
+                warning = f"{api_error}；{warning}"
+            elif not access.get("xsec_token"):
+                warning = "笔记链接缺少 xsec_token，评论接口可能拒绝访问；请通过搜索接口获取完整笔记链接。"
             return {
                 "platform": PLATFORM,
                 "note_id": note_id,
@@ -169,7 +196,7 @@ class XhsCommentTool(XhsJsApiTool):
                 "expected_reply_total_from_top_comments": 0,
                 "total_comments_captured": len(dom_rows),
                 "capture_method": "dom_fallback",
-                "warning": "未捕获到小红书评论接口，结果来自页面可见评论（可能不全）。建议先登录小红书。",
+                "warning": warning,
                 "comments": dom_rows,
             }
 
@@ -210,6 +237,8 @@ class XhsCommentTool(XhsJsApiTool):
         template_url: str,
         *,
         max_comments: int = DEFAULT_MAX_COMMENTS,
+        xsec_token: str | None = None,
+        xsec_source: str | None = None,
     ) -> dict:
         comments_map: dict[str, dict] = {}
         cursor = ""
@@ -237,9 +266,17 @@ class XhsCommentTool(XhsJsApiTool):
         has_more = True
         while has_more and guard < 20 and top_count < max_comments:
             guard += 1
-            url = _build_comment_page_url(template_url, note_id, cursor=cursor)
+            url = _build_comment_page_url(
+                template_url,
+                note_id,
+                cursor=cursor,
+                xsec_token=xsec_token,
+                xsec_source=xsec_source,
+            )
             data = await self.fetch_json_via_page(page, url)
             if not data:
+                break
+            if data.get("success") is False:
                 break
             merge_page(data)
             inner = data.get("data") if isinstance(data.get("data"), dict) else data

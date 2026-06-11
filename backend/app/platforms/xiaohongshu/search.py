@@ -164,28 +164,40 @@ class XhsSearchTool(XhsJsApiTool):
         self._ingest_search_payload(data, note_meta, target_count)
 
     def _ingest_search_payload(self, data: dict, note_meta: dict[str, dict], target_count: int) -> None:
-        for note_id in walk_note_ids(data):
-            if note_id not in note_meta:
-                note_meta[note_id] = {"note_id": note_id}
-            if len(note_meta) >= target_count:
-                return
         items = (data.get("data") or {}).get("items") or data.get("items") or []
         for raw in items:
             if not isinstance(raw, dict):
                 continue
             parsed = parse_note_card(raw, rank=0, tenant_id=self.tenant_id)
-            if not parsed:
-                continue
-            note_id = parsed["external_id"]
-            note_meta[note_id] = {
-                "note_id": note_id,
-                "title": parsed.get("title") or "",
-                "ip_location": parsed.get("ip_location") or "",
-                "create_time": parsed.get("create_time"),
-                "xsec_token": parsed.get("raw_data", {}).get("xsec_token"),
-                "xsec_source": parsed.get("raw_data", {}).get("xsec_source"),
-                "raw_data": parsed.get("raw_data"),
-            }
+            if parsed:
+                note_id = parsed["external_id"]
+                note_meta[note_id] = {
+                    "note_id": note_id,
+                    "title": parsed.get("title") or "",
+                    "ip_location": parsed.get("ip_location") or "",
+                    "create_time": parsed.get("create_time"),
+                    "xsec_token": parsed.get("raw_data", {}).get("xsec_token"),
+                    "xsec_source": parsed.get("raw_data", {}).get("xsec_source"),
+                    "raw_data": parsed.get("raw_data"),
+                }
+            else:
+                note_id = str(raw.get("note_id") or raw.get("id") or "")
+                if not re.fullmatch(r"[0-9a-fA-F]{16,32}", note_id):
+                    continue
+                note_meta[note_id] = {
+                    "note_id": note_id,
+                    "title": "",
+                    "ip_location": "",
+                    "create_time": None,
+                    "xsec_token": raw.get("xsec_token"),
+                    "xsec_source": raw.get("xsec_source") or "pc_search",
+                    "raw_data": raw,
+                }
+            if len(note_meta) >= target_count:
+                return
+        for note_id in walk_note_ids(data):
+            if note_id not in note_meta:
+                note_meta[note_id] = {"note_id": note_id}
             if len(note_meta) >= target_count:
                 return
 
