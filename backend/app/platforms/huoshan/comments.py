@@ -86,7 +86,11 @@ class HuoshanCommentCrawler(DouyinCommentCrawler):
         show_browser: bool = False,
         days: int = 3,
         region: str | None = None,
-    ) -> tuple[list[dict], list[Path], str | None]:
+        *,
+        guest_mode: bool = False,
+    ) -> tuple[list[dict], list[Path], str | None, dict]:
+        if guest_mode:
+            raise ValueError("guest_mode 仅支持抖音平台")
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         crawler = HuoshanCrawler(self.settings, self.tenant_id, self.store, account_id=self.account_id)
         if show_browser and not HuoshanCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id):
@@ -123,4 +127,4 @@ class HuoshanCommentCrawler(DouyinCommentCrawler):
             results.append(payload)
             files.append(output)
             await human_pause(self.settings, tenant_id=self.tenant_id, profile="between_items")
-        return results, files, diagnostic
+        return results, files, diagnostic, {"guest_mode": False, "session_mode": "logged_in"}

@@ -36,13 +36,18 @@ class CommentCrawlerService:
         show_browser: bool = False,
         days: int = 3,
         region: str | None = None,
-    ) -> tuple[list[dict], list[Path], str | None]:
+        *,
+        guest_mode: bool = False,
+    ) -> tuple[list[dict], list[Path], str | None, dict]:
+        if guest_mode and self.platform != "douyin":
+            raise ValueError("guest_mode 仅支持抖音平台")
         return await self._backend.crawl_keyword_comments(
             keyword=keyword,
             limit=limit,
             show_browser=show_browser,
             days=days,
             region=region,
+            guest_mode=guest_mode,
         )
 
     async def search_videos(

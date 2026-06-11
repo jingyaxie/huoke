@@ -16,7 +16,7 @@ from app.core.antibot import (
 )
 from app.core.config import Settings
 from app.platforms.douyin.crawler import DouyinCrawler
-from app.platforms.douyin.session import DouyinSessionStore
+from app.platforms.douyin.session import DouyinSessionStore, USER_LOGIN_MARKERS
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
@@ -279,8 +279,13 @@ class DouyinCommentCrawler:
         days: int = 3,
         region: str | None = None,
         max_comments: int = DEFAULT_MAX_COMMENTS,
-    ) -> tuple[list[dict], list[Path], str | None]:
-        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        *,
+        guest_mode: bool = False,
+    ) -> tuple[list[dict], list[Path], str | None, dict]:
+        if guest_mode and show_browser:
+            raise ValueError("guest_mode 与 show_browser 不能同时使用，游客态请使用无头模式")
+        if not guest_mode:
+            require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         crawler = DouyinCrawler(self.settings, self.tenant_id, self.store)
         session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
         if show_browser and not session:
@@ -288,9 +293,11 @@ class DouyinCommentCrawler:
             session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
 
         resolved_headless = headless_for_platform(self.settings, PLATFORM, False if show_browser else None)
+        session_meta = self._build_session_meta(guest_mode=guest_mode)
         if session:
-            return await self._crawl_keyword_comments_on_page(
-                session["page"],
+            page = session["page"]
+            results, files, diagnostic = await self._crawl_keyword_comments_on_page(
+                page,
                 keyword=keyword,
                 limit=limit,
                 manual_search=show_browser,
@@ -299,7 +306,10 @@ class DouyinCommentCrawler:
                 region=region,
                 max_comments=max_comments,
                 from_existing=True,
+                session_meta=session_meta,
             )
+            session_meta["session_mode"] = await self._detect_session_mode_from_page(page)
+            return results, files, self._apply_session_diagnostic(diagnostic, session_meta), session_meta
 
         pool = PlaywrightPool.get()
         async with pool.tenant_context(
@@ -310,7 +320,7 @@ class DouyinCommentCrawler:
             headless=resolved_headless,
             account_id=self.account_id,
         ) as (_, page):
-            return await self._crawl_keyword_comments_on_page(
+            results, files, diagnostic = await self._crawl_keyword_comments_on_page(
                 page,
                 keyword=keyword,
                 limit=limit,
@@ -320,7 +330,45 @@ class DouyinCommentCrawler:
                 region=region,
                 max_comments=max_comments,
                 from_existing=False,
+                session_meta=session_meta,
             )
+            session_meta["session_mode"] = await self._detect_session_mode_from_page(page)
+            return results, files, self._apply_session_diagnostic(diagnostic, session_meta), session_meta
+
+    def _build_session_meta(self, *, guest_mode: bool) -> dict:
+        state = self.store.load(self.tenant_id, self.account_id)
+        if guest_mode:
+            mode = "guest"
+        elif self.store.is_user_logged_in(state):
+            mode = "logged_in"
+        elif self.store.is_ready(state):
+            mode = "guest"
+        else:
+            mode = "anonymous"
+        return {"guest_mode": guest_mode, "session_mode": mode}
+
+    @staticmethod
+    def _apply_session_diagnostic(diagnostic: str | None, session_meta: dict) -> str | None:
+        mode = session_meta.get("session_mode")
+        if mode not in {"guest", "anonymous"}:
+            return diagnostic
+        label = "游客态" if mode == "guest" else "匿名态"
+        if not diagnostic:
+            return f"当前为{label}，结果可能不完整"
+        if label in diagnostic:
+            return diagnostic
+        return f"{diagnostic}（{label}）"
+
+    async def _detect_session_mode_from_page(self, page) -> str:
+        try:
+            names = {c.get("name") for c in await page.context.cookies() if c.get("name")}
+        except Exception:
+            return "anonymous"
+        if names & USER_LOGIN_MARKERS:
+            return "logged_in"
+        if names & DouyinSessionStore.REQUIRED_LOGIN_COOKIES:
+            return "guest"
+        return "anonymous"
 
     async def _thin_browser_keyword_search(
         self,
@@ -379,6 +427,7 @@ class DouyinCommentCrawler:
         region: str | None,
         max_comments: int,
         from_existing: bool,
+        session_meta: dict | None = None,
     ) -> tuple[list[dict], list[Path], str | None]:
         captured_api_urls: list[str] = []
 
@@ -436,7 +485,15 @@ class DouyinCommentCrawler:
                 max_comments=max_comments,
             )
             payload["platform"] = PLATFORM
-            payload["keyword_context"] = {"keyword": keyword, "days": days, "region": region}
+            ctx = {"keyword": keyword, "days": days, "region": region}
+            if session_meta:
+                ctx.update(
+                    {
+                        "guest_mode": session_meta.get("guest_mode", False),
+                        "session_mode": session_meta.get("session_mode"),
+                    }
+                )
+            payload["keyword_context"] = ctx
             output = (
                 self.settings.report_output_dir
                 / f"comments_{self.platform}_{self.tenant_id}_{aweme_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"

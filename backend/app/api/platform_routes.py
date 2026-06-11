@@ -156,12 +156,13 @@ async def platform_crawl_keyword_comments(
     pid = resolve_path_platform_id(platform)
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
     service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
-    results, outputs, diagnostic = await service.crawl_keyword_comments(
+    results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
         keyword=payload.keyword,
         limit=payload.limit,
         show_browser=payload.show_browser,
         days=payload.days,
         region=payload.region,
+        guest_mode=payload.guest_mode,
     )
     items = [
         {
@@ -179,6 +180,8 @@ async def platform_crawl_keyword_comments(
         "videos_found": len(results),
         "crawled": len(items),
         "diagnostic": diagnostic,
+        "guest_mode": session_meta.get("guest_mode", payload.guest_mode),
+        "session_mode": session_meta.get("session_mode", "logged_in"),
         "items": items,
     }
 

@@ -267,7 +267,8 @@ class SkillExecutor:
             if not keyword:
                 return {"error": "缺少参数 keyword"}
             show_browser = bool(params.get("show_browser", False))
-            results, outputs, error = await CommentCrawlerService(
+            guest_mode = bool(params.get("guest_mode", False))
+            results, outputs, error, session_meta = await CommentCrawlerService(
                 self.settings,
                 tenant_id=self.tenant_id,
                 platform=self.platform,
@@ -278,6 +279,7 @@ class SkillExecutor:
                 days=int(params.get("days", 3)),
                 region=params.get("region"),
                 show_browser=show_browser,
+                guest_mode=guest_mode,
             )
             if error:
                 return {"error": error}
@@ -292,6 +294,8 @@ class SkillExecutor:
                 "keyword": keyword,
                 "videos_processed": len(results),
                 "total_comments_captured": total_captured,
+                "guest_mode": session_meta.get("guest_mode", guest_mode),
+                "session_mode": session_meta.get("session_mode", "logged_in"),
                 "output_files": [str(p) for p in outputs],
                 "results": _slim_keyword_results(results),
                 "hint": _LOCAL_COMMENT_HINT,

@@ -24,8 +24,11 @@ async def main() -> int:
 
     t0 = time.time()
     try:
-        results, files, diagnostic = await asyncio.wait_for(
-            crawler.crawl_keyword_comments(keyword, limit=limit, max_comments=30),
+        guest_mode = "--guest" in sys.argv
+        results, files, diagnostic, session_meta = await asyncio.wait_for(
+            crawler.crawl_keyword_comments(
+                keyword, limit=limit, max_comments=30, guest_mode=guest_mode
+            ),
             timeout=timeout_s,
         )
         report.update(
@@ -33,6 +36,8 @@ async def main() -> int:
                 "ok": bool(results),
                 "elapsed_s": round(time.time() - t0, 1),
                 "diagnostic": diagnostic,
+                "guest_mode": session_meta.get("guest_mode"),
+                "session_mode": session_meta.get("session_mode"),
                 "videos_found": len(results),
                 "items": [
                     {

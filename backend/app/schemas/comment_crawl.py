@@ -1,5 +1,6 @@
+from typing import Any, Literal, Optional
+
 from pydantic import BaseModel, Field
-from typing import Any, Optional
 
 
 class VideoCommentCrawlRequest(BaseModel):
@@ -19,6 +20,10 @@ class KeywordCommentCrawlRequest(BaseModel):
     keyword: str
     limit: int = Field(default=3, ge=1, le=20)
     show_browser: bool = False
+    guest_mode: bool = Field(
+        default=False,
+        description="游客态：跳过登录检查，使用抖音自动下发的会话 Cookie（仅抖音）",
+    )
     days: int = Field(default=3, ge=1, le=30)
     region: Optional[str] = None
     tenant_id: Optional[str] = None
@@ -41,4 +46,6 @@ class KeywordCommentCrawlResponse(BaseModel):
     videos_found: int
     crawled: int
     diagnostic: str | None = None
+    guest_mode: bool = False
+    session_mode: Literal["guest", "logged_in", "anonymous"] = "logged_in"
     items: list[CommentCrawlResult]
