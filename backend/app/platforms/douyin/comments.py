@@ -15,7 +15,7 @@ from app.platforms.douyin.crawler import DouyinCrawler
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
-# 向后兼容：从此模块继续导出常量
+# 从此模块继续导出常量
 from app.platforms.douyin.js_constants import (  # noqa: F401
     COMMENT_PATH,
     DEFAULT_MAX_COMMENTS,
@@ -27,7 +27,7 @@ from app.platforms.douyin.js_constants import (  # noqa: F401
 
 
 class DouyinCommentCrawler:
-    """向后兼容门面：组合搜索工具 + 评论工具。"""
+    """组合搜索工具与评论工具的门面。"""
 
     def __init__(
         self,

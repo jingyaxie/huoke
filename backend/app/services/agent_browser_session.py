@@ -54,7 +54,6 @@ class AgentBrowserSession:
             if self._page is not None:
                 return
             store = get_session_store(self.settings, self.platform)
-            store.migrate_legacy_if_needed()
             self._playwright = await async_playwright().start()
             self._browser, self._context, self._page = await open_tenant_page(
                 self._playwright,

@@ -5,11 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.crawl_cache import CacheMeta, CrawlCacheOptions
+
 
 PipelinePlatform = Literal["douyin", "xiaohongshu"]
 
 
-class KeywordVideoCommentsRequest(BaseModel):
+class KeywordVideoCommentsRequest(CrawlCacheOptions):
     keyword: str = Field(..., min_length=1, max_length=200)
     platforms: list[PipelinePlatform] = Field(
         default_factory=lambda: ["douyin", "xiaohongshu"]
@@ -37,3 +39,4 @@ class KeywordVideoCommentsResponse(BaseModel):
     platforms: list[PlatformPipelineResult] = Field(default_factory=list)
     job_id: str | None = None
     completed_at: datetime | None = None
+    cache: CacheMeta | None = None

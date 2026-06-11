@@ -6,7 +6,8 @@ from app.schemas.common import ORMBaseModel
 
 class VideoOut(ORMBaseModel):
     id: int
-    douyin_video_id: str | None
+    platform: str
+    external_id: str | None
     title: str
     author_id: int | None
     video_url: str | None
@@ -19,4 +20,3 @@ class VideoOut(ORMBaseModel):
     last_seen_at: datetime
     raw_data: dict | None
     author: AuthorOut | None = None
-

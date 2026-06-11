@@ -3,9 +3,10 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.platforms.search_filters import normalize_region
+from app.schemas.crawl_cache import CacheMeta, CrawlCacheOptions
 
 
-class VideoCommentCrawlRequest(BaseModel):
+class VideoCommentCrawlRequest(CrawlCacheOptions):
     video_url: str
     show_browser: bool = False
     tenant_id: Optional[str] = None
@@ -18,7 +19,7 @@ class DouyinLoginRequest(BaseModel):
     platform: Optional[str] = None
 
 
-class KeywordCommentCrawlRequest(BaseModel):
+class KeywordCommentCrawlRequest(CrawlCacheOptions):
     keyword: str
     limit: int = Field(default=3, ge=1, le=20)
     show_browser: bool = False
@@ -48,6 +49,7 @@ class CommentCrawlResult(BaseModel):
     output_file: str
     total_comments_captured: int
     api_total_top_comments: int
+    cache: CacheMeta | None = None
 
 
 class KeywordCommentCrawlResponse(BaseModel):
@@ -58,3 +60,4 @@ class KeywordCommentCrawlResponse(BaseModel):
     guest_mode: bool = False
     session_mode: Literal["guest", "logged_in", "anonymous"] = "logged_in"
     items: list[CommentCrawlResult]
+    cache: CacheMeta | None = None

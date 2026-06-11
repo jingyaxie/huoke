@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -26,31 +25,12 @@ class PlatformSessionStore(ABC):
         self.tenants_dir.mkdir(parents=True, exist_ok=True)
 
     def _resolve_tenants_dir(self) -> Path:
-        if self.platform == "douyin":
-            return self.settings.douyin_tenants_dir
         return self.settings.storage_root / self.platform / "tenants"
 
     def path_for(self, tenant_id: str, account_id: str = "default") -> Path:
         safe = normalize_tenant_id(tenant_id)
         account = normalize_account_id(account_id)
-        account_path = self.tenants_dir / safe / "accounts" / account / "storage_state.json"
-        if account == "default":
-            legacy = self.tenants_dir / safe / "storage_state.json"
-            if legacy.exists() and not account_path.exists():
-                return legacy
-        return account_path
-
-    def migrate_legacy_if_needed(self, tenant_id: str | None = None) -> None:
-        if self.platform != "douyin":
-            return
-        tenant_id = normalize_tenant_id(tenant_id or self.settings.default_tenant_id)
-        target = self.path_for(tenant_id, "default")
-        if target.exists():
-            return
-        legacy = self.settings.douyin_storage_state_path
-        if legacy.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy, target)
+        return self.tenants_dir / safe / "accounts" / account / "storage_state.json"
 
     def _read_file(self, path: Path) -> dict | None:
         if not path.exists():
@@ -75,7 +55,6 @@ class PlatformSessionStore(ABC):
             path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def load(self, tenant_id: str, account_id: str = "default") -> dict | None:
-        self.migrate_legacy_if_needed(tenant_id)
         return self._read_file(self.path_for(tenant_id, account_id))
 
     def save_dict(self, tenant_id: str, state: dict, account_id: str = "default") -> Path:
@@ -102,7 +81,6 @@ class PlatformSessionStore(ABC):
     def login_status(self, tenant_id: str, account_id: str = "default") -> dict:
         account = normalize_account_id(account_id)
         path = self.path_for(tenant_id, account)
-        self.migrate_legacy_if_needed(tenant_id)
         encrypted = bool(self.settings.storage_state_encryption_key)
         base = {
             "platform": self.platform,

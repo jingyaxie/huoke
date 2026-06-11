@@ -34,8 +34,6 @@ class Settings(BaseSettings):
     default_tenant_id: str = "default"
     default_platform: str = "douyin"
     storage_root: Path = BASE_DIR / "storage"
-    douyin_tenants_dir: Path = BASE_DIR / "storage" / "douyin" / "tenants"
-    douyin_storage_state_path: Path = BASE_DIR / "storage" / "douyin" / "storage_state.json"
     douyin_profile_dir: Path = BASE_DIR / "storage" / "douyin" / "profile"
     douyin_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
     douyin_headless: bool = False
@@ -66,6 +64,7 @@ class Settings(BaseSettings):
 
     crawl_hour: int = 8
     crawl_minute: int = 0
+    crawl_cache_ttl_hours: float = 24.0
 
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com/v1"
@@ -117,8 +116,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
     settings.storage_root.mkdir(parents=True, exist_ok=True)
-    settings.douyin_tenants_dir.mkdir(parents=True, exist_ok=True)
-    settings.douyin_storage_state_path.parent.mkdir(parents=True, exist_ok=True)
     settings.douyin_profile_dir.mkdir(parents=True, exist_ok=True)
     settings.report_output_dir.mkdir(parents=True, exist_ok=True)
     return settings

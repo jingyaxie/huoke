@@ -19,7 +19,7 @@ from app.services.playwright_pool import PlaywrightPool
 
 
 class KuaishouCommentCrawler:
-    """向后兼容门面：组合搜索工具 + 评论工具。"""
+    """组合搜索工具与评论工具的门面。"""
 
     def __init__(
         self,

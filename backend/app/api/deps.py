@@ -182,12 +182,8 @@ def platform_session_store(
     platform: str = Depends(get_platform_id),
     settings: Settings = Depends(get_settings),
 ) -> PlatformSessionStore:
-    store = get_session_store(settings, platform)
-    store.migrate_legacy_if_needed()
-    return store
+    return get_session_store(settings, platform)
 
 
 def douyin_session_store(settings: Settings = Depends(get_settings)) -> PlatformSessionStore:
-    store = get_session_store(settings, DEFAULT_PLATFORM)
-    store.migrate_legacy_if_needed()
-    return store
+    return get_session_store(settings, DEFAULT_PLATFORM)

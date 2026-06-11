@@ -2,7 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-
 from app.platforms.constants import DEFAULT_PLATFORM
 
 
@@ -12,7 +11,6 @@ class CrawlItem(BaseModel):
     title: str
     author_name: str | None = None
     external_id: str | None = None
-    douyin_video_id: str | None = None
     video_url: str | None = None
     cover_url: str | None = None
     like_count: int = 0
@@ -29,4 +27,3 @@ class CrawlResult(BaseModel):
     snapshot_date: str
     total: int
     items: list[CrawlItem]
-

@@ -14,6 +14,7 @@ from app.schemas.open_pipeline import (
 )
 from app.services.agent_async_job_service import AgentAsyncJobService
 from app.services.agent_service import AgentService
+from app.services.cached_crawl_coordinator import CachedCrawlCoordinator
 
 _PLATFORM_SKILL: dict[str, str] = {
     "douyin": "open-douyin-keyword-video-comments",
@@ -44,6 +45,34 @@ class OpenPipelineService:
         if req.async_job:
             return self._submit_async(req, account_id=account_id)
 
+        if self.db_session is not None and not req.force_refresh:
+            coordinator = CachedCrawlCoordinator(
+                self.db_session,
+                self.settings,
+                tenant_id=self.tenant_id,
+                platform="pipeline",
+                account_id=account_id,
+            )
+            cached = coordinator.cached_pipeline_lookup(
+                keyword=req.keyword,
+                platforms=list(req.platforms),
+                video_limit=req.video_limit,
+                force_refresh=req.force_refresh,
+                cache_ttl_hours=req.cache_ttl_hours,
+            )
+            if cached is not None:
+                payload = cached.payload
+                return KeywordVideoCommentsResponse(
+                    keyword=req.keyword,
+                    status=str(payload.get("status") or "completed"),
+                    platforms=[
+                        PlatformPipelineResult(**item)
+                        for item in (payload.get("platforms") or [])
+                        if isinstance(item, dict)
+                    ],
+                    completed_at=datetime.now(timezone.utc),
+                )
+
         platform_results: list[PlatformPipelineResult] = []
         overall_ok = True
         for platform in req.platforms:
@@ -52,11 +81,63 @@ class OpenPipelineService:
             if item.status != "completed":
                 overall_ok = False
 
-        return KeywordVideoCommentsResponse(
+        response = KeywordVideoCommentsResponse(
             keyword=req.keyword,
             status="completed" if overall_ok else "partial",
             platforms=platform_results,
             completed_at=datetime.now(timezone.utc),
+        )
+        if self.db_session is not None:
+            coordinator = CachedCrawlCoordinator(
+                self.db_session,
+                self.settings,
+                tenant_id=self.tenant_id,
+                platform="pipeline",
+                account_id=account_id,
+            )
+            if overall_ok:
+                coordinator.store_pipeline_result(
+                    keyword=req.keyword,
+                    platforms=list(req.platforms),
+                    video_limit=req.video_limit,
+                    payload=response.model_dump(mode="json"),
+                    cache_ttl_hours=req.cache_ttl_hours,
+                )
+            elif req.force_refresh:
+                fallback = self._pipeline_stale_fallback(coordinator, req, account_id=account_id)
+                if fallback is not None:
+                    return fallback
+        return response
+
+    def _pipeline_stale_fallback(
+        self,
+        coordinator: CachedCrawlCoordinator,
+        req: KeywordVideoCommentsRequest,
+        *,
+        account_id: str,
+    ) -> KeywordVideoCommentsResponse | None:
+        params = {
+            "keyword": req.keyword,
+            "platforms": list(req.platforms),
+            "video_limit": req.video_limit,
+        }
+        stale = coordinator.cache.lookup_stale("pipeline_keyword_comments", params)
+        if stale is None:
+            return None
+        payload = stale.payload
+        meta = stale.meta.model_copy(
+            update={"stale_fallback": True, "refresh_error": "强制拉取未成功，已回退缓存"},
+        )
+        return KeywordVideoCommentsResponse(
+            keyword=req.keyword,
+            status=str(payload.get("status") or "completed"),
+            platforms=[
+                PlatformPipelineResult(**item)
+                for item in (payload.get("platforms") or [])
+                if isinstance(item, dict)
+            ],
+            completed_at=datetime.now(timezone.utc),
+            cache=meta,
         )
 
     async def _run_single_platform(

@@ -5,14 +5,14 @@ from app.repositories.base import BaseRepository
 
 
 class AuthorRepository(BaseRepository):
-    def get_by_douyin_user_id(self, douyin_user_id: str | None) -> Author | None:
-        if not douyin_user_id:
+    def get_by_platform_user_id(self, platform_user_id: str | None) -> Author | None:
+        if not platform_user_id:
             return None
         return self.session.scalar(
             select(Author).where(
                 Author.tenant_id == self.tenant_id,
                 Author.platform == self.platform,
-                Author.douyin_user_id == douyin_user_id,
+                Author.platform_user_id == platform_user_id,
             )
         )
 
@@ -28,24 +28,24 @@ class AuthorRepository(BaseRepository):
     def upsert(
         self,
         *,
-        douyin_user_id: str | None,
+        platform_user_id: str | None,
         name: str,
         avatar_url: str | None = None,
         profile_url: str | None = None,
     ) -> Author:
-        author = self.get_by_douyin_user_id(douyin_user_id) or (self.get_by_name(name) if name else None)
+        author = self.get_by_platform_user_id(platform_user_id) or (self.get_by_name(name) if name else None)
         if author is None:
             author = Author(
                 tenant_id=self.tenant_id,
                 platform=self.platform,
-                douyin_user_id=douyin_user_id,
+                platform_user_id=platform_user_id,
                 name=name,
                 avatar_url=avatar_url,
                 profile_url=profile_url,
             )
             self.session.add(author)
         else:
-            author.douyin_user_id = author.douyin_user_id or douyin_user_id
+            author.platform_user_id = author.platform_user_id or platform_user_id
             author.name = name or author.name
             author.avatar_url = avatar_url or author.avatar_url
             author.profile_url = profile_url or author.profile_url

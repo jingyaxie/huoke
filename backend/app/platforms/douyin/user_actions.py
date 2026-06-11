@@ -11,7 +11,7 @@ __all__ = ["DouyinUserActions", "build_profile_url"]
 
 
 class DouyinUserActions:
-    """向后兼容门面：组合关注工具 + 私信工具。"""
+    """组合关注工具与私信工具的门面。"""
 
     def __init__(
         self,

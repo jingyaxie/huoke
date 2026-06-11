@@ -69,13 +69,19 @@ def create_tenant_api_key(
 @router.post("/crawl/hot")
 async def crawl_hot(
     limit: int = Query(default=100, ge=1, le=100),
+    force_refresh: bool = Query(default=False, description="强制即时拉取，忽略缓存；拉取失败时回退返回已有缓存"),
+    cache_ttl_hours: float = Query(default=24.0, ge=0.25, le=168, description="缓存有效期（小时）"),
     session: Session = Depends(db_session),
     tenant_id: str = Depends(get_authenticated_tenant_id),
     platform: str = Depends(get_platform_id),
     account_id: str = Depends(get_account_id),
 ):
     service = CrawlService(session, tenant_id=tenant_id, platform=platform, account_id=account_id)
-    result = await service.crawl_hot(limit=limit)
+    result = await service.crawl_hot(
+        limit=limit,
+        force_refresh=force_refresh,
+        cache_ttl_hours=cache_ttl_hours,
+    )
     return result.model_dump()
 
 
@@ -83,6 +89,8 @@ async def crawl_hot(
 async def tenant_crawl_hot(
     tenant_id: str,
     limit: int = Query(default=100, ge=1, le=100),
+    force_refresh: bool = Query(default=False, description="强制即时拉取，忽略缓存；拉取失败时回退返回已有缓存"),
+    cache_ttl_hours: float = Query(default=24.0, ge=0.25, le=168, description="缓存有效期（小时）"),
     session: Session = Depends(db_session),
     authenticated_tenant_id: str = Depends(get_authenticated_tenant_id),
     account_id: str = Depends(get_account_id),
@@ -90,7 +98,11 @@ async def tenant_crawl_hot(
 ):
     tid = require_path_tenant(tenant_id, authenticated_tenant_id, settings)
     service = CrawlService(session, tenant_id=tid, platform=settings.default_platform, account_id=account_id)
-    result = await service.crawl_hot(limit=limit)
+    result = await service.crawl_hot(
+        limit=limit,
+        force_refresh=force_refresh,
+        cache_ttl_hours=cache_ttl_hours,
+    )
     return result.model_dump()
 
 
@@ -200,11 +212,19 @@ async def crawl_video_comments(
     platform: str = Depends(get_platform_id),
     account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
 ):
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
     pid = effective_platform_id(platform, payload.platform)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
-    result, output = await service.crawl_video_comments(payload.video_url, show_browser=payload.show_browser)
+    service = CommentCrawlerService(
+        settings, tenant_id=tid, platform=pid, account_id=account_id, session=session
+    )
+    result, output, cache_meta = await service.crawl_video_comments(
+        payload.video_url,
+        show_browser=payload.show_browser,
+        force_refresh=payload.force_refresh,
+        cache_ttl_hours=payload.cache_ttl_hours,
+    )
     return {
         "tenant_id": tid,
         "platform": pid,
@@ -212,6 +232,7 @@ async def crawl_video_comments(
         "output_file": str(output),
         "total_comments_captured": result["total_comments_captured"],
         "api_total_top_comments": result["api_total_top_comments"],
+        "cache": cache_meta,
     }
 
 
@@ -222,17 +243,22 @@ async def crawl_keyword_comments(
     platform: str = Depends(get_platform_id),
     account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
 ):
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
     pid = effective_platform_id(platform, payload.platform)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
-    results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
+    service = CommentCrawlerService(
+        settings, tenant_id=tid, platform=pid, account_id=account_id, session=session
+    )
+    results, outputs, diagnostic, session_meta, cache_meta = await service.crawl_keyword_comments(
         keyword=payload.keyword,
         limit=payload.limit,
         show_browser=payload.show_browser,
         days=payload.days,
         region=payload.region,
         guest_mode=payload.guest_mode,
+        force_refresh=payload.force_refresh,
+        cache_ttl_hours=payload.cache_ttl_hours,
     )
     items = [
         {
@@ -253,6 +279,7 @@ async def crawl_keyword_comments(
         "guest_mode": session_meta.get("guest_mode", payload.guest_mode),
         "session_mode": session_meta.get("session_mode", "logged_in"),
         "items": items,
+        "cache": cache_meta,
     }
 
 

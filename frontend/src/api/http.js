@@ -15,10 +15,10 @@ export function getWsApiBaseUrl() {
 }
 
 const baseURL = getApiBaseUrl();
-export const TENANT_STORAGE_KEY = "douyin_tenant_id";
-export const PLATFORM_STORAGE_KEY = "douyin_platform_id";
+export const TENANT_STORAGE_KEY = "huoke_tenant_id";
+export const PLATFORM_STORAGE_KEY = "huoke_platform_id";
 export const ACCOUNT_STORAGE_KEY = "huoke_account_id";
-export const API_KEY_STORAGE_KEY = "douyin_api_key";
+export const API_KEY_STORAGE_KEY = "huoke_api_key";
 export const ACCESS_TOKEN_STORAGE_KEY = "huoke_access_token";
 
 const http = axios.create({

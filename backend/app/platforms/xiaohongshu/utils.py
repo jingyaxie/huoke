@@ -93,7 +93,6 @@ def parse_note_card(item: dict, *, rank: int, tenant_id: str) -> dict | None:
         "create_time": create_time,
         "author_name": user.get("nickname") or user.get("nick_name") or user.get("name"),
         "external_id": note_id,
-        "douyin_video_id": None,
         "video_url": build_note_url(note_id, xsec_token, xsec_source),
         "cover_url": _pick_cover(card),
         "like_count": parse_count(str(interact.get("liked_count") or interact.get("likedCount") or "0")),

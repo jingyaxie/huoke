@@ -72,7 +72,7 @@ DEFAULT_GLOBAL_SKILLS: list[dict] = [
         ],
         "content": "已验证生产链路，直接调用即可。",
         "actions": [],
-        "builtin_handler": "douyin_keyword_comments",
+        "builtin_handler": "crawl_keyword_comments",
     },
     {
         "id": "crawl-hot",

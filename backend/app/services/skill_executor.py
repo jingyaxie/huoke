@@ -262,7 +262,7 @@ class SkillExecutor:
                 "result": _slim_comment_payload(payload),
                 "hint": _LOCAL_COMMENT_HINT,
             }
-        if handler in {"crawl_keyword_comments", "douyin_keyword_comments"}:
+        if handler == "crawl_keyword_comments":
             keyword = params.get("keyword")
             if not keyword:
                 return {"error": "缺少参数 keyword"}

@@ -210,7 +210,6 @@ class DouyinCrawler:
                 title=title,
                 author_name=parsed.get("author_name") or self._guess_author(text),
                 external_id=video_id,
-                douyin_video_id=video_id,
                 video_url=self._to_absolute_url(page.url, href),
                 like_count=parse_count(parsed.get("like_count_text") or self._match_count(text, ("点赞", "赞"))),
                 comment_count=parse_count(self._match_count(text, ("评论", "评"))),

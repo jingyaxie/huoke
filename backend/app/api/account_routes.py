@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from app.api.deps import get_authenticated_tenant_id
+from app.api.deps import db_session, get_authenticated_tenant_id
 from app.core.antibot import LoginRequiredError
 from app.core.config import Settings, get_settings
 from app.platforms.account_id import normalize_account_id
@@ -151,6 +152,7 @@ async def fetch_account_dashboard(
     payload: AccountDashboardRequest,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     store: PlatformAccountStore = Depends(_store),
+    session: Session = Depends(db_session),
 ) -> AccountDashboardResponse:
     platform = platform.strip().lower()
     if platform not in BINDABLE_PLATFORMS:
@@ -158,12 +160,18 @@ async def fetch_account_dashboard(
     if store.get_account(tenant_id, account_id) is None:
         raise HTTPException(status_code=404, detail="账号不存在")
 
-    service = AccountDashboardService(tenant_id=tenant_id, account_id=normalize_account_id(account_id))
+    service = AccountDashboardService(
+        tenant_id=tenant_id,
+        account_id=normalize_account_id(account_id),
+        session=session,
+    )
     try:
-        result, output = await service.fetch_dashboard(
+        result, output, cache_meta = await service.fetch_dashboard(
             platform,
             show_browser=payload.show_browser,
             works_limit=payload.works_limit,
+            force_refresh=payload.force_refresh,
+            cache_ttl_hours=payload.cache_ttl_hours,
         )
     except LoginRequiredError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
@@ -189,6 +197,7 @@ async def fetch_account_dashboard(
         data=data,
         diagnostic=result.get("diagnostic"),
         report_file=str(output),
+        cache=cache_meta,
     )
 
 

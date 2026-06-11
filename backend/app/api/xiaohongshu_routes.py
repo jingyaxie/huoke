@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.api.deps import get_account_id, get_authenticated_tenant_id
+from app.api.deps import db_session, get_account_id, get_authenticated_tenant_id
 from app.core.config import Settings, get_settings
+from app.schemas.crawl_cache import CacheMeta
 from app.schemas.xiaohongshu_tools import (
     XhsFollowUserRequest,
+    XhsUnfollowUserRequest,
     XhsKeywordCommentsRequest,
     XhsNoteCommentsRequest,
     XhsSearchNotesRequest,
@@ -21,8 +24,9 @@ def _service(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
 ) -> XiaohongshuToolService:
-    return XiaohongshuToolService(settings, tenant_id=tenant_id, account_id=account_id)
+    return XiaohongshuToolService(settings, tenant_id=tenant_id, account_id=account_id, session=session)
 
 
 def _envelope(
@@ -34,6 +38,7 @@ def _envelope(
     data: dict,
     diagnostic: str | None = None,
     report_file: str | None = None,
+    cache: CacheMeta | None = None,
 ) -> XhsToolResponse:
     return XhsToolResponse(
         ok=ok,
@@ -43,6 +48,7 @@ def _envelope(
         data=data,
         diagnostic=diagnostic,
         report_file=report_file,
+        cache=cache,
     )
 
 
@@ -53,12 +59,14 @@ async def search_notes(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     account_id: str = Depends(get_account_id),
 ):
-    result, output = await service.search_notes(
+    result, output, cache_meta = await service.search_notes(
         keyword=payload.keyword,
         limit=payload.limit,
         show_browser=payload.show_browser,
         days=payload.days,
         region=payload.region,
+        force_refresh=payload.force_refresh,
+        cache_ttl_hours=payload.cache_ttl_hours,
     )
     notes = result.get("notes") or []
     return _envelope(
@@ -77,6 +85,7 @@ async def search_notes(
         },
         diagnostic=result.get("diagnostic"),
         report_file=str(output),
+        cache=cache_meta,
     )
 
 
@@ -87,10 +96,12 @@ async def crawl_note_comments(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     account_id: str = Depends(get_account_id),
 ):
-    result, output = await service.crawl_note_comments(
+    result, output, cache_meta = await service.crawl_note_comments(
         note_url=payload.note_url,
         max_comments=payload.max_comments,
         show_browser=payload.show_browser,
+        force_refresh=payload.force_refresh,
+        cache_ttl_hours=payload.cache_ttl_hours,
     )
     comments = result.get("comments") or []
     preview = comments[:20]
@@ -110,6 +121,7 @@ async def crawl_note_comments(
         },
         diagnostic=result.get("warning"),
         report_file=str(output),
+        cache=cache_meta,
     )
 
 
@@ -120,13 +132,15 @@ async def crawl_keyword_comments(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     account_id: str = Depends(get_account_id),
 ):
-    results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
+    results, outputs, diagnostic, session_meta, cache_meta = await service.crawl_keyword_comments(
         keyword=payload.keyword,
         limit=payload.limit,
         max_comments=payload.max_comments,
         show_browser=payload.show_browser,
         days=payload.days,
         region=payload.region,
+        force_refresh=payload.force_refresh,
+        cache_ttl_hours=payload.cache_ttl_hours,
     )
     items = [
         {
@@ -150,6 +164,7 @@ async def crawl_keyword_comments(
             "items": items,
         },
         diagnostic=diagnostic,
+        cache=cache_meta,
     )
 
 
@@ -181,6 +196,38 @@ async def follow_user(
             "follow": follow,
         },
         diagnostic=follow.get("error") or follow.get("reason"),
+        report_file=result.get("output_file"),
+    )
+
+
+@router.post("/users/unfollow", response_model=XhsToolResponse, summary="取消关注单个用户")
+async def unfollow_user(
+    payload: XhsUnfollowUserRequest,
+    service: XiaohongshuToolService = Depends(_service),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
+):
+    result = await service.unfollow_user(
+        user_id=payload.user_id,
+        username=payload.username or "",
+        show_browser=payload.show_browser,
+    )
+    unfollow = result.get("unfollow") or {}
+    ok = bool(unfollow.get("ok"))
+    return _envelope(
+        ok=ok,
+        tenant_id=tenant_id,
+        account_id=account_id,
+        tool="unfollow",
+        data={
+            "username": result.get("username"),
+            "user_id": result.get("user_id"),
+            "profile_url": result.get("profile_url") or service.profile_url(payload.user_id),
+            "follow_status_before": result.get("follow_status_before"),
+            "follow_status_after": result.get("follow_status_after"),
+            "unfollow": unfollow,
+        },
+        diagnostic=unfollow.get("error") or unfollow.get("reason"),
         report_file=result.get("output_file"),
     )
 

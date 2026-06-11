@@ -27,6 +27,7 @@
         <el-menu-item index="/authors">热门作者</el-menu-item>
         <el-menu-item index="/trend">趋势分析</el-menu-item>
         <el-menu-item index="/comments">评论抓取</el-menu-item>
+        <el-menu-item index="/external-api">对外接口 API</el-menu-item>
         <el-menu-item index="/agent" class="agent-nav-item">智能体助手</el-menu-item>
         <el-menu-item index="/antibot">AntiBot</el-menu-item>
         <el-menu-item index="/reports">热点日报</el-menu-item>

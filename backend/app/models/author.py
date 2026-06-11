@@ -10,13 +10,13 @@ from app.db.base import Base
 class Author(Base):
     __tablename__ = "authors"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "platform", "douyin_user_id", name="uq_authors_tenant_platform_user"),
+        UniqueConstraint("tenant_id", "platform", "platform_user_id", name="uq_authors_tenant_platform_user"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="default")
     platform: Mapped[str] = mapped_column(String(32), index=True, nullable=False, default="douyin")
-    douyin_user_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    platform_user_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

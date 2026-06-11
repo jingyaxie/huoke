@@ -80,6 +80,10 @@ def _build_follow_body(user_id: str) -> str:
     return json.dumps({"touid": user_id, "ftype": 1}, ensure_ascii=False)
 
 
+def _build_unfollow_body(user_id: str) -> str:
+    return json.dumps({"touid": user_id, "ftype": 2}, ensure_ascii=False)
+
+
 def _is_search_result_api(url: str) -> bool:
     if any(ex in url for ex in _SEARCH_API_EXCLUDES):
         return False

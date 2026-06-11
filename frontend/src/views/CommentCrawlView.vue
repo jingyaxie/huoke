@@ -119,7 +119,7 @@ const PLATFORM_LABELS = {
   kuaishou: "快手",
 };
 
-const RESULTS_STORAGE_KEY = "douyin_comment_crawl_results_v1";
+const RESULTS_STORAGE_KEY = "huoke_comment_crawl_results_v1";
 
 function formatCrawlError(err, actionLabel) {
   const detail = err?.response?.data?.detail;

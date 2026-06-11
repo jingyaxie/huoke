@@ -18,9 +18,6 @@ class VideoRepository(BaseRepository):
             )
         )
 
-    def get_by_douyin_video_id(self, douyin_video_id: str | None) -> Video | None:
-        return self.get_by_external_id(douyin_video_id)
-
     def get_by_title_and_author(self, title: str, author_id: int | None) -> Video | None:
         stmt = select(Video).where(
             Video.tenant_id == self.tenant_id,
@@ -48,7 +45,6 @@ class VideoRepository(BaseRepository):
         title: str,
         author_id: int | None,
         external_id: str | None = None,
-        douyin_video_id: str | None = None,
         video_url: str | None = None,
         cover_url: str | None = None,
         like_count: int = 0,
@@ -57,14 +53,12 @@ class VideoRepository(BaseRepository):
         publish_time: datetime | None = None,
         raw_data: dict | None = None,
     ) -> Video:
-        content_id = external_id or douyin_video_id
-        video = self.get_by_external_id(content_id) or self.get_by_title_and_author(title, author_id)
+        video = self.get_by_external_id(external_id) or self.get_by_title_and_author(title, author_id)
         if video is None:
             video = Video(
                 tenant_id=self.tenant_id,
                 platform=self.platform,
-                external_id=content_id,
-                douyin_video_id=content_id if self.platform == "douyin" else douyin_video_id,
+                external_id=external_id,
                 title=title,
                 author_id=author_id,
                 video_url=video_url,
@@ -79,9 +73,7 @@ class VideoRepository(BaseRepository):
             )
             self.session.add(video)
         else:
-            video.external_id = video.external_id or content_id
-            if self.platform == "douyin":
-                video.douyin_video_id = video.douyin_video_id or content_id
+            video.external_id = video.external_id or external_id
             video.title = title or video.title
             video.author_id = author_id if author_id is not None else video.author_id
             video.video_url = video_url or video.video_url

@@ -1,0 +1,420 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings
+from app.repositories.snapshot_repository import SnapshotRepository
+from app.schemas.crawl_cache import DEFAULT_CACHE_TTL_HOURS, CacheMeta
+from app.services.comment_store_service import CommentStoreService, extract_content_id
+from app.services.crawl_cache_service import CrawlCacheService, build_params_hash
+
+
+@dataclass
+class CachedCrawlResult:
+    payload: dict[str, Any]
+    output: Path | None
+    meta: CacheMeta
+
+
+class CachedCrawlCoordinator:
+    """统一缓存协调层：所有抓取类接口经此层读写缓存与增量合并。"""
+
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings,
+        *,
+        tenant_id: str,
+        platform: str,
+        account_id: str = "default",
+    ) -> None:
+        self.session = session
+        self.settings = settings
+        self.tenant_id = tenant_id
+        self.platform = platform
+        self.account_id = account_id
+        self.cache = CrawlCacheService(
+            session,
+            settings,
+            tenant_id=tenant_id,
+            platform=platform,
+            account_id=account_id,
+        )
+        self.comment_store = CommentStoreService(session, settings, tenant_id)
+
+    def _search_file_path(self, params: dict[str, Any]) -> Path:
+        digest = build_params_hash(params)
+        path = self.settings.report_output_dir / f"search_{self.platform}_{self.tenant_id}_{digest}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _stale_fallback(
+        self,
+        operation: str,
+        params: dict[str, Any],
+        exc: Exception,
+    ) -> CachedCrawlResult | None:
+        stale = self.cache.lookup_stale(operation, params)
+        if stale is None:
+            return None
+        meta = stale.meta.model_copy(
+            update={"stale_fallback": True, "refresh_error": str(exc)[:500]},
+        )
+        payload = self.cache.attach_meta(stale.payload, meta)
+        return CachedCrawlResult(payload, stale.file_path, meta)
+
+    def _stale_keyword_comments_fallback(
+        self,
+        params: dict[str, Any],
+        exc: Exception,
+    ) -> tuple[list[dict[str, Any]], list[Path], str | None, dict[str, Any], CacheMeta] | None:
+        result = self._stale_fallback("keyword_comments", params, exc)
+        if result is None:
+            return None
+        payload = result.payload
+        outputs = [Path(p) for p in (payload.get("output_files") or []) if p]
+        return (
+            payload.get("items") or [],
+            outputs,
+            payload.get("diagnostic"),
+            payload.get("session_meta") or {},
+            result.meta,
+        )
+
+    async def cached_search_videos(
+        self,
+        fetcher,
+        *,
+        keyword: str,
+        limit: int,
+        show_browser: bool,
+        days: int | None,
+        region: str | None,
+        force_refresh: bool = False,
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> CachedCrawlResult:
+        params = {
+            "keyword": keyword,
+            "limit": limit,
+            "show_browser": show_browser,
+            "days": days,
+            "region": region,
+        }
+        cached = self.cache.lookup(
+            "search_videos",
+            params,
+            force_refresh=force_refresh,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        if cached is not None:
+            return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
+
+        try:
+            payload, _output = await fetcher(
+                keyword=keyword,
+                limit=limit,
+                show_browser=show_browser,
+                days=days,
+                region=region,
+            )
+        except Exception as exc:
+            fallback = self._stale_fallback("search_videos", params, exc)
+            if fallback is not None:
+                return fallback
+            raise
+        canonical = self._search_file_path(params)
+        canonical.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        meta = self.cache.store(
+            "search_videos",
+            params,
+            payload,
+            file_path=canonical,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        self.session.commit()
+        return CachedCrawlResult(self.cache.attach_meta(payload, meta), canonical, meta)
+
+    async def cached_video_comments(
+        self,
+        fetcher,
+        *,
+        content_url: str,
+        max_comments: int,
+        show_browser: bool,
+        force_refresh: bool = False,
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> CachedCrawlResult:
+        params = {
+            "content_url": content_url,
+            "max_comments": max_comments,
+            "show_browser": show_browser,
+        }
+        cached = self.cache.lookup(
+            "video_comments",
+            params,
+            force_refresh=force_refresh,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        if cached is not None:
+            return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
+
+        try:
+            fetched_payload, _output = await fetcher(
+                content_url,
+                show_browser=show_browser,
+                max_comments=max_comments,
+            )
+        except Exception as exc:
+            fallback = self._stale_fallback("video_comments", params, exc)
+            if fallback is not None:
+                return fallback
+            raise
+        content_id = extract_content_id(self.platform, content_url, fetched_payload)
+        if not content_id:
+            meta = self.cache.store(
+                "video_comments",
+                params,
+                fetched_payload,
+                file_path=_output,
+                cache_ttl_hours=cache_ttl_hours,
+            )
+            self.session.commit()
+            return CachedCrawlResult(self.cache.attach_meta(fetched_payload, meta), _output, meta)
+
+        merged, canonical, stats = self.comment_store.merge_and_persist(
+            platform=self.platform,
+            content_id=content_id,
+            content_url=content_url,
+            fetched_payload=fetched_payload,
+            max_comments=max_comments,
+        )
+        meta = self.cache.store(
+            "video_comments",
+            params,
+            merged,
+            file_path=canonical,
+            cache_ttl_hours=cache_ttl_hours,
+            incremental_merge=True,
+            new_comments_added=stats.new_comments_added,
+            updated_comments=stats.updated_comments,
+        )
+        self.session.commit()
+        return CachedCrawlResult(self.cache.attach_meta(merged, meta), canonical, meta)
+
+    async def cached_keyword_comments(
+        self,
+        fetcher,
+        *,
+        keyword: str,
+        limit: int,
+        max_comments: int,
+        show_browser: bool,
+        guest_mode: bool,
+        days: int,
+        region: str | None,
+        force_refresh: bool = False,
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> tuple[list[dict[str, Any]], list[Path], str | None, dict[str, Any], CacheMeta]:
+        params = {
+            "keyword": keyword,
+            "limit": limit,
+            "max_comments": max_comments,
+            "show_browser": show_browser,
+            "guest_mode": guest_mode,
+            "days": days,
+            "region": region,
+        }
+        cached = self.cache.lookup(
+            "keyword_comments",
+            params,
+            force_refresh=force_refresh,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        if cached is not None:
+            payload = cached.payload
+            items = payload.get("items") or []
+            outputs = [Path(p) for p in (payload.get("output_files") or []) if p]
+            return (
+                items,
+                outputs,
+                payload.get("diagnostic"),
+                payload.get("session_meta") or {},
+                cached.meta,
+            )
+
+        try:
+            results, outputs, diagnostic, session_meta = await fetcher(
+                keyword=keyword,
+                limit=limit,
+                max_comments=max_comments,
+                show_browser=show_browser,
+                guest_mode=guest_mode,
+                days=days,
+                region=region,
+            )
+        except Exception as exc:
+            fallback = self._stale_keyword_comments_fallback(params, exc)
+            if fallback is not None:
+                return fallback
+            raise
+
+        merged_items: list[dict[str, Any]] = []
+        merged_outputs: list[Path] = []
+        total_new = 0
+        total_updated = 0
+
+        for result, output in zip(results, outputs, strict=False):
+            content_url = result.get("video_url") or result.get("note_url") or ""
+            content_id = extract_content_id(self.platform, content_url, result)
+            if content_id:
+                merged, canonical, stats = self.comment_store.merge_and_persist(
+                    platform=self.platform,
+                    content_id=content_id,
+                    content_url=content_url,
+                    fetched_payload=result,
+                    max_comments=max_comments,
+                )
+                total_new += stats.new_comments_added
+                total_updated += stats.updated_comments
+                merged_items.append(merged)
+                merged_outputs.append(canonical)
+            else:
+                merged_items.append(result)
+                merged_outputs.append(output)
+
+        payload = {
+            "keyword": keyword,
+            "items": merged_items,
+            "output_files": [str(p) for p in merged_outputs],
+            "diagnostic": diagnostic,
+            "session_meta": session_meta,
+            "videos_found": len(merged_items),
+        }
+        meta = self.cache.store(
+            "keyword_comments",
+            params,
+            payload,
+            cache_ttl_hours=cache_ttl_hours,
+            incremental_merge=True,
+            new_comments_added=total_new,
+            updated_comments=total_updated,
+        )
+        self.session.commit()
+        return merged_items, merged_outputs, diagnostic, session_meta, meta
+
+    def cached_hot_crawl_exists(self, *, snapshot_date: date, limit: int) -> CachedCrawlResult | None:
+        params = {"snapshot_date": snapshot_date.isoformat(), "limit": limit}
+        cached = self.cache.lookup("hot_crawl", params, force_refresh=False)
+        if cached is not None:
+            return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
+
+        snapshot_repo = SnapshotRepository(self.session, self.tenant_id, self.platform)
+        rows = snapshot_repo.list_by_date(snapshot_date, limit=limit)
+        if not rows:
+            return None
+        payload = {
+            "platform": self.platform,
+            "snapshot_date": snapshot_date.isoformat(),
+            "total": len(rows),
+            "from_db_snapshot": True,
+        }
+        meta = CacheMeta(from_cache=True, cache_hit=True)
+        return CachedCrawlResult(payload, None, meta)
+
+    def store_hot_crawl(self, payload: dict[str, Any], *, cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS) -> CacheMeta:
+        params = {
+            "snapshot_date": payload.get("snapshot_date"),
+            "limit": payload.get("total"),
+        }
+        meta = self.cache.store("hot_crawl", params, payload, cache_ttl_hours=cache_ttl_hours)
+        self.session.commit()
+        return meta
+
+    async def cached_dashboard(
+        self,
+        fetcher,
+        *,
+        show_browser: bool,
+        works_limit: int,
+        force_refresh: bool = False,
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> CachedCrawlResult:
+        params = {"show_browser": show_browser, "works_limit": works_limit}
+        cached = self.cache.lookup(
+            "dashboard",
+            params,
+            force_refresh=force_refresh,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        if cached is not None:
+            return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
+
+        try:
+            payload, output = await fetcher(show_browser=show_browser, works_limit=works_limit)
+        except Exception as exc:
+            fallback = self._stale_fallback("dashboard", params, exc)
+            if fallback is not None:
+                return fallback
+            raise
+        meta = self.cache.store(
+            "dashboard",
+            params,
+            payload,
+            file_path=output,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        self.session.commit()
+        return CachedCrawlResult(self.cache.attach_meta(payload, meta), output, meta)
+
+    def cached_pipeline_lookup(
+        self,
+        *,
+        keyword: str,
+        platforms: list[str],
+        video_limit: int,
+        force_refresh: bool = False,
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> CachedCrawlResult | None:
+        params = {
+            "keyword": keyword,
+            "platforms": platforms,
+            "video_limit": video_limit,
+        }
+        cached = self.cache.lookup(
+            "pipeline_keyword_comments",
+            params,
+            force_refresh=force_refresh,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        if cached is None:
+            return None
+        return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
+
+    def store_pipeline_result(
+        self,
+        *,
+        keyword: str,
+        platforms: list[str],
+        video_limit: int,
+        payload: dict[str, Any],
+        cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+    ) -> CacheMeta:
+        params = {
+            "keyword": keyword,
+            "platforms": platforms,
+            "video_limit": video_limit,
+        }
+        meta = self.cache.store(
+            "pipeline_keyword_comments",
+            params,
+            payload,
+            cache_ttl_hours=cache_ttl_hours,
+        )
+        self.session.commit()
+        return meta

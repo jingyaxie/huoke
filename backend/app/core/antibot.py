@@ -761,7 +761,6 @@ def require_login(
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if not ctx.require_login:
         return
-    store.migrate_legacy_if_needed(tenant_id)
     state = store.load(tenant_id, account_id)
     if store.is_ready(state):
         return

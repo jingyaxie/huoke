@@ -5,9 +5,10 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.platforms.search_filters import normalize_region
+from app.schemas.crawl_cache import CacheMeta, CrawlCacheOptions
 
 
-class DouyinSearchVideosRequest(BaseModel):
+class DouyinSearchVideosRequest(CrawlCacheOptions):
     keyword: str = Field(min_length=1, max_length=100, description="搜索关键词")
     limit: int = Field(default=10, ge=1, le=20, description="返回视频数量上限")
     show_browser: bool = Field(default=False, description="是否使用可见浏览器（调试用）")
@@ -22,13 +23,13 @@ class DouyinSearchVideosRequest(BaseModel):
         return normalize_region(str(value))
 
 
-class DouyinVideoCommentsRequest(BaseModel):
+class DouyinVideoCommentsRequest(CrawlCacheOptions):
     video_url: str = Field(description="抖音视频链接，如 https://www.douyin.com/video/{aweme_id}")
     max_comments: int = Field(default=200, ge=1, le=500, description="顶层评论抓取上限")
     show_browser: bool = False
 
 
-class DouyinKeywordCommentsRequest(BaseModel):
+class DouyinKeywordCommentsRequest(CrawlCacheOptions):
     keyword: str = Field(min_length=1, max_length=100)
     limit: int = Field(default=3, ge=1, le=20, description="搜索视频数量")
     max_comments: int = Field(default=200, ge=1, le=500, description="每个视频的顶层评论上限")
@@ -57,6 +58,10 @@ class DouyinUserTarget(BaseModel):
 
 
 class DouyinFollowUserRequest(DouyinUserTarget):
+    show_browser: bool = False
+
+
+class DouyinUnfollowUserRequest(DouyinUserTarget):
     show_browser: bool = False
 
 
@@ -134,3 +139,4 @@ class DouyinToolResponse(BaseModel):
     data: dict
     diagnostic: Optional[str] = None
     report_file: Optional[str] = None
+    cache: CacheMeta | None = None
