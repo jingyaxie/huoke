@@ -122,7 +122,7 @@ async def platform_douyin_login(
     return {"platform": pid, "tenant_id": tid, "storage_state_path": str(store.path_for(tid))}
 
 
-@router.post("/platforms/{platform}/comments/video", response_model=CommentCrawlResult)
+@router.post("/platforms/{platform}/comments/video", response_model=CommentCrawlResult, deprecated=True)
 async def platform_crawl_video_comments(
     platform: str,
     payload: VideoCommentCrawlRequest,
@@ -130,10 +130,20 @@ async def platform_crawl_video_comments(
     account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
+    """已弃用：抖音请使用 POST /api/platforms/douyin/comments/videos"""
     pid = resolve_path_platform_id(platform)
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
-    result, output = await service.crawl_video_comments(payload.video_url, show_browser=payload.show_browser)
+    if pid == "douyin":
+        from app.services.douyin_tool_service import DouyinToolService
+
+        service = DouyinToolService(settings, tenant_id=tid, account_id=account_id)
+        result, output = await service.crawl_video_comments(
+            video_url=payload.video_url,
+            show_browser=payload.show_browser,
+        )
+    else:
+        service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
+        result, output = await service.crawl_video_comments(payload.video_url, show_browser=payload.show_browser)
     return {
         "platform": pid,
         "tenant_id": tid,
@@ -145,7 +155,7 @@ async def platform_crawl_video_comments(
     }
 
 
-@router.post("/platforms/{platform}/comments/keyword", response_model=KeywordCommentCrawlResponse)
+@router.post("/platforms/{platform}/comments/keyword", response_model=KeywordCommentCrawlResponse, deprecated=True)
 async def platform_crawl_keyword_comments(
     platform: str,
     payload: KeywordCommentCrawlRequest,
@@ -153,17 +163,31 @@ async def platform_crawl_keyword_comments(
     account_id: str = Depends(get_account_id),
     settings: Settings = Depends(get_settings),
 ):
+    """已弃用：抖音请使用 POST /api/platforms/douyin/comments/keyword"""
     pid = resolve_path_platform_id(platform)
     tid = effective_tenant_id(tenant_id, payload.tenant_id, settings)
-    service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
-    results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
-        keyword=payload.keyword,
-        limit=payload.limit,
-        show_browser=payload.show_browser,
-        days=payload.days,
-        region=payload.region,
-        guest_mode=payload.guest_mode,
-    )
+    if pid == "douyin":
+        from app.services.douyin_tool_service import DouyinToolService
+
+        service = DouyinToolService(settings, tenant_id=tid, account_id=account_id)
+        results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
+            keyword=payload.keyword,
+            limit=payload.limit,
+            show_browser=payload.show_browser,
+            days=payload.days,
+            region=payload.region,
+            guest_mode=payload.guest_mode,
+        )
+    else:
+        service = CommentCrawlerService(settings, tenant_id=tid, platform=pid, account_id=account_id)
+        results, outputs, diagnostic, session_meta = await service.crawl_keyword_comments(
+            keyword=payload.keyword,
+            limit=payload.limit,
+            show_browser=payload.show_browser,
+            days=payload.days,
+            region=payload.region,
+            guest_mode=payload.guest_mode,
+        )
     items = [
         {
             "video_url": result["video_url"],

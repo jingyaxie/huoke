@@ -42,6 +42,52 @@ def get_hot_crawler(settings: Settings, platform: str, tenant_id: str, account_i
     raise ValueError(f"平台 {platform} 尚未实现热榜爬虫")
 
 
+def get_search_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.search import DouyinSearchTool
+
+        return DouyinSearchTool(settings, tenant_id, store, account_id=account_id)
+    raise ValueError(f"平台 {platform} 尚未实现搜索工具")
+
+
+def get_comment_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.comment_tool import DouyinCommentTool
+
+        return DouyinCommentTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        return XhsCommentCrawler(settings, tenant_id, store, account_id=account_id)
+    if platform == "huoshan":
+        return HuoshanCommentCrawler(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        raise ValueError("快手评论抓取尚未实现")
+    raise ValueError(f"平台 {platform} 尚未实现评论工具")
+
+
+def get_follow_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.follow import DouyinFollowTool
+
+        return DouyinFollowTool(settings, tenant_id, store, account_id=account_id)
+    raise ValueError(f"平台 {platform} 尚未实现关注工具")
+
+
+def get_dm_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.dm import DouyinDmTool
+
+        return DouyinDmTool(settings, tenant_id, store, account_id=account_id)
+    raise ValueError(f"平台 {platform} 尚未实现私信工具")
+
+
 def get_comment_crawler(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
     platform = normalize_platform(platform)
     store = get_session_store(settings, platform)
@@ -63,7 +109,7 @@ def list_platforms() -> list[dict]:
         {
             "id": "douyin",
             "name": "抖音",
-            "capabilities": ["hot", "comments", "login", "keyword_search"],
+            "capabilities": ["hot", "comments", "login", "keyword_search", "follow", "dm"],
         },
         {
             "id": "xiaohongshu",
