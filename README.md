@@ -25,6 +25,20 @@
 19. 单元测试
 20. `.env` 配置
 
+## Skill 统一架构（2026-06）
+
+业务能力统一通过 **Skill** 暴露，REST / Agent / Pipeline 共用 `SkillRunnerService`：
+
+| 入口 | 说明 |
+|------|------|
+| `POST /api/agent/skills/execute` | 直接执行任意 Skill |
+| `POST /api/platforms/{platform}/...` | 平台 REST（内部适配为 Skill） |
+| `POST /api/agent/pipeline/keyword-video-comments` | 对外 Pipeline（`pipeline-keyword-video-comments`） |
+| Agent 对话 `/skill-id` | invoke_skill 与上述同源 |
+
+核心 Skill：`douyin-keyword-comments`、`xhs-keyword-comments`、`follow-user`、`send-dm`、`pipeline-keyword-video-comments`。  
+Skill 定义：`backend/storage/skills/global.json`。
+
 ## 目录结构
 
 ```text

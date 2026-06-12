@@ -6,7 +6,7 @@
         <div>
           <h2 class="page-title">抓取数据</h2>
           <p class="page-subtitle">
-            查看已抓取的视频与评论，点击评论用户可进入用户页进行关注或私信
+            查看已抓取的视频与评论，点击评论用户可进入用户页进行关注；抖音/快手支持网页私信，小红书 PC 端不支持
           </p>
         </div>
         <el-button :loading="loading" type="primary" @click="loadContents">刷新</el-button>

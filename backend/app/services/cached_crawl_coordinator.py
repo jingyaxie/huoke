@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.repositories.snapshot_repository import SnapshotRepository
 from app.schemas.crawl_cache import DEFAULT_CACHE_TTL_HOURS, CacheMeta
 from app.services.comment_store_service import CommentStoreService, extract_content_id
 from app.services.crawl_cache_service import CrawlCacheService, build_params_hash
@@ -307,34 +305,6 @@ class CachedCrawlCoordinator:
         )
         self.session.commit()
         return merged_items, merged_outputs, diagnostic, session_meta, meta
-
-    def cached_hot_crawl_exists(self, *, snapshot_date: date, limit: int) -> CachedCrawlResult | None:
-        params = {"snapshot_date": snapshot_date.isoformat(), "limit": limit}
-        cached = self.cache.lookup("hot_crawl", params, force_refresh=False)
-        if cached is not None:
-            return CachedCrawlResult(cached.payload, cached.file_path, cached.meta)
-
-        snapshot_repo = SnapshotRepository(self.session, self.tenant_id, self.platform)
-        rows = snapshot_repo.list_by_date(snapshot_date, limit=limit)
-        if not rows:
-            return None
-        payload = {
-            "platform": self.platform,
-            "snapshot_date": snapshot_date.isoformat(),
-            "total": len(rows),
-            "from_db_snapshot": True,
-        }
-        meta = CacheMeta(from_cache=True, cache_hit=True)
-        return CachedCrawlResult(payload, None, meta)
-
-    def store_hot_crawl(self, payload: dict[str, Any], *, cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS) -> CacheMeta:
-        params = {
-            "snapshot_date": payload.get("snapshot_date"),
-            "limit": payload.get("total"),
-        }
-        meta = self.cache.store("hot_crawl", params, payload, cache_ttl_hours=cache_ttl_hours)
-        self.session.commit()
-        return meta
 
     async def cached_dashboard(
         self,

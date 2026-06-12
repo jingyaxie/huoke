@@ -62,8 +62,6 @@ class Settings(BaseSettings):
     antibot_persistent_profile: bool = True
     antibot_warmup_enabled: bool = True
 
-    crawl_hour: int = 8
-    crawl_minute: int = 0
     crawl_cache_ttl_hours: float = 24.0
 
     openai_api_key: Optional[str] = None

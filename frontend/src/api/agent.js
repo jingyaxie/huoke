@@ -1,4 +1,5 @@
 import { getAccountId, getApiKey, getAccessToken, getPlatformId, getTenantId, getApiBaseUrl, getWsApiBaseUrl } from "./http";
+import http from "./http";
 
 const baseURL = getApiBaseUrl();
 
@@ -323,6 +324,13 @@ export async function deleteAgentRun(runId) {
     throw new Error(err.detail || `删除对话失败 (${resp.status})`);
   }
   return resp.json();
+}
+
+/** 同步 Agent 对话（阻塞至完成或超时，适合 API 测试） */
+export async function syncAgentChat(payload) {
+  const timeoutMs = Math.min((payload.timeout_seconds || 600) * 1000 + 10000, 3600000);
+  const resp = await http.post("/agent/chat/sync", payload, { timeout: timeoutMs });
+  return resp.data;
 }
 
 /**

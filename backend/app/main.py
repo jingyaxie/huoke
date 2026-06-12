@@ -21,10 +21,8 @@ from app.core.logging import configure_logging
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
-from app.services.crawl_service import CrawlService
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.playwright_pool import PlaywrightPool
-from app.services.scheduler import build_scheduler
 from app.services.bootstrap_service import ensure_bootstrap_admin
 from app.services.tenant_auth_service import TenantAuthService
 
@@ -51,22 +49,7 @@ async def lifespan(app: FastAPI):
     finally:
         session.close()
 
-    async def scheduled_crawl() -> None:
-        session = SessionLocal()
-        try:
-            await CrawlService(
-                session,
-                tenant_id=settings.default_tenant_id,
-                platform=settings.default_platform,
-            ).crawl_hot(limit=100)
-        finally:
-            session.close()
-
-    scheduler = build_scheduler(settings, scheduled_crawl)
-    scheduler.start()
-    app.state.scheduler = scheduler
     yield
-    scheduler.shutdown(wait=False)
     await AgentSessionManager.get_instance().shutdown_all()
     await PlaywrightPool.get().shutdown()
 

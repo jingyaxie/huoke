@@ -182,7 +182,28 @@ def sanitize_message_for_storage(message: dict[str, Any]) -> dict[str, Any]:
                 new_parts.append(part)
         cleaned["content"] = new_parts
     elif isinstance(content, str) and len(content) > 12000:
-        cleaned["content"] = content[:12000] + "\n...[truncated]"
+        try:
+            from app.services.agent_network_capture import compact_api_data_for_agent
+
+            parsed = json.loads(content)
+            if isinstance(parsed, dict) and isinstance(parsed.get("items"), list):
+                compact_items = []
+                for item in parsed["items"]:
+                    if not isinstance(item, dict):
+                        compact_items.append(item)
+                        continue
+                    row = dict(item)
+                    if "data" in row:
+                        row["data"] = compact_api_data_for_agent(
+                            row.get("data"),
+                            path=str(row.get("path") or ""),
+                        )
+                    compact_items.append(row)
+                parsed = {**parsed, "items": compact_items}
+            compact_text = json.dumps(parsed, ensure_ascii=False)
+            cleaned["content"] = compact_text if len(compact_text) <= 12000 else compact_text[:12000] + "\n...[truncated]"
+        except Exception:
+            cleaned["content"] = content[:12000] + "\n...[truncated]"
     return cleaned
 
 

@@ -51,7 +51,7 @@
           </div>
         </div>
 
-        <div class="action-section">
+        <div v-if="supportsDm" class="action-section">
           <h3 class="section-title">发送私信</h3>
           <el-input
             v-model="message"
@@ -75,6 +75,15 @@
         </div>
 
         <el-alert
+          v-else
+          :title="dmUnsupportedHint"
+          type="info"
+          show-icon
+          :closable="false"
+          class="dm-unsupported-alert"
+        />
+
+        <el-alert
           v-if="resultText"
           :title="resultText"
           :type="resultOk ? 'success' : 'error'"
@@ -93,6 +102,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import MainLayout from "../components/MainLayout.vue";
 import { followUser, sendUserMessage, unfollowUser } from "../api/platformUsers";
+import { directMessageUnsupportedHint, supportsDirectMessage } from "../utils/platform";
 
 const route = useRoute();
 const router = useRouter();
@@ -114,6 +124,8 @@ const resultText = ref("");
 const resultOk = ref(false);
 
 const avatarFallback = computed(() => (username.value || "?").slice(0, 1));
+const supportsDm = computed(() => supportsDirectMessage(platform.value));
+const dmUnsupportedHint = computed(() => directMessageUnsupportedHint(platform.value));
 
 const canOperate = computed(() => {
   if (platform.value === "douyin") {
@@ -149,7 +161,11 @@ async function onFollow() {
   try {
     const { data } = await followUser(platform.value, buildUserPayload());
     const ok = Boolean(data?.ok);
-    showResult(ok, ok ? `关注成功：${data?.data?.username || username.value}` : data?.diagnostic || "关注失败");
+    const follow = data?.result?.follow || {};
+    showResult(
+      ok,
+      ok ? `关注成功：${data?.result?.username || username.value}` : data?.error || follow.error || "关注失败",
+    );
     if (ok) ElMessage.success("关注操作已提交");
   } catch (err) {
     showResult(false, err?.response?.data?.detail || err.message || "关注失败");
@@ -164,7 +180,11 @@ async function onUnfollow() {
   try {
     const { data } = await unfollowUser(platform.value, buildUserPayload());
     const ok = Boolean(data?.ok);
-    showResult(ok, ok ? `已取消关注：${data?.data?.username || username.value}` : data?.diagnostic || "取消关注失败");
+    const unfollow = data?.result?.unfollow || {};
+    showResult(
+      ok,
+      ok ? `已取消关注：${data?.result?.username || username.value}` : data?.error || unfollow.error || "取消关注失败",
+    );
     if (ok) ElMessage.success("取消关注操作已提交");
   } catch (err) {
     showResult(false, err?.response?.data?.detail || err.message || "取消关注失败");
@@ -181,7 +201,8 @@ async function onSendMessage() {
   try {
     const { data } = await sendUserMessage(platform.value, { ...buildUserPayload(), message: text });
     const ok = Boolean(data?.ok);
-    showResult(ok, ok ? "私信已发送" : data?.diagnostic || "私信发送失败");
+    const dm = data?.result?.message || {};
+    showResult(ok, ok ? "私信已发送" : data?.error || dm.error || dm.hint || "私信发送失败");
     if (ok) {
       ElMessage.success("私信发送成功");
       message.value = "";
@@ -262,5 +283,9 @@ async function onSendMessage() {
 
 .result-alert {
   margin-top: 8px;
+}
+
+.dm-unsupported-alert {
+  margin-bottom: 8px;
 }
 </style>

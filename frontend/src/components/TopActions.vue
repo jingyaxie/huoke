@@ -5,7 +5,6 @@
       <p class="page-subtitle">{{ subtitle }}</p>
     </div>
     <div class="right">
-      <el-button type="primary" @click="$emit('crawl')">抓取热榜</el-button>
       <el-button type="warning" @click="$emit('login')">服务器登录</el-button>
     </div>
   </div>
@@ -17,7 +16,7 @@ defineProps({
   subtitle: { type: String, default: "" },
 });
 
-defineEmits(["crawl", "login"]);
+defineEmits(["login"]);
 </script>
 
 <style scoped>

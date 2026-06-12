@@ -4,18 +4,20 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from app.core.antibot import headless_for_platform, require_login
 from app.core.config import Settings
 from app.platforms.session_store import PlatformSessionStore
-from app.platforms.xiaohongshu.js_api import XhsJsApiTool
 from app.platforms.xiaohongshu.js_constants import PLATFORM
-from app.platforms.xiaohongshu.profile import XhsProfileTool
+from app.platforms.xiaohongshu.profile import build_profile_url
 from app.platforms.xiaohongshu.session import XhsSessionStore
-from app.services.playwright_pool import PlaywrightPool
+
+_PC_DM_UNSUPPORTED_HINT = (
+    "小红书 PC 网页版不提供用户私信能力（主页无发消息入口，/im 路由不可用）。"
+    "请使用抖音/快手，或通过小红书 App 手动私信。"
+)
 
 
-class XhsDmTool(XhsJsApiTool):
-    """小红书私信工具（主页打开 IM 面板 + 轻量 UI 发送）。"""
+class XhsDmTool:
+    """小红书私信工具：PC 网页端不支持私信，接口直接返回明确说明。"""
 
     def __init__(
         self,
@@ -24,8 +26,11 @@ class XhsDmTool(XhsJsApiTool):
         store: PlatformSessionStore | None = None,
         account_id: str = "default",
     ) -> None:
-        super().__init__(settings, tenant_id, store, account_id=account_id)
-        self._profile = XhsProfileTool(settings, tenant_id, self.store, account_id=account_id)
+        self.settings = settings
+        self.tenant_id = tenant_id
+        self.account_id = account_id
+        self.platform = PLATFORM
+        self.store = store or XhsSessionStore(settings)
 
     async def send_message(
         self,
@@ -35,24 +40,24 @@ class XhsDmTool(XhsJsApiTool):
         username: str = "",
         show_browser: bool = False,
     ) -> dict:
-        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         if not user_id:
             raise ValueError("缺少 user_id")
         if not (message or "").strip():
             raise ValueError("发送私信需要 message")
 
-        headless = headless_for_platform(self.settings, PLATFORM, False if show_browser else None)
-        pool = PlaywrightPool.get()
-        async with pool.tenant_context(
-            PLATFORM,
-            self.tenant_id,
-            self.store,
-            self.settings,
-            headless=headless,
-            account_id=self.account_id,
-        ) as (_, page):
-            result = await self._send_on_page(page, user_id=user_id, message=message, username=username)
-
+        result = {
+            "platform": PLATFORM,
+            "tenant_id": self.tenant_id,
+            "username": username,
+            "user_id": user_id,
+            "profile_url": build_profile_url(user_id),
+            "capture_method": "unsupported_pc_web",
+            "message": {
+                "ok": False,
+                "error": "platform_unsupported",
+                "hint": _PC_DM_UNSUPPORTED_HINT,
+            },
+        }
         output = (
             self.settings.report_output_dir
             / f"dm_{self.platform}_{self.tenant_id}_{user_id[:12]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -60,65 +65,3 @@ class XhsDmTool(XhsJsApiTool):
         output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         result["output_file"] = str(output)
         return result
-
-    async def _send_on_page(self, page, *, user_id: str, message: str, username: str) -> dict:
-        captured_urls: list[str] = []
-        await self.warmup_for_js_api(page, captured_urls)
-        profile_url = await self._profile.open_profile(page, user_id)
-        template_url = await self.pick_api_template_url(page, captured_urls)
-        profile_data = await self._profile.fetch_user_info(page, template_url, user_id)
-        inner = profile_data.get("data") if isinstance(profile_data.get("data"), dict) else profile_data
-        basic = inner.get("basic_info") or inner.get("user") or inner
-
-        return {
-            "platform": PLATFORM,
-            "tenant_id": self.tenant_id,
-            "username": username or basic.get("nickname") or basic.get("nick_name") or "",
-            "user_id": user_id,
-            "profile_url": profile_url,
-            "page_url": page.url,
-            "capture_method": "profile_dm_panel",
-            "message": await self._send_dm_on_profile(page, message),
-        }
-
-    async def _send_dm_on_profile(self, page, message: str) -> dict:
-        selectors = (
-            'button:has-text("发消息")',
-            'button:has-text("私信")',
-            'a:has-text("发消息")',
-            '[class*="message"] button',
-        )
-        dm = None
-        for selector in selectors:
-            loc = page.locator(selector).first
-            if await loc.count():
-                dm = loc
-                break
-        if dm is None:
-            return {"ok": False, "error": "dm_button_not_found"}
-
-        await dm.click()
-        await page.wait_for_timeout(2500)
-
-        inp = page.locator('textarea, div[contenteditable="true"], input[placeholder*="消息"]').first
-        if not await inp.count():
-            return {
-                "ok": False,
-                "error": "dm_input_not_found",
-                "hint": "私信面板未打开，可能受隐私/互关限制",
-            }
-
-        await inp.click()
-        await inp.fill(message)
-        await page.wait_for_timeout(400)
-        await page.keyboard.press("Enter")
-        await page.wait_for_timeout(3000)
-
-        body_text = await page.evaluate("() => document.body.innerText || ''")
-        visible = message in body_text
-        return {
-            "ok": visible,
-            "method": "profile_dm_panel",
-            "verified_in_page": visible,
-            "text_preview": message[:80],
-        }

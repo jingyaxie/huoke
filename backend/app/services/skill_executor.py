@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.antibot import LoginRequiredError
-from app.platforms.registry import get_session_store
+from app.platforms.registry import get_dm_tool, get_follow_tool, get_session_store
+from app.platforms.douyin.profile import build_profile_url as douyin_profile_url
+from app.platforms.xiaohongshu.profile import build_profile_url as xhs_profile_url
+from app.platforms.kuaishou.utils import build_profile_url as ks_profile_url
 from app.schemas.skill import SkillOut
 from app.services.comment_crawler_service import CommentCrawlerService
-from app.services.crawl_service import CrawlService
 from app.services.playwright_tools import PlaywrightToolExecutor
 from app.services.agent_browser_session import AgentBrowserSession
 
@@ -18,7 +20,7 @@ _TEMPLATE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 _LOCAL_COMMENT_HINT = (
     "完整评论已写入 output_file；后续汇总/筛选意向请用 analyze_local_comments 或 read_local_comments，"
-    "勿对同一视频重复 crawl-video-comments。"
+    "勿对同一视频重复 invoke content-comments。"
 )
 
 
@@ -212,48 +214,67 @@ class SkillExecutor:
                 "status": status.get("status"),
                 "message": status.get("message"),
             }
-        if handler == "crawl_hot":
-            if self.db_session is None:
-                return {"error": "数据库会话不可用，无法执行 crawl_hot"}
-            limit = int(params.get("limit", 50))
-            result = await CrawlService(
-                self.db_session,
-                tenant_id=self.tenant_id,
-                platform=self.platform,
+        if handler == "pipeline_keyword_comments":
+            from app.services.skill_runner_service import SkillRunnerService
+
+            runner = SkillRunnerService(
+                self.settings,
+                self.tenant_id,
+                self.platform,
                 account_id=self.session.account_id,
-            ).crawl_hot(limit=limit)
-            self.db_session.commit()
-            return {
-                "skill_id": skill.id,
-                "skill_name": skill.name,
-                "type": "builtin",
-                "handler": handler,
-                "status": "completed",
-                "videos_crawled": result.total,
-                "snapshot_date": result.snapshot_date,
-            }
+                db_session=self.db_session,
+            )
+            return await runner.execute_keyword_pipeline(
+                keyword=str(params.get("keyword") or ""),
+                video_limit=int(params.get("video_limit") or params.get("limit") or 5),
+                days=int(params.get("days") or 3),
+                region=params.get("region"),
+                headless=self.session.headless,
+                agent_fallback=bool(params.get("agent_fallback", True)),
+                provider=str(params.get("provider") or "deepseek"),
+                timeout_seconds=int(params.get("timeout_seconds") or 600),
+                force_refresh=bool(params.get("force_refresh", False)),
+                cache_ttl_hours=float(params.get("cache_ttl_hours") or 24),
+                guest_mode=bool(params.get("guest_mode", False)),
+            )
+        if handler == "follow_user":
+            return await self._execute_follow(params, action="follow")
+        if handler == "unfollow_user":
+            return await self._execute_follow(params, action="unfollow")
+        if handler == "send_dm":
+            return await self._execute_send_dm(params)
         if handler == "crawl_video_comments":
-            video_url = params.get("video_url") or params.get("url")
+            video_url = params.get("video_url") or params.get("url") or params.get("note_url")
             if not video_url:
-                return {"error": "缺少参数 video_url"}
+                return {"error": "缺少参数 video_url / note_url"}
             show_browser = bool(params.get("show_browser", False))
-            payload, output = await CommentCrawlerService(
+            service = CommentCrawlerService(
                 self.settings,
                 tenant_id=self.tenant_id,
                 platform=self.platform,
                 account_id=self.session.account_id,
-            ).crawl_video_comments(str(video_url), show_browser=show_browser)
+                session=self.db_session,
+            )
+            payload, output, _cache = await service.crawl_video_comments(
+                str(video_url),
+                show_browser=show_browser,
+                force_refresh=bool(params.get("force_refresh", False)),
+                cache_ttl_hours=float(params.get("cache_ttl_hours") or 24),
+            )
             captured = payload.get("total_comments_captured", 0)
             api_total = payload.get("api_total_top_comments")
             summary = f"已抓取 {captured} 条评论"
             if api_total is not None:
                 summary += f"（接口总数 {api_total}）"
+            status = "completed" if captured > 0 else "partial"
+            if captured == 0 and payload.get("warning"):
+                summary += f"；{payload['warning']}"
             return {
                 "skill_id": skill.id,
                 "skill_name": skill.name,
                 "type": "builtin",
                 "handler": handler,
-                "status": "completed",
+                "status": status,
                 "summary": summary,
                 "video_url": payload.get("video_url") or payload.get("note_url") or video_url,
                 "total_comments_captured": captured,
@@ -268,22 +289,28 @@ class SkillExecutor:
                 return {"error": "缺少参数 keyword"}
             show_browser = bool(params.get("show_browser", False))
             guest_mode = bool(params.get("guest_mode", False))
-            results, outputs, error, session_meta = await CommentCrawlerService(
+            include_full = bool(params.get("include_full_results", False))
+            service = CommentCrawlerService(
                 self.settings,
                 tenant_id=self.tenant_id,
                 platform=self.platform,
                 account_id=self.session.account_id,
-            ).crawl_keyword_comments(
+                session=self.db_session,
+            )
+            results, outputs, error, session_meta, _cache = await service.crawl_keyword_comments(
                 keyword=str(keyword),
                 limit=int(params.get("limit", 3)),
                 days=int(params.get("days", 3)),
                 region=params.get("region"),
                 show_browser=show_browser,
                 guest_mode=guest_mode,
+                force_refresh=bool(params.get("force_refresh", False)),
+                cache_ttl_hours=float(params.get("cache_ttl_hours") or 24),
             )
-            if error:
-                return {"error": error}
+            if error and not results:
+                return {"error": error, "diagnostic": error}
             total_captured = sum(r.get("total_comments_captured", 0) for r in results)
+            result_rows = results if include_full else _slim_keyword_results(results)
             return {
                 "skill_id": skill.id,
                 "skill_name": skill.name,
@@ -297,7 +324,8 @@ class SkillExecutor:
                 "guest_mode": session_meta.get("guest_mode", guest_mode),
                 "session_mode": session_meta.get("session_mode", "logged_in"),
                 "output_files": [str(p) for p in outputs],
-                "results": _slim_keyword_results(results),
+                "results": result_rows,
+                "diagnostic": error,
                 "hint": _LOCAL_COMMENT_HINT,
             }
         if handler == "search_videos":
@@ -305,18 +333,22 @@ class SkillExecutor:
             if not keyword:
                 return {"error": "缺少参数 keyword"}
             show_browser = bool(params.get("show_browser", False))
+            service = CommentCrawlerService(
+                self.settings,
+                tenant_id=self.tenant_id,
+                platform=self.platform,
+                account_id=self.session.account_id,
+                session=self.db_session,
+            )
             try:
-                payload, output = await CommentCrawlerService(
-                    self.settings,
-                    tenant_id=self.tenant_id,
-                    platform=self.platform,
-                    account_id=self.session.account_id,
-                ).search_videos(
+                payload, output, _cache = await service.search_videos(
                     keyword=str(keyword),
                     limit=int(params.get("limit", 20)),
                     show_browser=show_browser,
                     days=params.get("days"),
                     region=params.get("region"),
+                    force_refresh=bool(params.get("force_refresh", False)),
+                    cache_ttl_hours=float(params.get("cache_ttl_hours") or 24),
                 )
             except NotImplementedError as exc:
                 return {"error": str(exc)}
@@ -350,6 +382,134 @@ class SkillExecutor:
             }
         return {"error": f"未实现的内置处理器: {handler}"}
 
+    @staticmethod
+    def _profile_url(platform: str, user_id: str, sec_uid: str | None = None) -> str:
+        if platform == "douyin" and sec_uid:
+            return douyin_profile_url(sec_uid)
+        if platform == "xiaohongshu" and user_id:
+            return xhs_profile_url(user_id)
+        if platform == "kuaishou" and user_id:
+            return ks_profile_url(user_id)
+        return ""
+
+    async def _execute_follow(self, params: dict[str, Any], *, action: str) -> dict[str, Any]:
+        tool = get_follow_tool(
+            self.settings,
+            self.platform,
+            self.tenant_id,
+            account_id=self.session.account_id,
+        )
+        show_browser = bool(params.get("show_browser", False))
+        username = str(params.get("username") or "")
+        user_id = str(params.get("user_id") or "")
+        sec_uid = str(params.get("sec_uid") or "")
+
+        if self.platform == "douyin":
+            if not sec_uid or not user_id:
+                return {"error": "抖音关注需要 sec_uid 与 user_id", "status": "failed"}
+            if action == "follow":
+                result = await tool.follow_user(
+                    sec_uid=sec_uid,
+                    user_id=user_id,
+                    username=username,
+                    show_browser=show_browser,
+                )
+            else:
+                result = await tool.unfollow_user(
+                    sec_uid=sec_uid,
+                    user_id=user_id,
+                    username=username,
+                    show_browser=show_browser,
+                )
+        else:
+            if not user_id:
+                return {"error": "缺少 user_id", "status": "failed"}
+            if action == "follow":
+                result = await tool.follow_user(
+                    user_id=user_id,
+                    username=username,
+                    show_browser=show_browser,
+                )
+            else:
+                result = await tool.unfollow_user(
+                    user_id=user_id,
+                    username=username,
+                    show_browser=show_browser,
+                )
+
+        relation = result.get(action) or {}
+        ok = bool(relation.get("ok"))
+        return {
+            "type": "builtin",
+            "handler": f"{action}_user",
+            "status": "completed" if ok else "failed",
+            "platform": self.platform,
+            "username": result.get("username"),
+            "user_id": result.get("user_id"),
+            "sec_uid": result.get("sec_uid"),
+            "profile_url": result.get("profile_url")
+            or self._profile_url(self.platform, user_id, sec_uid or None),
+            "follow_status_before": result.get("follow_status_before"),
+            "follow_status_after": result.get("follow_status_after"),
+            action: relation,
+            "output_file": result.get("output_file"),
+            "error": None if ok else relation.get("error") or relation.get("reason"),
+        }
+
+    async def _execute_send_dm(self, params: dict[str, Any]) -> dict[str, Any]:
+        message = str(params.get("message") or "").strip()
+        if not message:
+            return {"error": "缺少 message", "status": "failed"}
+        tool = get_dm_tool(
+            self.settings,
+            self.platform,
+            self.tenant_id,
+            account_id=self.session.account_id,
+        )
+        show_browser = bool(params.get("show_browser", False))
+        username = str(params.get("username") or "")
+
+        if self.platform == "douyin":
+            sec_uid = str(params.get("sec_uid") or "")
+            if not sec_uid:
+                return {"error": "抖音私信需要 sec_uid", "status": "failed"}
+            result = await tool.send_message(
+                sec_uid=sec_uid,
+                message=message,
+                username=username,
+                show_browser=show_browser,
+            )
+            user_id = result.get("user_id")
+            sec_uid_val = sec_uid
+        else:
+            user_id = str(params.get("user_id") or "")
+            if not user_id:
+                return {"error": "缺少 user_id", "status": "failed"}
+            result = await tool.send_message(
+                user_id=user_id,
+                message=message,
+                username=username,
+                show_browser=show_browser,
+            )
+            sec_uid_val = result.get("sec_uid")
+
+        dm = result.get("message") or {}
+        ok = bool(dm.get("ok"))
+        return {
+            "type": "builtin",
+            "handler": "send_dm",
+            "status": "completed" if ok else "failed",
+            "platform": self.platform,
+            "username": result.get("username"),
+            "user_id": result.get("user_id") or user_id,
+            "sec_uid": result.get("sec_uid") or sec_uid_val,
+            "profile_url": result.get("profile_url")
+            or self._profile_url(self.platform, str(user_id or ""), sec_uid_val),
+            "message": dm,
+            "output_file": result.get("output_file"),
+            "error": None if ok else dm.get("error") or dm.get("hint"),
+        }
+
 
 def build_skill_tool_definitions(
     skills: list[SkillOut],
@@ -374,7 +534,7 @@ def build_skill_tool_definitions(
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "skill_id": {"type": "string", "description": "技能 ID，如 douyin-hot-list"},
+                        "skill_id": {"type": "string", "description": "技能 ID，如 search-content"},
                         "params": {
                             "type": "object",
                             "description": "技能参数键值对",

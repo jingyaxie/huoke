@@ -3,9 +3,10 @@
     <div class="container">
       <div class="panel page-header">
         <div>
-          <h2 class="page-title">对外接口 API</h2>
+          <h2 class="page-title">API 文档</h2>
           <p class="page-subtitle">
-            查看接口文档、鉴权说明，并在线测试关键词视频+评论 Pipeline
+            接口说明与 curl 示例；在线测试请使用
+            <router-link to="/test">测试入口</router-link>（传统 API + Agent 模式）
           </p>
         </div>
         <div class="header-actions">
@@ -88,7 +89,8 @@
       <div class="panel section-panel">
         <h3 class="section-title">关键词视频 + 评论 Pipeline</h3>
         <p class="section-desc">
-          核心对外接口，按关键词搜索热门视频/笔记并抓取评论，由固定 Skill 驱动。
+          核心对外接口，按关键词搜索热门视频/笔记并抓取评论。内部统一执行 Skill
+          <code>pipeline-keyword-video-comments</code>（T0 builtin → T1 可见浏览器重试 → T2 Agent Recovery）。
         </p>
 
         <div class="grid">
@@ -172,10 +174,21 @@
       </div>
 
       <div class="panel section-panel">
+        <h3 class="section-title">Skill 统一执行</h3>
+        <p class="section-desc">
+          REST、Pipeline、Agent 共用 <code>SkillRunnerService</code>。平台工具 API 与下方接口等价，推荐直接使用 Skill Execute。
+        </p>
+        <ApiEndpointTable :endpoints="skillEndpoints" :curl-builder="buildCurl" />
+      </div>
+
+      <div class="panel section-panel">
         <h3 class="section-title">接口目录</h3>
         <el-tabs v-model="activeTab">
           <el-tab-pane label="Pipeline" name="pipeline">
             <ApiEndpointTable :endpoints="pipelineEndpoints" :curl-builder="buildCurl" />
+          </el-tab-pane>
+          <el-tab-pane label="Skill API" name="skills">
+            <ApiEndpointTable :endpoints="skillEndpoints" :curl-builder="buildCurl" />
           </el-tab-pane>
           <el-tab-pane label="平台工具 API" name="platforms">
             <el-tabs v-model="platformTab" type="card" class="inner-tabs">
@@ -297,7 +310,8 @@ const pipelineEndpoints = [
     method: "POST",
     path: "/api/agent/pipeline/keyword-video-comments",
     summary: "关键词视频+评论 Pipeline",
-    description: "按关键词搜索热门视频/笔记并抓取评论，支持抖音与小红书，可同步或异步执行。",
+    description:
+      "执行 Skill pipeline-keyword-video-comments。抖音/小红书均走 builtin 优先 + 自动兜底，不再区分平台实现路径。",
     body: {
       keyword: "淋浴房",
       platforms: ["douyin", "xiaohongshu"],
@@ -314,8 +328,12 @@ const pipelineEndpoints = [
     method: "POST",
     path: "/api/agent/jobs",
     summary: "提交异步任务",
-    description: "提交 Agent 异步任务，返回 job_id 用于轮询。",
-    body: { message: "执行关键词评论抓取", provider: "deepseek", mode: "agent" },
+    description: "提交 Agent 异步任务。Pipeline 异步时 message 建议使用 /pipeline-keyword-video-comments。",
+    body: {
+      message: "/pipeline-keyword-video-comments keyword=淋浴房 video_limit=5 days=3",
+      provider: "deepseek",
+      mode: "agent",
+    },
   },
   {
     method: "GET",
@@ -325,41 +343,76 @@ const pipelineEndpoints = [
   },
 ];
 
+const skillEndpoints = [
+  {
+    method: "POST",
+    path: "/api/agent/skills/execute",
+    summary: "同步执行 Skill",
+    description:
+      "统一 Skill 入口。builtin 类型直接执行；instruction 需 agent_fallback=true 或走 Agent 对话。",
+    body: {
+      skill_id: "douyin-keyword-comments",
+      platform: "douyin",
+      params: { keyword: "护肤", limit: 3, days: 3 },
+      agent_fallback: false,
+      timeout_seconds: 600,
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/agent/skills",
+    summary: "列出 Skill",
+    description: "返回当前租户可用 Skill 列表（global + tenant 合并）。",
+  },
+  {
+    method: "GET",
+    path: "/api/agent/skills/builtin-handlers",
+    summary: "Builtin Handler 列表",
+    description: "返回已注册的 builtin_handler 及说明。",
+  },
+];
+
 const douyinEndpoints = [
   {
     method: "POST",
     path: "/api/platforms/douyin/search/videos",
     summary: "关键词搜索视频",
+    description: "→ Skill search-content",
     body: { keyword: "淋浴房", limit: 10, days: 3, region: "辽宁", show_browser: false },
   },
   {
     method: "POST",
     path: "/api/platforms/douyin/comments/videos",
     summary: "抓取单视频评论",
+    description: "→ Skill content-comments",
     body: { video_url: "https://www.douyin.com/video/xxx", max_comments: 200 },
   },
   {
     method: "POST",
     path: "/api/platforms/douyin/comments/keyword",
     summary: "关键词搜索并抓取评论",
+    description: "→ Skill douyin-keyword-comments",
     body: { keyword: "淋浴房", limit: 3, max_comments: 200, days: 3, region: "辽宁" },
   },
   {
     method: "POST",
     path: "/api/platforms/douyin/users/follow",
-    summary: "关注用户（已关注则跳过，避免重复点击取消关注）",
+    summary: "关注用户",
+    description: "→ Skill follow-user（等价于 POST /api/agent/skills/execute）",
     body: { sec_uid: "...", user_id: "...", show_browser: false },
   },
   {
     method: "POST",
     path: "/api/platforms/douyin/users/unfollow",
-    summary: "取消关注（未关注则跳过）",
+    summary: "取消关注",
+    description: "→ Skill unfollow-user",
     body: { sec_uid: "...", user_id: "...", show_browser: false },
   },
   {
     method: "POST",
     path: "/api/platforms/douyin/users/messages",
     summary: "发送私信",
+    description: "→ Skill send-dm",
     body: { sec_uid: "...", user_id: "...", message: "你好", show_browser: false },
   },
 ];
@@ -369,19 +422,36 @@ const xhsEndpoints = [
     method: "POST",
     path: "/api/platforms/xiaohongshu/search/notes",
     summary: "关键词搜索笔记",
+    description: "→ Skill search-content",
     body: { keyword: "护肤", limit: 10, days: 3, region: "上海", show_browser: false },
   },
   {
     method: "POST",
     path: "/api/platforms/xiaohongshu/comments/notes",
     summary: "抓取单篇笔记评论",
+    description: "→ Skill content-comments",
     body: { note_url: "https://www.xiaohongshu.com/explore/xxx", max_comments: 200 },
   },
   {
     method: "POST",
     path: "/api/platforms/xiaohongshu/comments/keyword",
     summary: "关键词搜索并抓取评论",
+    description: "→ Skill xhs-keyword-comments",
     body: { keyword: "护肤", limit: 3, max_comments: 200, days: 3, region: "上海" },
+  },
+  {
+    method: "POST",
+    path: "/api/platforms/xiaohongshu/users/follow",
+    summary: "关注用户",
+    description: "→ Skill follow-user",
+    body: { user_id: "...", show_browser: false },
+  },
+  {
+    method: "POST",
+    path: "/api/platforms/xiaohongshu/users/messages",
+    summary: "发送私信（PC 不支持）",
+    description: "→ Skill send-dm，返回 platform_unsupported",
+    body: { user_id: "...", message: "你好", show_browser: false },
   },
 ];
 
@@ -390,45 +460,42 @@ const kuaishouEndpoints = [
     method: "POST",
     path: "/api/platforms/kuaishou/search/videos",
     summary: "关键词搜索视频",
+    description: "→ Skill search-content",
     body: { keyword: "美食", limit: 10, days: 3, region: "北京", show_browser: false },
   },
   {
     method: "POST",
     path: "/api/platforms/kuaishou/comments/videos",
     summary: "抓取单视频评论",
+    description: "→ Skill content-comments",
     body: { video_url: "https://www.kuaishou.com/short-video/xxx", max_comments: 200 },
   },
   {
     method: "POST",
     path: "/api/platforms/kuaishou/comments/keyword",
     summary: "关键词搜索并抓取评论",
+    description: "→ Skill kuaishou-keyword-comments",
     body: { keyword: "美食", limit: 3, max_comments: 200, days: 3, region: "北京" },
+  },
+  {
+    method: "POST",
+    path: "/api/platforms/kuaishou/users/follow",
+    summary: "关注用户",
+    description: "→ Skill follow-user",
+    body: { user_id: "...", show_browser: false },
+  },
+  {
+    method: "POST",
+    path: "/api/platforms/kuaishou/users/messages",
+    summary: "发送私信",
+    description: "→ Skill send-dm",
+    body: { user_id: "...", message: "你好", show_browser: false },
   },
 ];
 
 const generalEndpoints = [
   { method: "GET", path: "/api/health", summary: "健康检查" },
-  {
-    method: "POST",
-    path: "/api/platforms/{platform}/crawl/hot",
-    summary: "抓取热榜",
-    query: { limit: 100, force_refresh: false },
-  },
-  {
-    method: "GET",
-    path: "/api/platforms/{platform}/hot/videos",
-    summary: "热门视频列表",
-    query: { limit: 100 },
-  },
-  {
-    method: "GET",
-    path: "/api/platforms/{platform}/hot/authors",
-    summary: "热门作者列表",
-    query: { limit: 50 },
-  },
   { method: "GET", path: "/api/comments/download", summary: "下载评论 JSON 文件", query: { file_name: "xxx.json" } },
-  { method: "POST", path: "/api/platforms/{platform}/reports/daily", summary: "生成热点日报" },
-  { method: "GET", path: "/api/platforms/{platform}/reports", summary: "日报列表" },
 ];
 
 function refreshContext() {

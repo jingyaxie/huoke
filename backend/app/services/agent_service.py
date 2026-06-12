@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections import deque
 from pathlib import Path
@@ -30,6 +31,7 @@ from app.services.agent_run_controller import AgentRunController
 from app.services.agent_dream_service import AgentDreamService
 from app.services.agent_experience_store import AgentExperienceStore
 from app.services.agent_rule_store import AgentRuleStore
+from app.services.agent_network_capture import compact_tool_result_for_llm
 from app.services.agent_run_store import (
     AgentRunRecord,
     AgentRunStore,
@@ -83,12 +85,13 @@ SYSTEM_PROMPT = """你是一个浏览器自动化智能体。架构分层如下�
 - 自动拦截 XHR/Fetch JSON（browser_wait_api、browser_get_network_data 返回完整 data）
 - 底层不做任何平台业务解析，只提供「像真人用 Chrome 浏览」的能力
 
-【业务层】Skill（instruction / actions）
-- 业务逻辑写在 Skill 配置里，不写死在 Python 爬虫
-- 用 list_skills / invoke_skill / skill_* 调用；用户 /skill-id 表示强制使用该技能
-- 优先选用 instruction 型「*-api」技能；标记 legacy 的 builtin 爬虫仅在用户明确要求时使用
+【业务层】Skill（builtin / instruction）
+- 所有业务能力通过 invoke_skill / skill_* 调用；REST 与 Agent 共用同一 Skill 执行层
+- 生产抓取优先 builtin：*-keyword-comments、content-comments、search-content、follow-user、send-dm
+- Pipeline 任务用 /pipeline-keyword-video-comments（内置 T0→T1→Agent Recovery 兜底）
+- instruction 型 *-api 技能仅用于 Recovery 或 Agent 探索，非日常主路径
 
-推荐数据获取顺序（强制）：
+推荐数据获取顺序（Recovery / 探索时）：
 1. browser_browse 打开页面并滚动，触发接口
 2. browser_wait_api(url_contains=...) 等待目标接口
 3. browser_get_network_data 读取 items[].data 原始 JSON，由你解析字段
@@ -100,10 +103,13 @@ SYSTEM_PROMPT = """你是一个浏览器自动化智能体。架构分层如下�
 SkillHub：skillhub_search / skillhub_install / read_skill_resource / run_skill_script
 
 工作方式：
-1. 理解目标 → list_skills 找匹配的 *-api 技能 → invoke_skill 按指南执行
-2. 复杂子任务 spawn_task；成功 task_complete，失败 task_failed
-3. 优先复用历史 tool 返回与已拦截 JSON，避免重复打开页面
-4. 本地评论分析用 list_local_comment_files / read_local_comments / analyze_local_comments
+1. 理解目标 → list_skills → 优先 invoke 对应 builtin skill
+2. 关键词+评论：invoke douyin-keyword-comments / xhs-keyword-comments / pipeline-keyword-video-comments
+3. 关注/私信：invoke follow-user / send-dm（勿用 browser 逐步点）
+4. Recovery 失败时再使用 *-api instruction 技能 + browser_* 工具
+5. 复杂子任务 spawn_task；成功 task_complete，失败 task_failed
+6. 本地评论分析用 list_local_comment_files / read_local_comments / analyze_local_comments
+7. 优先复用历史 tool 返回与已拦截 JSON，避免重复打开页面
 
 注意：
 - 不要编造未观察到的数据；解析必须基于 browser_get_network_data 返回的 JSON
@@ -448,15 +454,26 @@ class AgentService:
     @staticmethod
     def _is_douyin_skill(fn_name: str, fn_args: dict[str, Any]) -> bool:
         if fn_name in {
-            "skill_search_videos",
-            "skill_crawl_video_comments",
-            "skill_crawl_keyword_comments",
-            "skill_crawl_hot",
+            "skill_search_content",
+            "skill_content_comments",
+            "skill_douyin_keyword_comments",
+            "skill_xhs_keyword_comments",
+            "skill_follow_user",
+            "skill_send_dm",
         }:
             return True
         if fn_name == "invoke_skill":
             sid = str(fn_args.get("skill_id") or "").strip()
-            return sid in {"search-videos", "crawl-video-comments", "crawl-keyword-comments", "crawl-hot"}
+            return sid in {
+                "search-content",
+                "content-comments",
+                "douyin-keyword-comments",
+                "xhs-keyword-comments",
+                "kuaishou-keyword-comments",
+                "pipeline-keyword-video-comments",
+                "follow-user",
+                "send-dm",
+            }
         return False
 
     @staticmethod
@@ -593,6 +610,37 @@ class AgentService:
 
     async def cancel_run(self, run_id: str) -> bool:
         return await self.run_controller.cancel(run_id)
+
+    def _is_run_cancelled(self, run_id: str) -> bool:
+        return self.run_controller.is_cancelled(run_id)
+
+    def _cancelled_tool_result(self) -> dict[str, Any]:
+        return {"error": "用户已停止执行", "status": "cancelled"}
+
+    async def _execute_tool_with_cancel(
+        self,
+        run_id: str,
+        execute: Any,
+    ) -> dict[str, Any]:
+        if run_id and self._is_run_cancelled(run_id):
+            return self._cancelled_tool_result()
+
+        task = asyncio.create_task(execute())
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=0.5)
+                if task in done:
+                    return task.result()
+                if run_id and self._is_run_cancelled(run_id):
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                    return self._cancelled_tool_result()
+        except asyncio.CancelledError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise
 
     async def restore_checkpoint(self, run_id: str, checkpoint_id: str) -> dict[str, Any]:
         run = self.run_store.get(self.tenant_id, run_id)
@@ -985,7 +1033,10 @@ class AgentService:
                 if controller.is_cancelled(run.run_id):
                     terminal_status = "cancelled"
                     terminal_summary = "用户已停止执行"
-                    yield AgentEvent(type="cancelled", data={"run_id": run.run_id})
+                    yield AgentEvent(
+                        type="cancelled",
+                        data={"run_id": run.run_id, "summary": terminal_summary},
+                    )
                     break
 
                 yield AgentEvent(type="step", data={"step": step, "max_steps": max_steps})
@@ -1010,10 +1061,28 @@ class AgentService:
                     tools=all_tools,
                     stream=self.settings.agent_stream_enabled,
                 ):
+                    if controller.is_cancelled(run.run_id):
+                        terminal_status = "cancelled"
+                        terminal_summary = "用户已停止执行"
+                        yield AgentEvent(
+                            type="cancelled",
+                            data={"run_id": run.run_id, "summary": terminal_summary},
+                        )
+                        break
                     if isinstance(item, AssistantTurn):
                         turn = item
                     else:
                         yield item
+
+                if controller.is_cancelled(run.run_id):
+                    if terminal_status != "cancelled":
+                        terminal_status = "cancelled"
+                        terminal_summary = "用户已停止执行"
+                        yield AgentEvent(
+                            type="cancelled",
+                            data={"run_id": run.run_id, "summary": terminal_summary},
+                        )
+                    break
 
                 if turn is None:
                     terminal_status = "failed"
@@ -1032,6 +1101,14 @@ class AgentService:
                     break
 
                 for tool_call in tool_calls:
+                    if controller.is_cancelled(run.run_id):
+                        terminal_status = "cancelled"
+                        terminal_summary = "用户已停止执行"
+                        yield AgentEvent(
+                            type="cancelled",
+                            data={"run_id": run.run_id, "summary": terminal_summary},
+                        )
+                        break
                     phase = "act"
                     fn_name = tool_call["function"]["name"]
                     fn_args = parse_tool_arguments(tool_call["function"]["arguments"])
@@ -1373,7 +1450,7 @@ class AgentService:
                             "role": "tool",
                             "tool_call_id": tool_call_id,
                             "tool_name": fn_name,
-                            "content": json.dumps(result, ensure_ascii=False),
+                            "content": json.dumps(compact_tool_result_for_llm(fn_name, result), ensure_ascii=False),
                         }
                         history.append(tool_entry)
                         messages.append(tool_entry)
@@ -1603,14 +1680,17 @@ class AgentService:
 
         result: dict[str, Any] | None = None
         try:
-            result = await self._execute_tool(
-                fn_name,
-                fn_args,
-                executor=pw_executor,
-                skill_executor=skill_executor,
-                skills_by_tool=skills_by_tool,
-                skills_by_id=skills_by_id,
-                mode=mode,
+            result = await self._execute_tool_with_cancel(
+                run_id,
+                lambda: self._execute_tool(
+                    fn_name,
+                    fn_args,
+                    executor=pw_executor,
+                    skill_executor=skill_executor,
+                    skills_by_tool=skills_by_tool,
+                    skills_by_id=skills_by_id,
+                    mode=mode,
+                ),
             )
         except Exception as exc:
             result = {"error": str(exc)}
@@ -1641,7 +1721,7 @@ class AgentService:
             "role": "tool",
             "tool_call_id": tool_call_id,
             "tool_name": fn_name,
-            "content": json.dumps(result, ensure_ascii=False),
+            "content": json.dumps(compact_tool_result_for_llm(fn_name, result), ensure_ascii=False),
         }
         history.append(tool_entry)
         messages.append(tool_entry)
@@ -1743,135 +1823,135 @@ class AgentService:
         run.run_mode = run_mode
         run.provider = effective_provider
 
-        install_events = await auto_install_from_message(self.settings, self.tenant_id, message)
-        for item in install_events:
-            if item.get("installed"):
-                yield AgentEvent(
-                    type="skill_installed",
-                    data={
-                        "slug": item.get("slug"),
-                        "namespace": item.get("namespace"),
-                        "version": item.get("version"),
-                        "message": item.get("message"),
-                    },
-                )
-            elif item.get("error"):
-                yield AgentEvent(
-                    type="skill_install_failed",
-                    data={"coordinate": item.get("coordinate"), "error": item["error"]},
-                )
-
-        skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
-        skills_by_tool = {s.tool_name: s for s in skills}
-        skills_by_id = {s.id: s for s in skills}
-        skill_tools = build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
-        has_packages = any(getattr(s, "package_path", None) for s in skills)
-        hub_tools = build_skillhub_tool_definitions(has_packages=has_packages or True)
-        all_tools = self._append_tools_for_mode(
-            filter_tools_for_mode(
-                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + skill_tools + hub_tools,
-                mode,
-            ),
-            mode,
-        )
-        self._active_comment_file_refs = collect_comment_files_from_history(
-            list(run.messages),
-            self.settings,
-        )
-        vision_model = self._resolve_vision_model(effective_provider, model)
-        rules_prompt = self.rule_store.build_rules_prompt(self.tenant_id, self.platform)
-        experience_prompt = ""
-        if self.settings.agent_dream_enabled:
-            experience_prompt = self.experience_store.build_experience_prompt(
-                self.tenant_id,
-                query=message,
-                platform=self.platform,
-                limit=self.settings.agent_dream_inject_max,
-            )
-        provider_info = self.get_config()["providers"].get(effective_provider, {})
-
-        yield AgentEvent(
-            type="session",
-            data={
-                "session_id": browser_session_id,
-                "run_id": effective_run_id,
-                "platform": session.platform,
-                "tenant_id": session.tenant_id,
-                "account_id": session.account_id,
-                "binding_status": self.platform_binding_status(),
-                "browser_ready": session.is_started,
-                "local_comment_files": self._active_comment_file_refs,
-                "created": created_new,
-                "skills_count": len(skills),
-                "history_count": len(run.messages),
-                "vision_enabled": vision_model is not None,
-                "stream_enabled": self.settings.agent_stream_enabled,
-                "compress_enabled": self.settings.agent_compress_enabled,
-                "provider": effective_provider,
-                "model": model,
-                "provider_note": provider_info.get("note"),
-                "mode": mode,
-                "run_mode": run_mode,
-                "phase": "plan",
-                "task_snapshot": {},
-                "agent_meta": self._agent_meta_payload(
-                    tool_usage={"read": 0, "write": 0, "skill": 0, "control": 0},
-                    failure_streak={},
-                    skill_priority=[s.id for s in skills],
-                ),
-            },
-        )
-
-        history = list(run.messages)
-        history.append({"role": "user", "content": message})
-
-        compressed, compress_event = await maybe_compress_history(
-            history,
-            client=client,
-            model=model,
-            settings=self.settings,
-        )
-        if compress_event is not None:
-            history = compressed
-            yield compress_event
-
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": _build_system_prompt(
-                    skills_description_summary(skills, explicit_ids),
-                    rules_prompt,
-                    experience_prompt,
-                    mode,
-                ),
-            },
-            *history,
-        ]
-
-        pw_executor = PlaywrightToolExecutor(session, self.settings)
-        skill_executor = SkillExecutor(
-            self.settings,
-            self.tenant_id,
-            self.platform,
-            session,
-            pw_executor,
-            db_session=self.db_session,
-        )
-
-        self._save_loop_checkpoint(
-            run,
-            history,
-            messages,
-            step=1,
-            mode=mode,
-            run_mode=run_mode,
-            phase="plan",
-        )
-
-        yield AgentEvent(type="status", data={"phase": "think", "message": "正在思考…"})
-
         await self.run_controller.register(effective_run_id)
         try:
+            install_events = await auto_install_from_message(self.settings, self.tenant_id, message)
+            for item in install_events:
+                if item.get("installed"):
+                    yield AgentEvent(
+                        type="skill_installed",
+                        data={
+                            "slug": item.get("slug"),
+                            "namespace": item.get("namespace"),
+                            "version": item.get("version"),
+                            "message": item.get("message"),
+                        },
+                    )
+                elif item.get("error"):
+                    yield AgentEvent(
+                        type="skill_install_failed",
+                        data={"coordinate": item.get("coordinate"), "error": item["error"]},
+                    )
+
+            skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
+            skills_by_tool = {s.tool_name: s for s in skills}
+            skills_by_id = {s.id: s for s in skills}
+            skill_tools = build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
+            has_packages = any(getattr(s, "package_path", None) for s in skills)
+            hub_tools = build_skillhub_tool_definitions(has_packages=has_packages or True)
+            all_tools = self._append_tools_for_mode(
+                filter_tools_for_mode(
+                    TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + skill_tools + hub_tools,
+                    mode,
+                ),
+                mode,
+            )
+            self._active_comment_file_refs = collect_comment_files_from_history(
+                list(run.messages),
+                self.settings,
+            )
+            vision_model = self._resolve_vision_model(effective_provider, model)
+            rules_prompt = self.rule_store.build_rules_prompt(self.tenant_id, self.platform)
+            experience_prompt = ""
+            if self.settings.agent_dream_enabled:
+                experience_prompt = self.experience_store.build_experience_prompt(
+                    self.tenant_id,
+                    query=message,
+                    platform=self.platform,
+                    limit=self.settings.agent_dream_inject_max,
+                )
+            provider_info = self.get_config()["providers"].get(effective_provider, {})
+
+            yield AgentEvent(
+                type="session",
+                data={
+                    "session_id": browser_session_id,
+                    "run_id": effective_run_id,
+                    "platform": session.platform,
+                    "tenant_id": session.tenant_id,
+                    "account_id": session.account_id,
+                    "binding_status": self.platform_binding_status(),
+                    "browser_ready": session.is_started,
+                    "local_comment_files": self._active_comment_file_refs,
+                    "created": created_new,
+                    "skills_count": len(skills),
+                    "history_count": len(run.messages),
+                    "vision_enabled": vision_model is not None,
+                    "stream_enabled": self.settings.agent_stream_enabled,
+                    "compress_enabled": self.settings.agent_compress_enabled,
+                    "provider": effective_provider,
+                    "model": model,
+                    "provider_note": provider_info.get("note"),
+                    "mode": mode,
+                    "run_mode": run_mode,
+                    "phase": "plan",
+                    "task_snapshot": {},
+                    "agent_meta": self._agent_meta_payload(
+                        tool_usage={"read": 0, "write": 0, "skill": 0, "control": 0},
+                        failure_streak={},
+                        skill_priority=[s.id for s in skills],
+                    ),
+                },
+            )
+
+            history = list(run.messages)
+            history.append({"role": "user", "content": message})
+
+            compressed, compress_event = await maybe_compress_history(
+                history,
+                client=client,
+                model=model,
+                settings=self.settings,
+            )
+            if compress_event is not None:
+                history = compressed
+                yield compress_event
+
+            messages: list[dict[str, Any]] = [
+                {
+                    "role": "system",
+                    "content": _build_system_prompt(
+                        skills_description_summary(skills, explicit_ids),
+                        rules_prompt,
+                        experience_prompt,
+                        mode,
+                    ),
+                },
+                *history,
+            ]
+
+            pw_executor = PlaywrightToolExecutor(session, self.settings)
+            skill_executor = SkillExecutor(
+                self.settings,
+                self.tenant_id,
+                self.platform,
+                session,
+                pw_executor,
+                db_session=self.db_session,
+            )
+
+            self._save_loop_checkpoint(
+                run,
+                history,
+                messages,
+                step=1,
+                mode=mode,
+                run_mode=run_mode,
+                phase="plan",
+            )
+
+            yield AgentEvent(type="status", data={"phase": "think", "message": "正在思考…"})
+
             async for event in self._agent_loop(
                 run=run,
                 session=session,
@@ -2137,7 +2217,7 @@ class AgentService:
                 "role": "tool",
                 "tool_call_id": pending.tool_call_id,
                 "tool_name": pending.tool,
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": json.dumps(compact_tool_result_for_llm(fn_name, result), ensure_ascii=False),
             }
             history.append(tool_entry)
             messages.append(tool_entry)

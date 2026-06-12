@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -10,6 +11,7 @@ from app.db.session import SessionLocal
 from app.platforms.account_id import normalize_account_id
 from app.platforms.tenant import normalize_tenant_id
 from app.platforms.types import normalize_platform
+from app.schemas.agent import AgentEvent
 from app.services.agent_service import AgentService
 from app.services.tenant_auth_service import TenantAuthService
 from app.services.user_auth_service import UserAuthError, UserAuthService
@@ -53,6 +55,13 @@ def _resolve_ws_tenant_id(
     return normalize_tenant_id(raw_tenant)
 
 
+def _build_agent(tid: str, plat: str, aid: str) -> tuple[AgentService, Any]:
+    settings = get_settings()
+    session = SessionLocal()
+    agent = AgentService(settings, tid, plat, db_session=session, account_id=aid)
+    return agent, session
+
+
 @router.websocket("/ws")
 async def agent_websocket(
     websocket: WebSocket,
@@ -73,71 +82,113 @@ async def agent_websocket(
     aid = normalize_account_id(account_id)
 
     await websocket.accept()
+    chat_task: asyncio.Task[None] | None = None
+
+    async def _stream_chat(payload: dict[str, Any]) -> None:
+        agent, session = _build_agent(tid, plat, aid)
+        try:
+            async for event in agent.run_chat(
+                payload.get("message", ""),
+                session_id=payload.get("session_id"),
+                run_id=payload.get("run_id"),
+                provider=payload.get("provider", "openai"),
+                headless=payload.get("headless"),
+                explicit_skill_ids=payload.get("explicit_skill_ids"),
+                mode=payload.get("mode", "agent"),
+                run_mode=payload.get("run_mode", "auto"),
+            ):
+                await websocket.send_json(event.model_dump(mode="json"))
+        except Exception as exc:
+            error_event = AgentEvent(type="error", data={"message": str(exc)})
+            await websocket.send_json(error_event.model_dump(mode="json"))
+        finally:
+            session.close()
+
+    async def _stream_resume(fn_name: str, payload: dict[str, Any]) -> None:
+        agent, session = _build_agent(tid, plat, aid)
+        try:
+            if fn_name == "approve":
+                events = agent.resume_approval(
+                    payload.get("run_id", ""),
+                    approved=bool(payload.get("approved")),
+                )
+            else:
+                events = agent.resume_plan(
+                    payload.get("run_id", ""),
+                    approved=bool(payload.get("approved")),
+                )
+            async for event in events:
+                await websocket.send_json(event.model_dump(mode="json"))
+        except Exception as exc:
+            error_event = AgentEvent(type="error", data={"message": str(exc)})
+            await websocket.send_json(error_event.model_dump(mode="json"))
+        finally:
+            session.close()
 
     try:
         while True:
             raw = await websocket.receive_text()
-            session = SessionLocal()
-            agent = AgentService(settings, tid, plat, db_session=session, account_id=aid)
             try:
-                try:
-                    message: dict[str, Any] = json.loads(raw)
-                except json.JSONDecodeError:
-                    await websocket.send_json(
-                        {"type": "error", "data": {"message": "无效的 JSON 消息"}},
-                    )
-                    continue
+                message: dict[str, Any] = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json(
+                    {"type": "error", "data": {"message": "无效的 JSON 消息"}},
+                )
+                continue
 
-                msg_type = message.get("type")
-                payload = message.get("payload") or message
+            msg_type = message.get("type")
+            payload = message.get("payload") or message
 
-                if msg_type == "chat":
-                    async for event in agent.run_chat(
-                        payload.get("message", ""),
-                        session_id=payload.get("session_id"),
-                        run_id=payload.get("run_id"),
-                        provider=payload.get("provider", "openai"),
-                        headless=payload.get("headless"),
-                        explicit_skill_ids=payload.get("explicit_skill_ids"),
-                        mode=payload.get("mode", "agent"),
-                        run_mode=payload.get("run_mode", "auto"),
-                    ):
-                        await websocket.send_json(event.model_dump(mode="json"))
-
-                elif msg_type == "cancel":
-                    run_id = payload.get("run_id")
-                    if not run_id:
-                        await websocket.send_json(
-                            {"type": "error", "data": {"message": "缺少 run_id"}},
-                        )
-                        continue
-                    cancelled = await agent.cancel_run(run_id)
+            if msg_type == "chat":
+                if chat_task is not None and not chat_task.done():
                     await websocket.send_json(
                         {
-                            "type": "cancelled",
-                            "data": {"run_id": run_id, "accepted": cancelled},
+                            "type": "error",
+                            "data": {"message": "当前已有任务在执行，请先停止后再发送新消息"},
                         },
                     )
+                    continue
+                chat_task = asyncio.create_task(_stream_chat(payload))
 
-                elif msg_type == "approve":
-                    async for event in agent.resume_approval(
-                        payload.get("run_id", ""),
-                        approved=bool(payload.get("approved")),
-                    ):
-                        await websocket.send_json(event.model_dump(mode="json"))
-
-                elif msg_type == "plan":
-                    async for event in agent.resume_plan(
-                        payload.get("run_id", ""),
-                        approved=bool(payload.get("approved")),
-                    ):
-                        await websocket.send_json(event.model_dump(mode="json"))
-
-                else:
+            elif msg_type in {"approve", "plan"}:
+                if chat_task is not None and not chat_task.done():
                     await websocket.send_json(
-                        {"type": "error", "data": {"message": f"未知消息类型: {msg_type}"}},
+                        {
+                            "type": "error",
+                            "data": {"message": "当前已有任务在执行，请稍后再试"},
+                        },
                     )
-            finally:
-                session.close()
+                    continue
+                chat_task = asyncio.create_task(_stream_resume(msg_type, payload))
+
+            elif msg_type == "cancel":
+                run_id = payload.get("run_id")
+                if not run_id:
+                    await websocket.send_json(
+                        {"type": "error", "data": {"message": "缺少 run_id"}},
+                    )
+                    continue
+                agent, session = _build_agent(tid, plat, aid)
+                try:
+                    cancelled = await agent.cancel_run(run_id)
+                finally:
+                    session.close()
+                await websocket.send_json(
+                    {
+                        "type": "cancelled",
+                        "data": {
+                            "run_id": run_id,
+                            "accepted": cancelled,
+                            "summary": "用户已停止执行" if cancelled else "未找到可停止的任务",
+                        },
+                    },
+                )
+
+            else:
+                await websocket.send_json(
+                    {"type": "error", "data": {"message": f"未知消息类型: {msg_type}"}},
+                )
     except WebSocketDisconnect:
+        if chat_task is not None and not chat_task.done():
+            chat_task.cancel()
         return

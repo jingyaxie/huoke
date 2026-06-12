@@ -13,11 +13,14 @@ SkillSource = Literal["local", "skillhub"]
 ParamType = Literal["string", "integer", "number", "boolean"]
 
 BUILTIN_HANDLERS = {
-    "crawl_hot": "抓取热榜入库",
     "crawl_video_comments": "抓取单条内容评论",
     "crawl_keyword_comments": "按关键词批量抓取评论",
     "search_videos": "按关键词搜索内容",
     "login_status": "检查当前平台登录状态",
+    "follow_user": "关注用户",
+    "unfollow_user": "取消关注用户",
+    "send_dm": "发送私信",
+    "pipeline_keyword_comments": "Pipeline：关键词内容+评论（含兜底）",
 }
 
 # 兼容旧版 global.json 中的废弃 handler 名

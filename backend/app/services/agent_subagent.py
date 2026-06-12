@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from app.schemas.agent import AgentEvent
 from app.services.agent_browser_session import AgentBrowserSession
 from app.services.agent_llm import AssistantTurn, stream_chat_completion
+from app.services.agent_network_capture import compact_tool_result_for_llm
 from app.services.agent_run_controller import AgentRunController
 from app.services.playwright_tools import TOOL_DEFINITIONS, PlaywrightToolExecutor, parse_tool_arguments
 
@@ -124,7 +125,7 @@ async def run_subagent(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": json.dumps(compact_tool_result_for_llm(fn_name, result), ensure_ascii=False),
                     }
                 )
                 if fn_name == "task_complete":

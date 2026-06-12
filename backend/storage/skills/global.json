@@ -1,134 +1,6 @@
 {
   "skills": [
     {
-      "id": "douyin-hot-api",
-      "name": "抖音热榜（接口优先）",
-      "description": "模拟真人浏览抖音热榜，拦截 hotspot 接口并从 JSON 解析热榜列表",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "返回条数上限",
-          "required": false,
-          "default": 20
-        }
-      ],
-      "content": "抖音热榜抓取（接口优先，禁止先扫 DOM）：\n1. browser_browse url=https://www.douyin.com/hot warmup_first=true scroll_rounds=3\n2. browser_wait_api url_contains=channel/hotspot timeout_ms=15000\n3. browser_get_network_data url_contains=channel/hotspot limit=3\n4. 从 items[].data 解析 aweme_list / 含 aweme_id+desc+author 的节点，提取标题、作者、video_url、点赞数\n5. 若 hotspot 为空，再试 url_contains=hot/search/list\n6. 仍无数据时 browser_get_page_info 看 embedded_data，最后才 browser_get_text\n7. 汇总前 {{limit}} 条后 task_complete；登录/验证码则 task_failed",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
-    },
-    {
-      "id": "douyin-hot-list",
-      "name": "打开抖音热榜（已废弃）",
-      "description": "已废弃，请使用 douyin-hot-api",
-      "type": "instruction",
-      "enabled": false,
-      "scope": "global",
-      "parameters": [],
-      "content": "请改用 /douyin-hot-api",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
-    },
-    {
-      "id": "douyin-search-keyword",
-      "name": "抖音关键词搜索",
-      "description": "在抖音网页版搜索指定关键词并查看搜索结果",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "keyword",
-          "type": "string",
-          "description": "搜索关键词",
-          "required": true
-        }
-      ],
-      "content": "抖音关键词搜索（已验证方案，实测 keyword=护肤 通过）\n\n【环境】有头 Chrome + 持久 Profile（DOUYIN_HEADLESS=false）；须已登录。VNC 已开抖音时优先复用当前浏览器窗口。\n\n【禁止】\n- 禁止 browser_goto / browser_browse 打开 /search/、/aisearch\n- 禁止从 www.douyin.com 冷启动（易进验证码中间页）；入口必须用热榜页\n\n【步骤】\n1. browser_browse url=https://www.douyin.com/hot scroll_rounds=1\n2. browser_click [data-e2e=\"searchbar-input\"]\n3. browser_fill {{keyword}} → browser_press Enter\n4. browser_scroll 3~5 次\n5. browser_wait_api url_contains=general/search/single 或 search/item timeout_ms=20000\n6. browser_get_network_data url_contains=search limit=5\n7. 从 items[].data 解析 aweme_id、desc、author.nickname、statistics.digg_count → video_url\n8. 汇总视频列表后 task_complete",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-10T16:00:00.000000+00:00"
-    },
-    {
-      "id": "douyin-keyword-comments",
-      "name": "抖音关键词视频+评论（已验证）",
-      "description": "热榜入口→搜索框真人输入→拦截搜索接口→逐条抓评论。PlaywrightPool 持久 Profile，一键执行，无需 LLM 逐步点浏览器",
-      "type": "builtin",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "keyword",
-          "type": "string",
-          "description": "搜索关键词",
-          "required": true
-        },
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "抓取视频数量",
-          "required": false,
-          "default": 3
-        },
-        {
-          "name": "days",
-          "type": "integer",
-          "description": "最近天数筛选（上下文标记）",
-          "required": false,
-          "default": 3
-        },
-        {
-          "name": "region",
-          "type": "string",
-          "description": "地区筛选，可选",
-          "required": false
-        },
-        {
-          "name": "show_browser",
-          "type": "boolean",
-          "description": "是否使用 VNC 可见浏览器（可复用已开窗口）",
-          "required": false,
-          "default": false
-        }
-      ],
-      "content": "已验证生产链路（2026-06-10 实测 keyword=护肤 limit=2 成功）：\n1. PlaywrightPool 持久 Chrome Profile（DOUYIN_HEADLESS=false）\n2. 打开热榜 https://www.douyin.com/hot\n3. human_click + human_type 搜索框输入关键词 → Enter\n4. 拦截 general/search/single 或 search/item 拿 aweme_id\n5. 对每个视频拦截 comment/list 抓全量评论\n\n一键调用本 builtin 即可；仅当需要逐步调试时才用 /douyin-search-keyword + /douyin-comments-api。",
-      "actions": [],
-      "builtin_handler": "crawl_keyword_comments",
-      "created_at": "2026-06-10T16:30:00.000000+00:00",
-      "updated_at": "2026-06-10T16:30:00.000000+00:00"
-    },
-    {
-      "id": "crawl-hot",
-      "name": "抓取热榜入库（legacy）",
-      "description": "legacy 内置爬虫入库；新业务请用 douyin-hot-api + 人工确认后入库",
-      "type": "builtin",
-      "enabled": true,
-      "disable_model_invocation": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "抓取数量上限",
-          "required": false,
-          "default": 50
-        }
-      ],
-      "content": "",
-      "actions": [],
-      "builtin_handler": "crawl_hot",
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
       "id": "check-login",
       "name": "检查登录状态",
       "description": "检查当前平台是否已登录",
@@ -140,309 +12,300 @@
       "actions": [],
       "builtin_handler": "login_status",
       "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
-      "id": "douyin-comments-api",
-      "name": "抖音视频评论（接口优先）",
-      "description": "打开视频页拦截 comment/list 接口，从 JSON 解析全部评论",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "video_url",
-          "type": "string",
-          "description": "视频链接",
-          "required": true
-        }
-      ],
-      "content": "抖音评论抓取（接口优先）：\n1. browser_browse url={{video_url}} warmup_first=true scroll_rounds=2\n2. 若未触发接口：browser_click [data-e2e=\"feed-comment-icon\"] 或 text=评论\n3. browser_wait_api url_contains=comment/list timeout_ms=20000\n4. browser_get_network_data url_contains=comment/list limit=10\n5. 从 data.comments 解析 cid、text、user.nickname、digg_count、reply_comment_total；合并多页 cursor\n6. 接口为空才 browser_get_text 兜底\n7. 输出结构化评论列表后 task_complete",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
-    },
-    {
-      "id": "crawl-video-comments",
-      "name": "单个视频评论抓取（legacy）",
-      "description": "legacy 内置爬虫；新业务请用 douyin-comments-api",
+      "id": "search-content",
+      "name": "关键词搜索内容",
+      "description": "按关键词搜索视频/笔记列表（builtin，全平台）",
       "type": "builtin",
       "enabled": true,
-      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
-        {
-          "name": "video_url",
-          "type": "string",
-          "description": "视频链接：item_id / douyin.com/video/...",
-          "required": true
-        },
-        {
-          "name": "show_browser",
-          "type": "boolean",
-          "description": "是否显示浏览器窗口",
-          "required": false,
-          "default": false
-        }
-      ],
-      "content": "",
-      "actions": [],
-      "builtin_handler": "crawl_video_comments",
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
-      "id": "crawl-keyword-comments",
-      "name": "关键词批量评论抓取（legacy）",
-      "description": "legacy；新业务请组合 douyin-search-keyword + douyin-comments-api",
-      "type": "builtin",
-      "enabled": true,
-      "disable_model_invocation": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "keyword",
-          "type": "string",
-          "description": "搜索关键词",
-          "required": true
-        },
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "抓取视频数量",
-          "required": false,
-          "default": 3
-        },
-        {
-          "name": "days",
-          "type": "integer",
-          "description": "最近天数筛选",
-          "required": false,
-          "default": 3
-        },
-        {
-          "name": "region",
-          "type": "string",
-          "description": "地区筛选，可选",
-          "required": false
-        },
-        {
-          "name": "show_browser",
-          "type": "boolean",
-          "description": "是否显示浏览器窗口",
-          "required": false,
-          "default": false
-        }
-      ],
-      "content": "",
-      "actions": [],
-      "builtin_handler": "crawl_keyword_comments",
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
-      "id": "search-videos",
-      "name": "关键词搜索视频列表（legacy）",
-      "description": "legacy 内置爬虫；新业务请用 douyin-search-keyword",
-      "type": "builtin",
-      "enabled": true,
-      "disable_model_invocation": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "keyword",
-          "type": "string",
-          "description": "搜索关键词",
-          "required": true
-        },
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "返回视频数量上限",
-          "required": false,
-          "default": 20
-        },
-        {
-          "name": "show_browser",
-          "type": "boolean",
-          "description": "是否显示浏览器窗口",
-          "required": false,
-          "default": false
-        }
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "limit", "type": "integer", "description": "返回数量上限", "required": false, "default": 20},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false},
+        {"name": "region", "type": "string", "description": "地域筛选", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
       ],
       "content": "",
       "actions": [],
       "builtin_handler": "search_videos",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "content-comments",
+      "name": "单条内容评论抓取",
+      "description": "抓取单条视频/笔记的全部评论（builtin，全平台）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "video_url", "type": "string", "description": "视频/笔记链接", "required": false},
+        {"name": "note_url", "type": "string", "description": "笔记链接（同 video_url）", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "crawl_video_comments",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "follow-user",
+      "name": "关注用户",
+      "description": "关注单个用户（builtin，全平台）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
+        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
+        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "follow_user",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "unfollow-user",
+      "name": "取消关注用户",
+      "description": "取消关注单个用户（builtin，全平台）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
+        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
+        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "unfollow_user",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "send-dm",
+      "name": "发送私信",
+      "description": "向单个用户发送私信（builtin，全平台；小红书 PC 不支持）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
+        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
+        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
+        {"name": "message", "type": "string", "description": "私信内容", "required": true},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "",
+      "actions": [],
+      "builtin_handler": "send_dm",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-keyword-comments",
+      "name": "抖音关键词视频+评论",
+      "description": "热榜入口→搜索→逐条抓评论，一键 builtin",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "limit", "type": "integer", "description": "抓取视频数量", "required": false, "default": 3},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
+        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false},
+        {"name": "guest_mode", "type": "boolean", "description": "游客模式（仅抖音）", "required": false, "default": false}
+      ],
+      "content": "生产链路：PlaywrightPool 持久 Profile → 热榜搜索 → 拦截 search/comment 接口。",
+      "actions": [],
+      "builtin_handler": "crawl_keyword_comments",
+      "created_at": "2026-06-10T16:30:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-keyword-comments",
+      "name": "小红书关键词笔记+评论",
+      "description": "探索页预热→搜索笔记→抓评论，一键 builtin",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "limit", "type": "integer", "description": "抓取笔记数量", "required": false, "default": 3},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
+        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "生产链路：PlaywrightPool 持久 Profile → 搜索笔记 → 拦截 comment 接口。",
+      "actions": [],
+      "builtin_handler": "crawl_keyword_comments",
+      "created_at": "2026-06-11T12:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "kuaishou-keyword-comments",
+      "name": "快手关键词视频+评论",
+      "description": "关键词搜索视频并抓取评论，一键 builtin",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "limit", "type": "integer", "description": "抓取视频数量", "required": false, "default": 3},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
+        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "生产链路：PlaywrightPool → 搜索 → 抓评论。",
+      "actions": [],
+      "builtin_handler": "crawl_keyword_comments",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "pipeline-keyword-video-comments",
+      "name": "对外 Pipeline：关键词内容+评论",
+      "description": "builtin 优先 → 规则重试 → Agent Recovery 兜底",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "video_limit", "type": "integer", "description": "内容数量上限", "required": false, "default": 5},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
+        {"name": "region", "type": "string", "description": "地域筛选", "required": false},
+        {"name": "agent_fallback", "type": "boolean", "description": "失败时 Agent 兜底", "required": false, "default": true}
+      ],
+      "content": "编排 Skill：T0 平台 keyword-comments → T1 show_browser 重试 → T2 Recovery Agent。",
+      "actions": [],
+      "builtin_handler": "pipeline_keyword_comments",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-hot-api",
+      "name": "抖音热榜（接口优先）",
+      "description": "Recovery：拦截 hotspot 接口解析热榜",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "limit", "type": "integer", "description": "返回条数上限", "required": false, "default": 20}
+      ],
+      "content": "抖音热榜（接口优先）：\n1. browser_browse url=https://www.douyin.com/hot warmup_first=true scroll_rounds=3\n2. browser_wait_api url_contains=channel/hotspot timeout_ms=15000\n3. browser_get_network_data url_contains=channel/hotspot limit=3\n4. 解析 aweme_list 后 task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-search-keyword",
+      "name": "抖音关键词搜索（Recovery）",
+      "description": "Recovery：热榜入口搜索框真人输入",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true}
+      ],
+      "content": "禁止打开 /search/ URL。browser_browse 热榜 → 搜索框输入 {{keyword}} → browser_wait_api url_contains=search/item → browser_get_network_data 解析 aweme_id → task_complete",
+      "actions": [],
+      "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "douyin-comments-api",
+      "name": "抖音视频评论（Recovery）",
+      "description": "Recovery：拦截 comment/list 接口",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "video_url", "type": "string", "description": "视频链接", "required": true}
+      ],
+      "content": "browser_browse url={{video_url}} → browser_wait_api url_contains=comment/list → browser_get_network_data 解析评论 → task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-feed-api",
+      "name": "小红书发现页（Recovery）",
+      "description": "Recovery：拦截 homefeed 接口",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "limit", "type": "integer", "description": "条数上限", "required": false, "default": 20}
+      ],
+      "content": "browser_browse explore 页 → browser_wait_api url_contains=homefeed → browser_get_network_data 解析笔记列表 → task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-search-api",
+      "name": "小红书搜索（Recovery）",
+      "description": "Recovery：拦截 search/notes 接口",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
+        {"name": "limit", "type": "integer", "description": "条数上限", "required": false, "default": 20}
+      ],
+      "content": "关闭登录弹窗 → browser_browse 搜索页 keyword={{keyword}} → browser_wait_api url_contains=search/notes → browser_get_network_data 解析 note_id → task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-comments-api",
+      "name": "小红书笔记评论（Recovery）",
+      "description": "Recovery：拦截 comment/page 接口",
+      "type": "instruction",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "note_url", "type": "string", "description": "笔记链接", "required": true}
+      ],
+      "content": "browser_browse url={{note_url}} → browser_wait_api url_contains=comment/page → browser_get_network_data 解析评论 → task_complete",
+      "actions": [],
+      "builtin_handler": null,
+      "created_at": "2026-06-10T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
       "id": "douyin-reply-comment",
       "name": "抖音回复评论",
-      "description": "在抖音视频页定位指定评论并发表回复（需已登录）",
+      "description": "在视频页回复指定评论（Agent 手动任务）",
       "type": "instruction",
       "enabled": true,
       "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
-        {
-          "name": "comment_hint",
-          "type": "string",
-          "description": "目标评论定位：用户名或评论内容片段",
-          "required": true
-        },
-        {
-          "name": "reply_text",
-          "type": "string",
-          "description": "回复内容",
-          "required": true
-        },
-        {
-          "name": "video_url",
-          "type": "string",
-          "description": "视频链接；已在视频页时可留空",
-          "required": false
-        }
+        {"name": "comment_hint", "type": "string", "description": "目标评论定位", "required": true},
+        {"name": "reply_text", "type": "string", "description": "回复内容", "required": true},
+        {"name": "video_url", "type": "string", "description": "视频链接", "required": false}
       ],
-      "content": "执行抖音视频评论回复任务。必须已登录，未登录则 task_failed。\n\n参数：\n- 视频链接：{{video_url}}（可空，表示使用当前页）\n- 目标评论：{{comment_hint}}（用户名或评论文字片段）\n- 回复内容：{{reply_text}}\n\n步骤：\n1. 若 {{video_url}} 非空且当前不在该视频页，browser_goto 到 {{video_url}}；否则 browser_get_page_info 确认在 douyin.com 视频页\n2. browser_wait 2-3 秒；若评论未展开，browser_click 评论入口：`[data-e2e=\"feed-comment-icon\"]`、`[data-e2e*=\"comment\"]` 或 `text=评论`\n3. browser_scroll direction=down 多次，直到页面文本中出现 {{comment_hint}}\n4. 在含 {{comment_hint}} 的评论行内 browser_click「回复」：`text=回复`\n5. browser_fill 回复框，依次尝试 `[data-e2e=\"comment-input\"]`、`textarea[placeholder*=\"评论\"]`，填入 {{reply_text}}\n6. browser_click 发送：`[data-e2e=\"comment-post\"]`、`text=发送`，或 browser_press Enter\n7. browser_wait 后 browser_get_text 确认出现 {{reply_text}}；成功 task_complete，否则 task_failed\n\n注意：一次只回复一条；遇到验证码/登录墙 task_failed；发送前核对目标评论无误。",
+      "content": "定位评论 {{comment_hint}} → 回复 {{reply_text}} → task_complete",
       "actions": [],
       "builtin_handler": null,
       "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
-      "id": "douyin-follow-user",
-      "name": "抖音关注用户",
-      "description": "进入抖音用户主页并点击关注（支持从评论点头像或直达主页链接）",
-      "type": "instruction",
-      "enabled": true,
-      "disable_model_invocation": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "user_profile_url",
-          "type": "string",
-          "description": "用户主页链接 https://www.douyin.com/user/...",
-          "required": false
-        },
-        {
-          "name": "username",
-          "type": "string",
-          "description": "当前页评论/视频中的用户名（无主页链接时使用）",
-          "required": false
-        }
-      ],
-      "content": "执行抖音关注用户任务。必须已登录。\n\n参数（至少填一项，优先 user_profile_url）：\n- 用户主页：{{user_profile_url}}\n- 用户名：{{username}}（从当前页点头像/昵称进入主页）\n\n进入主页：\nA) 若 {{user_profile_url}} 非空：browser_goto 到该链接\nB) 若仅有 {{username}}：browser_click 含该昵称的链接或头像 （`a:has-text(\"{{username}}\")`、评论区内 img/avatar），等待 URL 含 /user/\nC) 两者都空：task_failed 缺少用户定位信息\n\n关注：\n1. browser_wait 2 秒，browser_get_page_info 确认在用户主页\n2. browser_get_text 若已有「已关注」「互相关注」，task_complete 说明已关注\n3. browser_click 关注按钮：`[data-e2e=\"user-follow-btn\"]`、`[data-e2e*=\"follow\"]`、`button:has-text(\"关注\")`（勿点「已关注」）\n4. browser_wait 后确认按钮变为「已关注」/「互相关注」，task_complete\n\n注意：单次只关注一人；遇到验证码 task_failed。",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
-      "id": "douyin-send-dm",
-      "name": "抖音发送私信",
-      "description": "进入抖音用户主页并发送私信（需已登录，可能受互关/隐私限制）",
-      "type": "instruction",
-      "enabled": true,
-      "disable_model_invocation": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "message",
-          "type": "string",
-          "description": "私信内容",
-          "required": true
-        },
-        {
-          "name": "user_profile_url",
-          "type": "string",
-          "description": "用户主页链接",
-          "required": false
-        },
-        {
-          "name": "username",
-          "type": "string",
-          "description": "当前页用户名（无主页链接时使用）",
-          "required": false
-        }
-      ],
-      "content": "执行抖音发私信任务。必须已登录。\n\n参数：\n- 私信内容：{{message}}\n- 用户主页：{{user_profile_url}}（可空）\n- 用户名：{{username}}（可空，从当前页进入主页）\n\n进入主页（同 douyin-follow-user）：优先 browser_goto {{user_profile_url}}；否则 browser_click {{username}} 的头像/昵称进入 /user/ 页\n\n发私信：\n1. browser_click 私信入口：`[data-e2e=\"user-info-message-btn\"]`、`[data-e2e*=\"message\"]`、`button:has-text(\"私信\")`\n2. browser_wait 等待聊天面板出现（侧栏或 /im 页面）\n3. browser_fill 输入框：`[data-e2e=\"message-input\"]`、`textarea[placeholder*=\"消息\"]`、`div[contenteditable=\"true\"]`，填入 {{message}}\n4. browser_click 发送或 browser_press Enter\n5. browser_get_text 确认 {{message}} 出现在聊天记录，task_complete\n\n若提示无法私信、需互关或未开启私信，task_failed 并说明原因。",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-01T23:10:35.567157+00:00",
-      "updated_at": "2026-06-01T23:10:35.567157+00:00"
-    },
-    {
-      "id": "xhs-feed-api",
-      "name": "小红书发现页（接口优先）",
-      "description": "浏览 explore 页，拦截 homefeed 接口解析笔记列表",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "条数上限",
-          "required": false,
-          "default": 20
-        }
-      ],
-      "content": "小红书发现页（接口优先）：\n1. browser_browse url=https://www.xiaohongshu.com/explore warmup_first=true home_url=https://www.xiaohongshu.com scroll_rounds=4\n2. browser_wait_api url_contains=homefeed timeout_ms=15000\n3. browser_get_network_data url_contains=homefeed limit=5\n4. 从 data.items[].note_card 解析 note_id、display_title、user.nickname、interact_info\n5. 生成 explore 链接；接口不足才 DOM 兜底\n6. 汇总 {{limit}} 条后 task_complete",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
-    },
-    {
-      "id": "xhs-search-api",
-      "name": "小红书搜索（接口优先）",
-      "description": "关键词搜索笔记，拦截 search/notes 接口",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "keyword",
-          "type": "string",
-          "description": "搜索关键词",
-          "required": true
-        },
-        {
-          "name": "limit",
-          "type": "integer",
-          "description": "条数上限",
-          "required": false,
-          "default": 20
-        }
-      ],
-      "content": "小红书搜索（接口优先）：\n1. browser_browse url=https://www.xiaohongshu.com/search_result?keyword={{keyword}}&source=web_search_result_notes warmup_first=true scroll_rounds=5\n2. browser_wait_api url_contains=search/notes timeout_ms=20000\n3. browser_get_network_data url_contains=search/notes limit=5\n4. 从 data.items 解析 note_id、标题、作者；保留 xsec_token 拼链接\n5. 汇总 {{limit}} 条后 task_complete",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
-    },
-    {
-      "id": "xhs-comments-api",
-      "name": "小红书笔记评论（接口优先）",
-      "description": "打开笔记页拦截 comment/page 接口解析评论",
-      "type": "instruction",
-      "enabled": true,
-      "scope": "global",
-      "parameters": [
-        {
-          "name": "note_url",
-          "type": "string",
-          "description": "笔记链接",
-          "required": true
-        }
-      ],
-      "content": "小红书评论（接口优先）：\n1. browser_browse url={{note_url}} warmup_first=true scroll_rounds=2\n2. browser_click 评论区域或 text=评论 触发加载\n3. browser_wait_api url_contains=comment/page timeout_ms=20000\n4. browser_get_network_data url_contains=comment/page limit=10\n5. 从 data.comments 解析 id、content、user_info.nickname、like_count、sub_comments\n6. 汇总后 task_complete",
-      "actions": [],
-      "builtin_handler": null,
-      "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
     }
   ]
 }

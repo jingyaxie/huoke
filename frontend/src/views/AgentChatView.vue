@@ -1,7 +1,7 @@
 <template>
   <div class="agent-page">
       <aside class="history-sidebar" :class="{ collapsed: sidebarCollapsed }">
-        <router-link to="/external-api" class="sidebar-brand" :title="`返回主应用 · 租户 ${tenantId}`">
+        <router-link to="/test" class="sidebar-brand" :title="`返回测试入口 · 租户 ${tenantId}`">
           <span class="brand-mark">火</span>
           <span class="brand-text">抖音热点 · 智能体</span>
         </router-link>
@@ -112,7 +112,7 @@
             </div>
             <div class="chat-header-actions">
               <el-button
-                v-if="running && runId"
+                v-if="running"
                 size="small"
                 type="danger"
                 plain
@@ -1226,9 +1226,10 @@ const chatHistory = ref([]);
 const historyLoading = ref(false);
 const sidebarCollapsed = ref(false);
 const quickPrompts = [
-  "/search-videos 搜索关键词「淋浴房」并列出视频",
-  "/crawl-video-comments 抓取这个视频评论",
-  "/crawl-keyword-comments 关键词批量抓取评论",
+  "/pipeline-keyword-video-comments keyword=淋浴房 video_limit=5 days=3",
+  "/douyin-keyword-comments keyword=护肤 limit=3",
+  "/follow-user sec_uid=... user_id=... username=...",
+  "/content-comments video_url=https://www.douyin.com/video/...",
 ];
 
 const displayMessages = computed(() =>
@@ -2200,6 +2201,20 @@ function statusAlertType(status) {
   return "error";
 }
 
+function releaseWsChatWait(reason = "Aborted") {
+  clearWsWatchdog();
+  if (wsChatRejector) {
+    const reject = wsChatRejector;
+    wsChatResolver = null;
+    wsChatRejector = null;
+    reject(new DOMException(reason, "AbortError"));
+  } else if (wsChatResolver) {
+    wsChatResolver();
+    wsChatResolver = null;
+    wsChatRejector = null;
+  }
+}
+
 function ensureAgentWebSocket() {
   if (!useWebSocket.value) return null;
   if (agentWs && agentWs.readyState === WebSocket.OPEN) return agentWs;
@@ -2210,9 +2225,13 @@ function ensureAgentWebSocket() {
         handleEvent(event);
         touchWsWatchdog();
         const isSubagent = event.data?.subagent;
-        if (event.type === "done" || (event.type === "error" && !isSubagent)) {
+        if (
+          event.type === "done" ||
+          event.type === "cancelled" ||
+          (event.type === "error" && !isSubagent)
+        ) {
           clearWsWatchdog();
-          wsChatResolver();
+          wsChatResolver?.();
           wsChatResolver = null;
           wsChatRejector = null;
         }
@@ -2257,14 +2276,18 @@ async function doRestoreCheckpoint(checkpointId) {
 }
 
 async function stopRun() {
-  if (!runId.value) return;
+  if (!running.value) return;
+  const targetRunId = runId.value || sessionId.value;
   try {
-    if (useWebSocket.value && agentWs?.readyState === WebSocket.OPEN) {
-      sendAgentWsMessage(agentWs, "cancel", { run_id: runId.value });
-    } else {
-      await cancelAgentRun(runId.value);
+    if (targetRunId) {
+      await cancelAgentRun(targetRunId);
     }
     if (abortController) abortController.abort();
+    releaseWsChatWait("用户已停止执行");
+    running.value = false;
+    streamingText.value = "";
+    statusMessage.value = "";
+    finalStatus.value = { status: "cancelled", summary: "用户已停止执行" };
     ElMessage.warning("已发送停止请求");
   } catch (err) {
     ElMessage.error(err.message || "停止失败");
@@ -2728,6 +2751,9 @@ function handleEvent(event) {
       break;
     case "cancelled":
       finalStatus.value = { status: "cancelled", summary: data.summary || "任务已取消" };
+      running.value = false;
+      streamingText.value = "";
+      statusMessage.value = "";
       break;
     case "done":
       streamingText.value = "";

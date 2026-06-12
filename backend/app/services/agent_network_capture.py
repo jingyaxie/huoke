@@ -43,6 +43,118 @@ def summarize_api_payload(url: str, data: Any) -> tuple[str, dict[str, Any] | li
     return "JSON 数据", {"path": path}
 
 
+def compact_api_data_for_agent(data: Any, *, path: str = "", limit: int = 30) -> Any:
+    """Shrink large API payloads before returning to Agent / LLM context."""
+    if isinstance(data, list):
+        return [compact_api_data_for_agent(item, path=path, limit=limit) for item in data[:limit]]
+    if not isinstance(data, dict):
+        return data
+
+    if isinstance(data.get("aweme_list"), list):
+        items: list[dict[str, Any]] = []
+        for row in data["aweme_list"][:limit]:
+            if not isinstance(row, dict):
+                continue
+            author = row.get("author") if isinstance(row.get("author"), dict) else {}
+            stats = row.get("statistics") if isinstance(row.get("statistics"), dict) else {}
+            items.append(
+                {
+                    "aweme_id": row.get("aweme_id"),
+                    "desc": row.get("desc") or row.get("caption"),
+                    "author_name": author.get("nickname"),
+                    "digg_count": stats.get("digg_count"),
+                    "comment_count": stats.get("comment_count"),
+                    "share_url": row.get("share_url"),
+                }
+            )
+        compact: dict[str, Any] = {
+            key: value
+            for key, value in data.items()
+            if key not in {"aweme_list", "chime_video_list", "filter_infos", "log_pb"}
+        }
+        compact["aweme_list"] = items
+        compact["_compact"] = True
+        compact["_original_aweme_count"] = len(data["aweme_list"])
+        return compact
+
+    if isinstance(data.get("comments"), list):
+        comments: list[dict[str, Any]] = []
+        for row in data["comments"][:limit]:
+            if not isinstance(row, dict):
+                continue
+            user = row.get("user") if isinstance(row.get("user"), dict) else {}
+            comments.append(
+                {
+                    "cid": row.get("cid"),
+                    "text": row.get("text"),
+                    "user": user.get("nickname"),
+                    "digg_count": row.get("digg_count"),
+                    "reply_comment_total": row.get("reply_comment_total"),
+                }
+            )
+        return {
+            "status_code": data.get("status_code"),
+            "total": data.get("total"),
+            "has_more": data.get("has_more"),
+            "cursor": data.get("cursor"),
+            "comments": comments,
+            "_compact": True,
+            "_original_comment_count": len(data["comments"]),
+        }
+
+    if isinstance(data.get("word_list"), list):
+        words: list[dict[str, Any]] = []
+        for row in data["word_list"][:limit]:
+            if isinstance(row, dict):
+                words.append(
+                    {
+                        "word": row.get("word") or row.get("keyword"),
+                        "hot_value": row.get("hot_value") or row.get("view_count"),
+                        "label": row.get("label"),
+                    }
+                )
+        return {
+            "status_code": data.get("status_code"),
+            "word_list": words,
+            "_compact": True,
+            "_original_word_count": len(data["word_list"]),
+        }
+
+    preview: dict[str, Any] = {"_compact": True}
+    for key, value in list(data.items())[:15]:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            preview[key] = value if not (isinstance(value, str) and len(value) > 200) else value[:200] + "…"
+        elif isinstance(value, list):
+            preview[key] = f"[list len={len(value)}]"
+        elif isinstance(value, dict):
+            preview[key] = f"[object keys={list(value.keys())[:8]}]"
+        else:
+            preview[key] = str(value)[:120]
+    return preview
+
+
+def compact_tool_result_for_llm(tool_name: str, result: Any) -> Any:
+    """Apply payload compaction before serializing tool results into LLM context."""
+    if tool_name != "browser_get_network_data" or not isinstance(result, dict):
+        return result
+    items = result.get("items")
+    if not isinstance(items, list):
+        return result
+    compact_items: list[Any] = []
+    for item in items:
+        if not isinstance(item, dict):
+            compact_items.append(item)
+            continue
+        row = dict(item)
+        if "data" in row:
+            row["data"] = compact_api_data_for_agent(
+                row.get("data"),
+                path=str(row.get("path") or ""),
+            )
+        compact_items.append(row)
+    return {**result, "items": compact_items}
+
+
 class NetworkCapture:
     def __init__(self) -> None:
         self._entries: list[CapturedEntry] = []
@@ -171,7 +283,7 @@ class NetworkCapture:
                 "size_bytes": entry.size_bytes,
             }
             if include_data and entry.data is not None:
-                row["data"] = entry.data
+                row["data"] = compact_api_data_for_agent(entry.data, path=entry.path, limit=20)
             result.append(row)
         return result
 

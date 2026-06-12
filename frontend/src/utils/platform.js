@@ -31,3 +31,15 @@ export function externalIdLabel(platform) {
   if (platform === "kuaishou") return "作品 ID";
   return "内容 ID";
 }
+
+/** PC 网页端是否支持对用户发私信（小红书 PC 端无此能力）。 */
+export function supportsDirectMessage(platform) {
+  return platform === "douyin" || platform === "kuaishou";
+}
+
+export function directMessageUnsupportedHint(platform) {
+  if (platform === "xiaohongshu") {
+    return "小红书 PC 网页版不支持私信，请使用抖音/快手，或通过小红书 App 手动联系。";
+  }
+  return "当前平台不支持网页端私信。";
+}

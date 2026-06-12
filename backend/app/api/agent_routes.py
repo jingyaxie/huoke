@@ -60,6 +60,7 @@ from app.schemas.skill import (
     SkillUpdate,
 )
 from app.schemas.open_pipeline import KeywordVideoCommentsRequest, KeywordVideoCommentsResponse
+from app.schemas.skill_execute import SkillExecuteRequest, SkillExecuteResponse
 from app.schemas.skillhub import (
     SkillHubConfigOut,
     SkillHubConfigUpdate,
@@ -81,6 +82,7 @@ from app.services.agent_async_job_service import AgentAsyncJobService
 from app.services.agent_eval_service import AgentEvalService
 from app.services.open_pipeline_service import OpenPipelineService
 from app.services.skill_effect_service import SkillEffectService
+from app.services.skill_runner_service import SkillRunnerService
 from app.services.skill_md_parser import extract_actions_from_steps, parse_skill_md, render_skill_md
 from app.services.skill_store import SkillStore
 from app.services.skillhub_config_store import SkillHubConfigStore
@@ -564,6 +566,52 @@ def list_skills(
 ) -> SkillListResponse:
     items = store.list_all(tenant_id, include_disabled=True)
     return SkillListResponse(items=items, total=len(items))
+
+
+@router.post("/skills/execute", response_model=SkillExecuteResponse, summary="同步执行 Skill")
+async def execute_skill(
+    payload: SkillExecuteRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    platform: str = Depends(get_platform_id),
+    account_id: str = Depends(get_account_id),
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
+) -> SkillExecuteResponse:
+    from app.platforms.account_id import normalize_account_id
+
+    effective_platform = payload.platform or platform
+    effective_account = normalize_account_id(payload.account_id or account_id)
+    runner = SkillRunnerService(
+        settings,
+        tenant_id,
+        effective_platform,
+        account_id=effective_account,
+        db_session=session,
+    )
+    result = await runner.execute(
+        payload.skill_id,
+        payload.params,
+        headless=payload.headless,
+        agent_fallback=payload.agent_fallback,
+        provider=payload.provider,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    status = str(result.get("status") or ("completed" if not result.get("error") else "failed"))
+    ok = status == "completed" and not result.get("error")
+    inner = result.get("result") if isinstance(result.get("result"), dict) else result
+    return SkillExecuteResponse(
+        ok=ok,
+        skill_id=payload.skill_id,
+        platform=effective_platform,
+        tenant_id=tenant_id,
+        account_id=effective_account,
+        status=status,
+        summary=str(result.get("summary") or ""),
+        result=inner if isinstance(inner, dict) else {},
+        error=str(result.get("error") or ""),
+        recovery_stage=result.get("recovery_stage"),
+        run_id=result.get("run_id"),
+    )
 
 
 @router.get("/skills/effects", response_model=list[SkillEffectStatsOut])

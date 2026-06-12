@@ -98,6 +98,25 @@ class DouyinCommentTool(DouyinJsApiTool):
             if not data.get("comments"):
                 break
 
+        return self._build_comment_payload(
+            aweme_id=aweme_id,
+            video_url=video_url,
+            comments_map=comments_map,
+            api_total=api_total,
+            max_comments=max_comments,
+            capture_method="js_api" if comments_map else "api_empty",
+        )
+
+    def _build_comment_payload(
+        self,
+        *,
+        aweme_id: str,
+        video_url: str,
+        comments_map: dict[str, dict],
+        api_total: int,
+        max_comments: int,
+        capture_method: str,
+    ) -> dict:
         comments = list(comments_map.values())
         comments.sort(key=lambda x: x.get("create_time") or 0, reverse=True)
         top_rows = [row for row in comments if not row.get("parent_comment_id")][:max_comments]
@@ -110,7 +129,6 @@ class DouyinCommentTool(DouyinJsApiTool):
         comments = [row for row in comments if row.get("comment_id") in kept_ids]
         preview_reply_rows = [row for row in comments if row.get("parent_comment_id")]
         expected_reply_total = sum(int(row.get("reply_comment_total") or 0) for row in top_rows)
-        capture_method = "js_api" if top_rows else "api_empty"
         warning = None
         if not top_rows:
             warning = "评论接口未返回数据，请确认已登录且 Cookie 有效。"
@@ -129,6 +147,100 @@ class DouyinCommentTool(DouyinJsApiTool):
             "warning": warning,
             "comments": comments,
         }
+
+    async def _fetch_comments_via_page_network(
+        self,
+        page,
+        aweme_id: str,
+        video_url: str,
+        *,
+        max_comments: int = DEFAULT_MAX_COMMENTS,
+    ) -> dict | None:
+        captured_pages: list[dict] = []
+
+        async def on_response(resp) -> None:
+            if "comment/list" not in resp.url or resp.status >= 400:
+                return
+            try:
+                data = await resp.json()
+            except Exception:
+                return
+            if isinstance(data, dict):
+                captured_pages.append(data)
+
+        page.on("response", on_response)
+        try:
+            await page.goto(video_url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(2500)
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, 700)")
+                await page.wait_for_timeout(1200)
+            await page.wait_for_timeout(1500)
+        finally:
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
+
+        if not captured_pages:
+            return None
+
+        comments_map: dict[str, dict] = {}
+        api_total = 0
+        for index, data in enumerate(captured_pages):
+            if index == 0:
+                api_total = int(data.get("total") or 0)
+            for c in data.get("comments") or []:
+                row = _normalize_comment(c)
+                if row["comment_id"]:
+                    comments_map[row["comment_id"]] = row
+                    for reply in c.get("reply_comment") or []:
+                        reply_row = _normalize_comment(reply, parent_comment_id=row["comment_id"])
+                        if reply_row["comment_id"]:
+                            comments_map[reply_row["comment_id"]] = reply_row
+
+        if not comments_map:
+            return None
+
+        return self._build_comment_payload(
+            aweme_id=aweme_id,
+            video_url=video_url,
+            comments_map=comments_map,
+            api_total=api_total,
+            max_comments=max_comments,
+            capture_method="page_network",
+        )
+
+    async def _fetch_comments_via_dom(
+        self,
+        page,
+        aweme_id: str,
+        video_url: str,
+        *,
+        max_comments: int = DEFAULT_MAX_COMMENTS,
+    ) -> dict | None:
+        if video_url not in (page.url or ""):
+            await page.goto(video_url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(2500)
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, 700)")
+                await page.wait_for_timeout(1000)
+        rows = await self._extract_comments_from_dom(page)
+        if not rows:
+            return None
+        comments_map: dict[str, dict] = {}
+        for index, row in enumerate(rows[:max_comments], start=1):
+            normalized = dict(row)
+            normalized["comment_id"] = normalized.get("comment_id") or f"dom_{index}"
+            comments_map[normalized["comment_id"]] = normalized
+        return self._build_comment_payload(
+            aweme_id=aweme_id,
+            video_url=video_url,
+            comments_map=comments_map,
+            api_total=len(rows),
+            max_comments=max_comments,
+            capture_method="dom_fallback",
+        )
 
 
     async def _fetch_video_comments(
@@ -169,15 +281,34 @@ class DouyinCommentTool(DouyinJsApiTool):
         ) as (_, session_page):
             session_page.on("response", on_response)
             try:
+                network_payload = await self._fetch_comments_via_page_network(
+                    session_page,
+                    aweme_id,
+                    video_url,
+                    max_comments=max_comments,
+                )
+                if network_payload and network_payload.get("total_comments_captured", 0) > 0:
+                    return network_payload
+
                 await self.warmup_for_js_api(session_page, captured_api_urls)
                 resolved_template = template_url or await self.pick_api_template_url(session_page, captured_api_urls)
-                return await self._fetch_comments_from_api(
+                api_payload = await self._fetch_comments_from_api(
                     session_page,
                     aweme_id,
                     video_url,
                     resolved_template,
                     max_comments=max_comments,
                 )
+                if api_payload.get("total_comments_captured", 0) > 0:
+                    return api_payload
+
+                dom_payload = await self._fetch_comments_via_dom(
+                    session_page,
+                    aweme_id,
+                    video_url,
+                    max_comments=max_comments,
+                )
+                return dom_payload or api_payload
             finally:
                 try:
                     session_page.remove_listener("response", on_response)

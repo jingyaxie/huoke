@@ -4,7 +4,7 @@
       "id": "browser-safety",
       "name": "浏览器操作安全",
       "description": "所有平台通用的浏览器自动化安全约束",
-      "content": "- 架构：底层 BrowserRuntime（Chrome+人类行为+接口拦截）→ Skill（instruction/actions）承载业务\n- 业务逻辑写在 Skill 配置里，不在 Python 爬虫写死页面解析\n- 数据获取：browser_browse → browser_wait_api → browser_get_network_data 读完整 JSON\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点",
+      "content": "- 架构：BrowserRuntime → SkillRunner（REST/Agent/Pipeline 统一入口）→ SkillExecutor\n- 生产任务优先 invoke builtin：*-keyword-comments、follow-user、send-dm、pipeline-keyword-video-comments\n- Recovery 探索才用 instruction 型 *-api + browser_* 工具\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时 task_failed 并说明需要人工介入",
       "always_apply": true,
       "platforms": [],
       "enabled": true,
@@ -16,7 +16,7 @@
       "id": "douyin-platform",
       "name": "抖音平台规则",
       "description": "操作 douyin.com 时的额外约束",
-      "content": "- 优先使用 douyin.com 域名页面\n- 【禁止直接搜索】禁止 browser_goto / browser_browse 打开 `https://www.douyin.com/search/...`、`/aisearch` 等搜索页 URL；实测无法触发 search/item，且易触发风控/重定向精选\n- 【搜索唯一路径】browser_browse 到 https://www.douyin.com → 点击 `[data-e2e=\"searchbar-input\"]` 输入关键词 → Enter 或 `[data-e2e=\"searchbar-button\"]`；若落在 /jingxuan 仍在当前页搜索框操作，不要跳转搜索 URL\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 browser_get_network_data(url_contains=comment/list)，搜索用 url_contains=search/item 或 general/search\n- 关键词搜视频+抓评论（推荐）：invoke_skill douyin-keyword-comments（已验证一键方案）\n- 仅搜视频：douyin-search-keyword；仅抓单条评论：douyin-comments-api",
+      "content": "- 优先使用 douyin.com 域名页面\n- 【禁止直接搜索】禁止 browser_goto / browser_browse 打开 /search/、/aisearch URL\n- 【搜索 Recovery】仅兜底时使用 douyin-search-keyword（热榜入口搜索框）\n- 关键词+评论（生产）：invoke_skill douyin-keyword-comments 或 pipeline-keyword-video-comments\n- 关注/私信（生产）：invoke_skill follow-user / send-dm，勿 browser 逐步点击\n- 单条评论：invoke_skill content-comments；仅搜索列表：invoke_skill search-content\n- Recovery 评论：douyin-comments-api + browser_get_network_data(url_contains=comment/list)",
       "always_apply": true,
       "platforms": [
         "douyin"
@@ -30,7 +30,7 @@
       "id": "xiaohongshu-platform",
       "name": "小红书平台规则",
       "description": "操作 xiaohongshu.com 时的额外约束",
-      "content": "- 优先使用 xiaohongshu.com 域名页面\n- 数据获取策略（强制）：接口拦截 > 页面内嵌 JSON > DOM 解析\n- 发现页/热榜：拦截 `/api/sns/web/v1/homefeed`\n- 搜索：拦截 `/api/sns/web/v1/search/notes`，不要手工解析搜索页 DOM\n- 评论：拦截 `/api/sns/web/v2/comment/page` 与 `/comment/sub/page`，DOM 仅作最后兜底\n- 探索页 URL: https://www.xiaohongshu.com/explore\n- 笔记 URL 格式: https://www.xiaohongshu.com/explore/{note_id}\n- selector 仅用于触发评论/搜索接口，不用于批量解析列表",
+      "content": "- 优先使用 xiaohongshu.com 域名页面\n- 关键词+评论（生产）：invoke_skill xhs-keyword-comments 或 pipeline-keyword-video-comments\n- 关注：invoke_skill follow-user；私信：PC 不支持，send-dm 返回 platform_unsupported\n- Recovery：xhs-search-api、xhs-comments-api + browser_get_network_data\n- 探索页 URL: https://www.xiaohongshu.com/explore",
       "always_apply": true,
       "platforms": [
         "xiaohongshu"
@@ -38,13 +38,13 @@
       "enabled": true,
       "scope": "global",
       "created_at": "2026-06-10T00:00:00.000000+00:00",
-      "updated_at": "2026-06-10T00:00:00.000000+00:00"
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
       "id": "douyin-social-actions",
       "name": "抖音社交互动安全",
       "description": "回复评论、关注、私信等写入操作的约束",
-      "content": "- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对 {{reply_text}} / {{message}} 内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete",
+      "content": "- 回复/关注/私信优先 invoke_skill（follow-user、send-dm、douyin-reply-comment）\n- 执行前确认已登录；未登录 task_failed\n- 每次任务只操作一个用户或一条评论\n- 遇到验证码、频率限制、私信权限不足时 task_failed，不要重复点击",
       "always_apply": true,
       "platforms": [
         "douyin"

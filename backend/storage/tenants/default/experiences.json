@@ -10,9 +10,30 @@
     "53f914da-4e4a-4c99-893a-086a3ac3e24d",
     "05180808-fd24-4511-a873-f1ea542edc4b",
     "fd6281f4-8291-458b-8520-3b88a88019de",
-    "3bacf4e4-5017-428c-b142-4864acba44d6"
+    "3bacf4e4-5017-428c-b142-4864acba44d6",
+    "2d5347bd-25de-4d36-86b7-b0f4a4f33b33"
   ],
   "experiences": [
+    {
+      "title": "你好",
+      "task_keywords": [
+        "你好",
+        "douyin"
+      ],
+      "outcome": "success",
+      "lesson": "【成功】你好！有什么我可以帮你的吗？你可以告诉我你想在抖音、小红书、快手等平台上做什么，比如：\n\n- **搜索关键词并抓取评论** — 按关键词搜索视频/笔记，批量获取评论\n- **查看热榜** — 浏览抖音热榜热点话题\n- **抓取单条视频评论** — 获取某个视频的全部评论\n- **关注用户、发送私信、回复评论** — 社交互动操作\n- **分析本地评论数据** — 读取已下载的评论文件进行意向分析\n\n请告诉我你的需求，我来帮你操作！😊",
+      "do_tips": [],
+      "avoid_tips": [],
+      "platform": "douyin",
+      "source_run_id": "2d5347bd-25de-4d36-86b7-b0f4a4f33b33",
+      "enabled": true,
+      "version": 3,
+      "supersedes_id": "exp-3bacf4e4",
+      "conflict_tag": "",
+      "id": "exp-2d5347bd",
+      "created_at": "2026-06-12T02:28:01.226983+00:00",
+      "updated_at": "2026-06-12T02:28:01.226983+00:00"
+    },
     {
       "title": "你好",
       "task_keywords": [
