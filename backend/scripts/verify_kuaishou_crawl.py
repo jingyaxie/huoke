@@ -55,6 +55,7 @@ async def main() -> None:
     )
     comments = payload.get("comments") or []
     print(f"  photo_id: {payload.get('photo_id')}")
+    print(f"  photo_author_id: {payload.get('photo_author_id')}")
     print(f"  capture_method: {payload.get('capture_method')}")
     print(f"  api_total_top_comments: {payload.get('api_total_top_comments')}")
     print(f"  total_comments_captured: {payload.get('total_comments_captured')}")

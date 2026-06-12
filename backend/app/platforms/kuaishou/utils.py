@@ -26,6 +26,35 @@ def build_search_url(keyword: str) -> str:
     return f"https://www.kuaishou.com/search/video?searchKey={quote(keyword.strip())}"
 
 
+def parse_video_detail(data: dict | None) -> dict[str, str | None]:
+    """从 visionVideoDetail GraphQL 响应提取回复所需字段。"""
+    detail = (data or {}).get("data", {}).get("visionVideoDetail") if isinstance(data, dict) else None
+    if not isinstance(detail, dict):
+        detail = data if isinstance(data, dict) else {}
+    author = detail.get("author") if isinstance(detail.get("author"), dict) else {}
+    photo = detail.get("photo") if isinstance(detail.get("photo"), dict) else {}
+    return {
+        "photo_author_id": str(author.get("id") or "") or None,
+        "photo_author_name": str(author.get("name") or "") or None,
+        "exp_tag": str(photo.get("expTag") or "") or None,
+        "photo_id": str(photo.get("id") or "") or None,
+    }
+
+
+def find_comment_author_id(comments: list[dict], comment_id: str) -> str | None:
+    target = str(comment_id or "").strip()
+    if not target:
+        return None
+    for row in comments:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("comment_id") or row.get("commentId") or "") == target:
+            author_id = row.get("user_id") or row.get("authorId") or row.get("author_id")
+            if author_id:
+                return str(author_id)
+    return None
+
+
 def normalize_ks_comment(item: dict, parent_comment_id: str | None = None) -> dict:
     return {
         "comment_id": str(item.get("commentId") or item.get("comment_id") or ""),

@@ -90,6 +90,9 @@ class CommentStoreService:
                 continue
             parent_comment_id = row.get("parent_comment_id")
             parent_comment_id = str(parent_comment_id).strip() if parent_comment_id else None
+            row_raw = dict(row)
+            if platform == "kuaishou" and fetched_payload.get("photo_author_id"):
+                row_raw.setdefault("photo_author_id", fetched_payload.get("photo_author_id"))
             _, is_new, changed = repo.upsert_comment(
                 platform=platform,
                 content_id=content_id,
@@ -100,7 +103,7 @@ class CommentStoreService:
                 digg_count=int(row.get("digg_count") or 0),
                 create_time=int(row["create_time"]) if row.get("create_time") is not None else None,
                 content_url=content_url,
-                raw_data=row,
+                raw_data=row_raw,
                 now=now,
             )
             if is_new:

@@ -25,6 +25,7 @@ class CommentReplyTarget:
     parent_comment_id: str | None = None
     nickname: str = ""
     photo_author_id: str | None = None
+    reply_to_user_id: str | None = None
 
 
 class CommentReplyService:
@@ -81,6 +82,7 @@ class CommentReplyService:
                     "error": f"评论 {comment_id} 缺少 content_url，请传入 video_url / note_url",
                     "status": "failed",
                 }
+            raw = record.raw_data if isinstance(record.raw_data, dict) else {}
             return CommentReplyTarget(
                 platform=self.platform,
                 comment_id=comment_id,
@@ -89,7 +91,8 @@ class CommentReplyService:
                 comment_text=record.comment_text or (comment_text or ""),
                 parent_comment_id=record.parent_comment_id,
                 nickname=record.nickname or "",
-                photo_author_id=photo_author_id,
+                photo_author_id=photo_author_id or raw.get("photo_author_id"),
+                reply_to_user_id=raw.get("user_id"),
             )
 
         if url_override:
@@ -207,6 +210,7 @@ class CommentReplyService:
                 video_url=target.content_url,
                 photo_id=photo_id,
                 photo_author_id=target.photo_author_id or photo_author_id,
+                reply_to_user_id=target.reply_to_user_id,
                 show_browser=show_browser,
             )
 

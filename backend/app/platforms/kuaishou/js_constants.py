@@ -28,6 +28,28 @@ _API_TEMPLATE_EXCLUDES = (
 
 COMMENT_LIST_OPERATION = "commentListQuery"
 COMMENT_ADD_OPERATION = "visionAddComment"
+VIDEO_DETAIL_OPERATION = "visionVideoDetail"
+VIDEO_DETAIL_QUERY = """query visionVideoDetail($photoId: String) {
+  visionVideoDetail(photoId: $photoId) {
+    llsid
+    author {
+      id
+      name
+      __typename
+    }
+    photo {
+      id
+      expTag
+      caption
+      __typename
+    }
+    commentLimit {
+      canAddComment
+      __typename
+    }
+    __typename
+  }
+}"""
 COMMENT_LIST_QUERY = """query commentListQuery($photoId: String, $pcursor: String) {
   visionCommentList(photoId: $photoId, pcursor: $pcursor) {
     commentCount
@@ -47,11 +69,14 @@ COMMENT_LIST_QUERY = """query commentListQuery($photoId: String, $pcursor: Strin
   }
 }"""
 
-COMMENT_ADD_MUTATION = """mutation visionAddComment($photoId: String, $photoAuthorId: String, $content: String, $replyToCommentId: String) {
-  visionAddComment(photoId: $photoId, photoAuthorId: $photoAuthorId, content: $content, replyToCommentId: $replyToCommentId) {
+COMMENT_ADD_MUTATION = """mutation visionAddComment($photoId: String, $photoAuthorId: String, $content: String, $replyToCommentId: ID, $replyTo: ID, $expTag: String) {
+  visionAddComment(photoId: $photoId, photoAuthorId: $photoAuthorId, content: $content, replyToCommentId: $replyToCommentId, replyTo: $replyTo, expTag: $expTag) {
+    result
     commentId
     content
     timestamp
+    status
+    __typename
   }
 }"""
 

@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.db.base import Base
 from app.models.content_comment import ContentComment
 from app.platforms.kuaishou.reply_comment import _walk_photo_author_id
+from app.platforms.kuaishou.utils import find_comment_author_id, parse_video_detail
 from app.repositories.content_comment_repository import ContentCommentRepository
 from app.schemas.skill import BUILTIN_HANDLERS
 from app.services.comment_reply_service import CommentReplyService
@@ -129,3 +130,27 @@ def test_walk_photo_author_id_from_graphql_payload():
         }
     }
     assert _walk_photo_author_id(payload, "3xabc123") == "123456789"
+
+
+def test_parse_video_detail_extracts_author_and_exp_tag():
+    payload = {
+        "data": {
+            "visionVideoDetail": {
+                "author": {"id": "3xauthor", "name": "作者"},
+                "photo": {"id": "3xphoto", "expTag": "1_a/123_xpc"},
+            }
+        }
+    }
+    parsed = parse_video_detail(payload)
+    assert parsed["photo_author_id"] == "3xauthor"
+    assert parsed["exp_tag"] == "1_a/123_xpc"
+    assert parsed["photo_id"] == "3xphoto"
+
+
+def test_find_comment_author_id_from_normalized_rows():
+    rows = [
+        {"comment_id": "100", "user_id": "3xuser1"},
+        {"comment_id": "200", "user_id": "3xuser2"},
+    ]
+    assert find_comment_author_id(rows, "200") == "3xuser2"
+    assert find_comment_author_id(rows, "999") is None

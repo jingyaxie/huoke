@@ -12,9 +12,11 @@ from app.platforms.kuaishou.js_constants import (
     COMMENT_LIST_OPERATION,
     COMMENT_LIST_QUERY,
     DEFAULT_MAX_COMMENTS,
+    VIDEO_DETAIL_OPERATION,
+    VIDEO_DETAIL_QUERY,
     _is_comment_graphql_request,
 )
-from app.platforms.kuaishou.utils import extract_photo_id, normalize_ks_comment
+from app.platforms.kuaishou.utils import extract_photo_id, normalize_ks_comment, parse_video_detail
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
@@ -151,12 +153,20 @@ class KuaishouCommentTool(KuaishouJsApiTool):
         comments = list(comments_map.values())
         comments.sort(key=lambda x: x.get("create_time") or 0, reverse=True)
         top_rows = comments[:max_comments]
+        detail = await self.graphql_via_page(
+            page,
+            operation_name=VIDEO_DETAIL_OPERATION,
+            query=VIDEO_DETAIL_QUERY,
+            variables={"photoId": photo_id},
+        )
+        video_detail = parse_video_detail(detail)
         warning = None
         if api_total > max_comments:
             warning = f"已限制抓取前 {max_comments} 条顶层评论（接口总数 {api_total}）。"
         return {
             "platform": PLATFORM,
             "photo_id": photo_id,
+            "photo_author_id": video_detail.get("photo_author_id"),
             "video_url": video_url,
             "api_total_top_comments": api_total,
             "top_comments_captured": len(top_rows),
