@@ -1,4 +1,5 @@
 import http from "./http";
+import { executeSkill } from "./skills";
 
 const LIST_TIMEOUT = 15000;
 
@@ -15,5 +16,26 @@ export function fetchContentDetail(platform, contentId, { maxComments } = {}) {
   return http.get(`/platforms/${platform}/contents/${encodeURIComponent(contentId)}`, {
     params,
     timeout: LIST_TIMEOUT,
+  });
+}
+
+/** 回复指定评论（走 builtin reply-comment，页面 JS 接口） */
+export function replyComment(platform, params) {
+  const contentUrl = params.content_url || params.video_url || params.note_url || "";
+  return executeSkill({
+    skill_id: "reply-comment",
+    platform,
+    params: {
+      comment_id: params.comment_id,
+      reply_text: params.reply_text,
+      content_id: params.content_id,
+      content_url: contentUrl,
+      video_url: params.video_url || (platform !== "xiaohongshu" ? contentUrl : undefined),
+      note_url: params.note_url || (platform === "xiaohongshu" ? contentUrl : undefined),
+      comment_text: params.comment_text,
+      photo_author_id: params.photo_author_id,
+      show_browser: Boolean(params.show_browser),
+    },
+    timeout_seconds: 120,
   });
 }

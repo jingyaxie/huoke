@@ -20,8 +20,8 @@ _ERROR_HINTS = (
     ("timeout", "选择器可能失效或页面未加载完，先 browser_get_page_info 再操作"),
     ("超时", "选择器可能失效或页面未加载完，先 browser_wait 并检查页面"),
     ("network", "SPA 页面优先 browser_get_network_data 或内置 skill，少依赖 DOM 文本"),
-    ("未搜索到", "搜索类任务优先用 /search-videos 内置技能"),
-    ("comment", "评论抓取优先用 /crawl-video-comments，不要手工翻页"),
+    ("未搜索到", "搜索类任务优先用 /search-content 或 *-keyword-comments builtin"),
+    ("comment", "评论抓取用 /content-comments；回复用 /reply-comment，不要手工翻页"),
 )
 
 
@@ -134,7 +134,7 @@ class AgentDreamService:
                     f"相似任务可优先使用已验证成功的技能：{', '.join(analysis['skills_ok'][:3])}"
                 )
             if any("search" in t for t in analysis.get("tools", [])):
-                do_tips.append("搜索视频列表用 /search-videos，比手工解析搜索页 DOM 更高效")
+                do_tips.append("搜索视频列表用 /search-content 或 *-keyword-comments，比手工解析搜索页 DOM 更高效")
             if "browser_get_network_data" in analysis.get("tools", []) or "browser_get_page_info" in analysis.get("tools", []):
                 do_tips.append("SPA 页面优先读 api_captures / browser_get_network_data，再决定是否截图")
         else:

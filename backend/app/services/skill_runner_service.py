@@ -27,8 +27,8 @@ PLATFORM_KEYWORD_SKILL: dict[str, str] = {
 }
 
 RECOVERY_SKILL_CHAIN: dict[str, list[str]] = {
-    "douyin": ["check-login", "douyin-search-keyword", "douyin-comments-api"],
-    "xiaohongshu": ["check-login", "xhs-search-api", "xhs-comments-api"],
+    "douyin": ["check-login"],
+    "xiaohongshu": ["check-login"],
     "kuaishou": ["check-login"],
 }
 
@@ -322,7 +322,8 @@ class SkillRunnerService:
             f"limit={video_limit} days={days} region={region or ''}\n"
             f"builtin 已失败：{result.get('error') or result.get('summary') or failure_type}\n"
             f"禁止再 invoke {keyword_skill_id}。\n"
-            f"按序尝试：{', '.join(recovery_skills)}，逐条抓评论。\n"
+            f"先 check-login；若未登录 task_failed。\n"
+            f"可尝试 invoke {keyword_skill_id} 且 show_browser=true，或 search-content + content-comments。\n"
             f"最终在 task_complete.result 返回结构化 JSON："
             f'{{"platform":"{self.platform}","keyword":"...","videos":[],"comments_by_video":[]}}'
         )

@@ -49,6 +49,32 @@ def _bootstrap_default_skills() -> list[dict]:
 
 DEFAULT_GLOBAL_SKILLS: list[dict] = _bootstrap_default_skills()
 
+# 已从 global.json 移除的废弃技能；启动时从磁盘清理，list 时过滤，防止 Docker 卷残留旧定义
+DEPRECATED_SKILL_IDS = frozenset(
+    {
+        "douyin-reply-comment",
+        "douyin-hot-api",
+        "douyin-search-keyword",
+        "douyin-comments-api",
+        "xhs-feed-api",
+        "xhs-search-api",
+        "xhs-comments-api",
+    }
+)
+
+# 旧 slash 命令 → 当前 builtin（仅兼容调用，不再注册为独立 skill）
+SKILL_ID_ALIASES: dict[str, str] = {
+    "douyin-reply-comment": "reply-comment",
+    "search-videos": "search-content",
+    "crawl-video-comments": "content-comments",
+    "douyin-follow-user": "follow-user",
+    "douyin-send-dm": "send-dm",
+}
+
+
+def resolve_skill_id(skill_id: str) -> str:
+    return SKILL_ID_ALIASES.get(skill_id, skill_id)
+
 class SkillStore:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -76,6 +102,7 @@ class SkillStore:
             )
             return
         self._merge_missing_global_defaults()
+        self._prune_deprecated_skills()
         self._repair_legacy_global_handlers()
 
     def _repair_legacy_global_handlers(self) -> None:
@@ -95,6 +122,18 @@ class SkillStore:
                 json.dumps({"skills": skills}, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+
+    def _prune_deprecated_skills(self) -> None:
+        if not self.global_path.exists():
+            return
+        skills = self._load_raw(self.global_path)
+        filtered = [s for s in skills if s.get("id") not in DEPRECATED_SKILL_IDS]
+        if len(filtered) == len(skills):
+            return
+        self.global_path.write_text(
+            json.dumps({"skills": filtered}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _merge_missing_global_defaults(self) -> None:
         existing = self._load_raw(self.global_path)
@@ -144,14 +183,16 @@ class SkillStore:
         items = list(merged.values())
         if not include_disabled:
             items = [s for s in items if s.enabled]
+        items = [s for s in items if s.id not in DEPRECATED_SKILL_IDS]
         return sorted(items, key=lambda s: (s.scope != "global", s.name))
 
     def list_enabled(self, tenant_id: str) -> list[SkillOut]:
         return self.list_all(tenant_id, include_disabled=False)
 
     def get(self, tenant_id: str, skill_id: str) -> SkillOut | None:
+        resolved = resolve_skill_id(skill_id)
         for skill in self.list_all(tenant_id, include_disabled=True):
-            if skill.id == skill_id:
+            if skill.id == resolved:
                 return skill
         return None
 

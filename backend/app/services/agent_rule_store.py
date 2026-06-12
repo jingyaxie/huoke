@@ -29,18 +29,11 @@ DEFAULT_GLOBAL_RULES: list[dict] = [
         "description": "操作 douyin.com 时的额外约束",
         "content": (
             "- 优先使用 douyin.com 域名页面\n"
-            "- 【禁止直接搜索】禁止 browser_goto / browser_browse 打开 `https://www.douyin.com/search/...`、`/aisearch` 等搜索页 URL；"
-            "实测无法触发 search/item，且易触发风控/重定向精选\n"
-            "- 【搜索唯一路径】browser_browse 到 https://www.douyin.com → 点击 `[data-e2e=\"searchbar-input\"]` 输入关键词 → "
-            "Enter 或 `[data-e2e=\"searchbar-button\"]`；若落在 /jingxuan 仍在当前页搜索框操作，不要跳转搜索 URL\n"
-            "- 热榜页面 URL: https://www.douyin.com/hot\n"
-            "- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n"
-            "- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n"
-            "- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n"
-            "- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；"
-            "评论用 browser_get_network_data(url_contains=comment/list)，搜索用 url_contains=search/item 或 general/search\n"
-            "- 关键词搜视频+抓评论（推荐）：invoke_skill douyin-keyword-comments（已验证一键方案）\n"
-            "- 仅搜视频：douyin-search-keyword；仅抓单条评论：douyin-comments-api"
+            "- 【Agent 禁止手工搜索】禁止 browser_goto /search/、/aisearch，禁止 browser_click/fill 点搜索框\n"
+            "- 关键词+评论：只 invoke_skill douyin-keyword-comments 或 pipeline-keyword-video-comments；"
+            "builtin 失败可加 show_browser=true 重试，勿改用手动点页面\n"
+            "- 仅搜视频：search-content；仅抓单条评论：content-comments；回复评论：reply-comment\n"
+            "- Recovery 诊断才用 browser_get_network_data(url_contains=search/item)，非日常主路径"
         ),
         "always_apply": True,
         "platforms": ["douyin"],

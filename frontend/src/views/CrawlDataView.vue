@@ -6,7 +6,7 @@
         <div>
           <h2 class="page-title">抓取数据</h2>
           <p class="page-subtitle">
-            查看已抓取的视频与评论，点击评论用户可进入用户页进行关注；抖音/快手支持网页私信，小红书 PC 端不支持
+            查看已抓取的视频与评论，可直接回复评论；点击用户可进入用户页进行关注。抖音/快手支持网页私信，小红书 PC 端不支持
           </p>
         </div>
         <el-button :loading="loading" type="primary" @click="loadContents">刷新</el-button>
@@ -202,7 +202,17 @@
                     </div>
                   </div>
                 </div>
-                <el-button link type="primary" @click="openUser(comment, item)">查看用户</el-button>
+                <div class="comment-actions">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="!comment.comment_id"
+                    @click.stop="openReplyDialog(comment, item)"
+                  >
+                    回复
+                  </el-button>
+                  <el-button link type="primary" @click.stop="openUser(comment, item)">查看用户</el-button>
+                </div>
               </div>
             </template>
           </div>
@@ -213,6 +223,37 @@
         <el-button :loading="loadingMore" @click="loadMore">加载更多</el-button>
       </div>
       </div>
+
+      <el-dialog
+        v-model="replyDialogVisible"
+        title="回复评论"
+        width="520px"
+        destroy-on-close
+        @closed="resetReplyDialog"
+      >
+        <div v-if="replyTarget.comment" class="reply-target">
+          <div class="reply-target-label">回复给</div>
+          <div class="reply-target-user">{{ replyTarget.nickname || "未知用户" }}</div>
+          <div class="reply-target-text">{{ replyTarget.comment }}</div>
+        </div>
+        <el-input
+          v-model="replyText"
+          type="textarea"
+          :rows="4"
+          maxlength="500"
+          show-word-limit
+          placeholder="输入回复内容（1-500 字）"
+        />
+        <div class="reply-dialog-foot">
+          <el-checkbox v-model="replyShowBrowser">显示浏览器（调试用）</el-checkbox>
+        </div>
+        <template #footer>
+          <el-button @click="replyDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="replySubmitting" :disabled="!replyText.trim()" @click="submitReply">
+            发送回复
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </MainLayout>
 </template>
@@ -223,7 +264,7 @@ import { useRouter } from "vue-router";
 import { ArrowDown } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import MainLayout from "../components/MainLayout.vue";
-import { fetchContentDetail, fetchContentList } from "../api/contentLibrary";
+import { fetchContentDetail, fetchContentList, replyComment } from "../api/contentLibrary";
 import { externalIdLabel, PLATFORM_FILTER_OPTIONS, PLATFORM_IDS, platformLabel, platformTagType } from "../utils/platform";
 
 const router = useRouter();
@@ -243,6 +284,19 @@ const updatedRange = ref([]);
 const detailMap = reactive({});
 const detailLoading = reactive({});
 const detailErrors = reactive({});
+const replyDialogVisible = ref(false);
+const replySubmitting = ref(false);
+const replyText = ref("");
+const replyShowBrowser = ref(false);
+const replyTarget = reactive({
+  platform: "",
+  contentId: "",
+  contentUrl: "",
+  commentId: "",
+  comment: "",
+  nickname: "",
+  photoAuthorId: "",
+});
 
 const hasActiveFilter = computed(() => {
   if (platformFilter.value) return true;
@@ -386,6 +440,106 @@ function openUser(comment, contentItem) {
       comment_id: comment.comment_id,
     },
   });
+}
+
+function resolveContentUrl(item, detail) {
+  return (
+    item.content_url ||
+    detail?.content_url ||
+    detail?.video_url ||
+    detail?.note_url ||
+    item.meta?.content_url ||
+    ""
+  );
+}
+
+function resolvePhotoAuthorId(item, detail) {
+  const extra = detail?.meta?.extra || {};
+  return extra.photo_author_id || detail?.meta?.author_id || item.meta?.author_id || "";
+}
+
+function openReplyDialog(comment, contentItem) {
+  if (!comment.comment_id) {
+    ElMessage.warning("该评论缺少 comment_id，无法回复");
+    return;
+  }
+  const key = itemRowKey(contentItem);
+  const detail = detailMap[key];
+  replyTarget.platform = contentItem.platform;
+  replyTarget.contentId = contentItem.content_id;
+  replyTarget.contentUrl = resolveContentUrl(contentItem, detail);
+  replyTarget.commentId = comment.comment_id;
+  replyTarget.comment = comment.comment || "";
+  replyTarget.nickname = comment.nickname || comment.user?.username || "";
+  replyTarget.photoAuthorId = resolvePhotoAuthorId(contentItem, detail);
+  replyText.value = "";
+  replyShowBrowser.value = false;
+  replyDialogVisible.value = true;
+}
+
+function resetReplyDialog() {
+  replyText.value = "";
+  replyShowBrowser.value = false;
+  replyTarget.platform = "";
+  replyTarget.contentId = "";
+  replyTarget.contentUrl = "";
+  replyTarget.commentId = "";
+  replyTarget.comment = "";
+  replyTarget.nickname = "";
+  replyTarget.photoAuthorId = "";
+}
+
+async function submitReply() {
+  const text = replyText.value.trim();
+  if (!text) {
+    ElMessage.warning("请输入回复内容");
+    return;
+  }
+  if (!replyTarget.commentId) {
+    ElMessage.warning("缺少评论 ID");
+    return;
+  }
+  if (!replyTarget.contentUrl) {
+    ElMessage.warning("缺少内容链接，无法定位视频/笔记");
+    return;
+  }
+
+  replySubmitting.value = true;
+  try {
+    const platform = replyTarget.platform;
+    const contentUrl = replyTarget.contentUrl;
+    const { data } = await replyComment(platform, {
+      comment_id: replyTarget.commentId,
+      reply_text: text,
+      content_id: replyTarget.contentId,
+      content_url: contentUrl,
+      video_url: platform !== "xiaohongshu" ? contentUrl : undefined,
+      note_url: platform === "xiaohongshu" ? contentUrl : undefined,
+      comment_text: replyTarget.comment,
+      photo_author_id: replyTarget.photoAuthorId || undefined,
+      show_browser: replyShowBrowser.value,
+    });
+    const ok = Boolean(data?.ok);
+    const inner = data?.result || {};
+    const err = data?.error || inner.error || inner.reply?.error;
+    if (ok) {
+      ElMessage.success(data.summary || "回复已发送");
+      replyDialogVisible.value = false;
+    } else {
+      ElMessage.error(err || data.summary || "回复失败");
+    }
+  } catch (err) {
+    const detail = err?.response?.data?.detail;
+    ElMessage.error(
+      err.code === "ECONNABORTED"
+        ? "回复超时，请确认平台已登录后重试"
+        : typeof detail === "string"
+          ? detail
+          : err.message || "回复失败",
+    );
+  } finally {
+    replySubmitting.value = false;
+  }
 }
 
 async function loadContents(reset = true) {
@@ -665,6 +819,44 @@ onMounted(() => {
   margin-left: 28px;
   padding-left: 12px;
   border-left: 2px solid #e5e7eb;
+}
+
+.comment-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.reply-target {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: #f3f4f6;
+  border-radius: 6px;
+}
+
+.reply-target-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.reply-target-user {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.reply-target-text {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.reply-dialog-foot {
+  margin-top: 10px;
 }
 
 .comment-user {

@@ -64,8 +64,7 @@ def test_global_skills_include_reply_comment():
     by_id = {item["id"]: item for item in payload.get("skills", [])}
     assert by_id["reply-comment"]["type"] == "builtin"
     assert by_id["reply-comment"]["builtin_handler"] == "reply_comment"
-    assert by_id["douyin-reply-comment"]["builtin_handler"] == "reply_comment"
-    assert by_id["douyin-reply-comment"].get("disable_model_invocation") is not True
+    assert "douyin-reply-comment" not in by_id
 
 
 def test_find_comment_record_by_comment_id(db_session):

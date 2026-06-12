@@ -218,8 +218,6 @@ class DouyinSearchTool(DouyinJsApiTool):
             except Exception:
                 continue
 
-    @staticmethod
-
     async def _search_videos_via_thin_nav(
         self,
         page,

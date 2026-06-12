@@ -143,7 +143,10 @@
             <div v-if="displayMessages.length === 0 && !running" class="thread-welcome">
               <div class="welcome-logo">AI</div>
               <h3 class="welcome-title">有什么可以帮忙的？</h3>
-              <p class="welcome-desc">描述任务，Agent 将自动操作浏览器完成</p>
+              <p class="welcome-desc">
+                描述任务，Agent 将在当前平台（{{ currentPlatformLabel }}）下自动操作浏览器完成
+              </p>
+              <p class="welcome-hint">侧栏切换平台后生效；Pipeline 与关键词指令仅对当前平台执行，带「请粘贴/评论ID」的示例需替换真实值</p>
               <div class="quick-prompts">
                 <button
                   v-for="item in quickPrompts"
@@ -175,7 +178,7 @@
                 v-model="inputText"
                 type="textarea"
                 :autosize="{ minRows: 1, maxRows: 6 }"
-                :placeholder="bindingBlocked ? '请先绑定抖音账号（侧栏「绑定」）' : '描述任务，Agent 将自动操作浏览器…'"
+                :placeholder="bindingBlocked ? `请先绑定${currentPlatformLabel}账号（侧栏「绑定」）` : '描述任务，Agent 将自动操作浏览器…'"
                 :disabled="running || bindingBlocked"
                 resize="none"
                 class="composer-textarea"
@@ -557,7 +560,7 @@
         <p class="skills-hint">
           SkillHub：<code>skillhub:install pdf-parser</code> 或说「安装 xxx 技能」可自动安装；对话中可用
           <code>skillhub_search</code> / <code>skillhub_install</code>。
-          抖音：<code>/douyin-reply-comment</code> 等（需已登录）
+          回复评论：<code>/reply-comment</code>（需已登录，勿 browser 翻页找评论）
         </p>
       </el-drawer>
 
@@ -1023,7 +1026,17 @@ import AgentStreamingBlock from "../components/AgentStreamingBlock.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
 import ServerLoginDialog from "../components/ServerLoginDialog.vue";
 import { usePlatformVnc } from "../composables/usePlatformVnc";
-import { getAccountId, getApiKey, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
+import { getAccountId, getApiKey, getPlatformId, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
+
+const PLATFORM_META = {
+  douyin: { label: "抖音", keywordSkill: "douyin-keyword-comments", urlParam: "video_url" },
+  xiaohongshu: { label: "小红书", keywordSkill: "xhs-keyword-comments", urlParam: "note_url" },
+  kuaishou: { label: "快手", keywordSkill: "kuaishou-keyword-comments", urlParam: "video_url" },
+};
+
+function platformMeta(platform) {
+  return PLATFORM_META[platform] || PLATFORM_META.douyin;
+}
 import {
   clearAccountPlatformLoginSession,
   createAccount,
@@ -1261,12 +1274,21 @@ const runStatus = ref(null);
 const chatHistory = ref([]);
 const historyLoading = ref(false);
 const sidebarCollapsed = ref(false);
-const quickPrompts = [
-  "/pipeline-keyword-video-comments keyword=淋浴房 video_limit=5 days=3",
-  "/douyin-keyword-comments keyword=护肤 limit=3",
-  "/follow-user sec_uid=... user_id=... username=...",
-  "/content-comments video_url=https://www.douyin.com/video/...",
-];
+const platformId = ref(getPlatformId());
+const currentPlatformLabel = computed(() => platformMeta(platformId.value).label);
+const quickPrompts = computed(() => {
+  const meta = platformMeta(platformId.value);
+  return [
+    `/${meta.keywordSkill} keyword=护肤 limit=3`,
+    `/pipeline-keyword-video-comments keyword=淋浴房 video_limit=5 days=3`,
+    `/content-comments ${meta.urlParam}=请粘贴${meta.label}链接`,
+    `/reply-comment comment_id=评论ID reply_text=感谢分享 ${meta.urlParam}=链接`,
+  ];
+});
+
+function onPlatformChanged(event) {
+  platformId.value = event?.detail || getPlatformId();
+}
 
 const displayMessages = computed(() =>
   messages.value
@@ -2957,7 +2979,7 @@ async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || running.value) return;
   if (bindingBlocked.value) {
-    ElMessage.warning(bindingStatus.value?.message || "请先绑定抖音账号后再使用智能体");
+    ElMessage.warning(bindingStatus.value?.message || `请先绑定${currentPlatformLabel.value}账号后再使用智能体`);
     openAccountsDrawer();
     return;
   }
@@ -3013,6 +3035,7 @@ onMounted(async () => {
   tenantId.value = getTenantId();
   apiKey.value = getApiKey();
   window.addEventListener("huoke-tenant-changed", onExternalTenantChange);
+  window.addEventListener("huoke-platform-changed", onPlatformChanged);
   await loadAgentConfig();
   loadSkills();
   loadRules();
@@ -3037,6 +3060,7 @@ watch(accountsDrawerVisible, (open) => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("huoke-tenant-changed", onExternalTenantChange);
+  window.removeEventListener("huoke-platform-changed", onPlatformChanged);
   if (abortController) abortController.abort();
   if (agentWs) {
     agentWs.close();
@@ -3481,9 +3505,17 @@ onBeforeUnmount(() => {
 }
 
 .welcome-desc {
-  margin: 0 0 24px;
+  margin: 0 0 8px;
   font-size: 15px;
   color: var(--agent-muted);
+}
+
+.welcome-hint {
+  margin: 0 0 24px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--agent-muted);
+  opacity: 0.85;
 }
 
 .composer-dock {
