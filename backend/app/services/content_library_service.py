@@ -131,7 +131,7 @@ def _extract_meta(
         external_id=_extract_external_id(content_id, data),
         title=_first_value(data, "title"),
         author_name=str(author_name) if author_name else None,
-        author_id=str(_first_value(data, "author_id", "sec_uid")) if _first_value(data, "author_id", "sec_uid") else None,
+        author_id=str(v) if (v := _first_value(data, "author_id", "sec_uid", "photo_author_id")) else None,
         cover_url=_first_value(data, "cover_url"),
         content_url=_first_value(data, "video_url", "note_url", "content_url"),
         video_url=_first_value(data, "video_url"),
@@ -162,9 +162,14 @@ def _nickname(row: dict[str, Any]) -> str:
 
 def _comment_user(row: dict[str, Any]) -> CommentUserOut:
     username = _nickname(row)
-    user_id = row.get("user_id")
+    user_id = row.get("user_id") or row.get("authorId") or row.get("author_id")
     sec_uid = row.get("sec_uid")
     avatar = row.get("avatar")
+    author = row.get("author")
+    if isinstance(author, dict):
+        user_id = user_id or author.get("id") or author.get("authorId")
+        avatar = avatar or author.get("headurl") or author.get("avatar")
+        username = username if username != "未知用户" else str(author.get("name") or username)
     user = row.get("user")
     if isinstance(user, dict):
         user_id = user_id or user.get("uid") or user.get("user_id")
@@ -202,6 +207,7 @@ def _resolve_updated_at(
 
 def _comment_item(row: dict[str, Any]) -> CommentItemOut:
     text = str(row.get("comment") or row.get("text") or row.get("comment_text") or "").strip()
+    photo_author_id = row.get("photo_author_id")
     return CommentItemOut(
         comment_id=str(row.get("comment_id") or ""),
         parent_comment_id=str(row["parent_comment_id"]) if row.get("parent_comment_id") else None,
@@ -210,6 +216,7 @@ def _comment_item(row: dict[str, Any]) -> CommentItemOut:
         digg_count=int(row.get("digg_count") or 0),
         create_time=int(row["create_time"]) if row.get("create_time") is not None else None,
         reply_comment_total=int(row.get("reply_comment_total") or 0),
+        photo_author_id=str(photo_author_id).strip() if photo_author_id else None,
         user=_comment_user(row),
     )
 

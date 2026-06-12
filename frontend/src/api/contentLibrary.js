@@ -34,6 +34,7 @@ export function replyComment(platform, params) {
       note_url: params.note_url || (platform === "xiaohongshu" ? contentUrl : undefined),
       comment_text: params.comment_text,
       photo_author_id: params.photo_author_id,
+      reply_to_user_id: params.reply_to_user_id,
       show_browser: Boolean(params.show_browser),
     },
     timeout_seconds: 120,

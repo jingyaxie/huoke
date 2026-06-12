@@ -173,6 +173,8 @@ async def agent_websocket(
                     cancelled = await agent.cancel_run(run_id)
                 finally:
                     session.close()
+                if chat_task is not None and not chat_task.done():
+                    chat_task.cancel()
                 await websocket.send_json(
                     {
                         "type": "cancelled",

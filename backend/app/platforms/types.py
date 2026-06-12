@@ -19,6 +19,20 @@ def normalize_platform(platform: str | None) -> str:
     return value
 
 
+def platform_from_content_url(url: str | None) -> str | None:
+    """从视频/笔记链接推断平台；无法识别时返回 None。"""
+    if not url:
+        return None
+    lower = url.strip().lower()
+    if "kuaishou.com" in lower or "gifshow.com" in lower or "chenzhongtech.com" in lower:
+        return "kuaishou"
+    if "xiaohongshu.com" in lower or "xhslink.com" in lower:
+        return "xiaohongshu"
+    if "douyin.com" in lower or "iesdouyin.com" in lower:
+        return "douyin"
+    return None
+
+
 class PlatformHotCrawler(Protocol):
     platform: str
 

@@ -89,6 +89,32 @@ class ContentCommentRepository(BaseRepository):
             ).all()
         )
 
+    def search_comments(
+        self,
+        *,
+        platform: str,
+        content_id: str | None = None,
+        comment_text_contains: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[ContentComment]:
+        stmt = (
+            select(ContentComment)
+            .where(ContentComment.tenant_id == self.tenant_id)
+            .where(ContentComment.platform == platform)
+        )
+        if content_id:
+            stmt = stmt.where(ContentComment.content_id == content_id)
+        text = (comment_text_contains or "").strip()
+        if text:
+            stmt = stmt.where(ContentComment.comment_text.contains(text[:80]))
+        stmt = (
+            stmt.order_by(ContentComment.last_seen_at.desc(), ContentComment.id.desc())
+            .offset(max(offset, 0))
+            .limit(max(min(limit, 50), 1))
+        )
+        return list(self.session.scalars(stmt).all())
+
     def get_by_comment_id(self, *, platform: str, content_id: str, comment_id: str) -> ContentComment | None:
         return self.session.scalar(
             select(ContentComment)
@@ -185,3 +211,55 @@ class ContentCommentRepository(BaseRepository):
         row.last_seen_at = now
         self.session.flush()
         return row, False, changed
+
+    def delete_comment(self, *, platform: str, content_id: str, comment_id: str) -> bool:
+        row = self.get_by_comment_id(platform=platform, content_id=content_id, comment_id=comment_id)
+        if row is None:
+            return False
+        self.session.delete(row)
+        self.session.flush()
+        return True
+
+    def delete_content_comments(self, *, platform: str, content_id: str) -> int:
+        rows = self.list_by_content(platform=platform, content_id=content_id)
+        for row in rows:
+            self.session.delete(row)
+        if rows:
+            self.session.flush()
+        return len(rows)
+
+    def update_comment_fields(
+        self,
+        *,
+        platform: str,
+        content_id: str,
+        comment_id: str,
+        nickname: str | None = None,
+        comment_text: str | None = None,
+        digg_count: int | None = None,
+        parent_comment_id: str | None = None,
+        content_url: str | None = None,
+        raw_data: dict | None = None,
+        create_time: int | None = None,
+        now: datetime | None = None,
+    ) -> ContentComment | None:
+        row = self.get_by_comment_id(platform=platform, content_id=content_id, comment_id=comment_id)
+        if row is None:
+            return None
+        if nickname is not None:
+            row.nickname = nickname
+        if comment_text is not None:
+            row.comment_text = comment_text
+        if digg_count is not None:
+            row.digg_count = digg_count
+        if parent_comment_id is not None:
+            row.parent_comment_id = parent_comment_id
+        if content_url is not None:
+            row.content_url = content_url
+        if raw_data is not None:
+            row.raw_data = raw_data
+        if create_time is not None:
+            row.create_time = create_time
+        row.last_seen_at = now or datetime.utcnow()
+        self.session.flush()
+        return row

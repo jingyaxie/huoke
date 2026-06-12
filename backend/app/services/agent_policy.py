@@ -14,6 +14,10 @@ READ_ONLY_TOOLS = {
     "list_local_comment_files",
     "read_local_comments",
     "analyze_local_comments",
+    "query_stored_contents",
+    "query_stored_comments",
+    "get_stored_content_detail",
+    "get_stored_comment",
 }
 
 WRITE_TOOLS = {

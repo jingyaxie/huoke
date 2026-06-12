@@ -77,6 +77,13 @@ from app.services.comment_data_service import (
     read_comment_file,
 )
 from app.services.comment_data_tools import COMMENT_DATA_TOOL_DEFINITIONS
+from app.services.stored_comment_service import StoredCommentService
+from app.services.stored_comment_tools import (
+    STORED_COMMENT_READ_TOOLS,
+    STORED_COMMENT_TOOL_DEFINITIONS,
+    STORED_COMMENT_TOOL_NAMES,
+    STORED_COMMENT_WRITE_TOOLS,
+)
 
 SYSTEM_PROMPT = """你是一个浏览器自动化智能体。架构分层如下：
 
@@ -104,8 +111,12 @@ SkillHub：skillhub_search / skillhub_install / read_skill_resource / run_skill_
 2. 关键词+评论：invoke douyin-keyword-comments / xhs-keyword-comments / pipeline-keyword-video-comments
 3. 关注/私信/回复评论：invoke follow-user / send-dm / reply-comment（勿用 browser 翻页找评论）
 4. 复杂子任务 spawn_task；成功 task_complete，失败 task_failed
-6. 本地评论分析用 list_local_comment_files / read_local_comments / analyze_local_comments
-7. 优先复用历史 tool 返回与已拦截 JSON，避免重复打开页面
+6. 【数据库 content_comments 表】增删改查用 db 工具（勿用 list_local_comment_files 代替查库）：
+   - 查：query_stored_contents / query_stored_comments / get_stored_content_detail / get_stored_comment
+   - 增：create_stored_comment；改：update_stored_comment；删：delete_stored_comment / delete_stored_content
+7. 【本地 JSON 文件】仅分析磁盘 reports/*.json 时用 list_local_comment_files / read_local_comments / analyze_local_comments
+8. 找到评论后回复：invoke reply-comment（传入 comment_id、content_url、reply_to_user_id、photo_author_id）
+9. 优先复用历史 tool 返回与已拦截 JSON，避免重复打开页面
 
 注意：
 - 不要编造未观察到的数据；解析必须基于 browser_get_network_data 返回的 JSON
@@ -296,6 +307,10 @@ class AgentService:
             return "skill"
         if fn_name in {"task_complete", "task_failed", "submit_plan", "spawn_task"}:
             return "control"
+        if fn_name in STORED_COMMENT_WRITE_TOOLS:
+            return "write"
+        if fn_name in STORED_COMMENT_READ_TOOLS:
+            return "read"
         if fn_name.startswith("browser_click") or fn_name.startswith("browser_fill") or fn_name.startswith("browser_type"):
             return "write"
         if fn_name.startswith("browser_"):
@@ -681,13 +696,54 @@ class AgentService:
         return self.checkpoint_store.list_for_run(self.tenant_id, run_id)
 
     async def cancel_run(self, run_id: str) -> bool:
-        return await self.run_controller.cancel(run_id)
+        registered = await self.run_controller.cancel(run_id)
+        run = self.run_store.get(self.tenant_id, run_id)
+        if run is None:
+            return registered
+        if run.status in {"completed", "failed"}:
+            return registered
+        if run.status != "interrupted":
+            run.status = "interrupted"  # type: ignore[assignment]
+            self.run_store.save(run)
+        session = self.session_manager.get(run.browser_session_id)
+        if session is not None:
+            with contextlib.suppress(Exception):
+                await session.close()
+        return True
 
     def _is_run_cancelled(self, run_id: str) -> bool:
         return self.run_controller.is_cancelled(run_id)
 
     def _cancelled_tool_result(self) -> dict[str, Any]:
         return {"error": "用户已停止执行", "status": "cancelled"}
+
+    async def _ensure_browser_with_cancel(
+        self,
+        session: AgentBrowserSession,
+        run_id: str,
+    ):
+        if run_id and self._is_run_cancelled(run_id):
+            return None
+        if session.is_started:
+            return session.page
+        task = asyncio.create_task(session.ensure_started())
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=0.5)
+                if task in done:
+                    return task.result()
+                if run_id and self._is_run_cancelled(run_id):
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
+                    with contextlib.suppress(Exception):
+                        await session.close()
+                    return None
+        except Exception:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            raise
 
     async def _execute_tool_with_cancel(
         self,
@@ -884,6 +940,10 @@ class AgentService:
         if comment_result is not None:
             return comment_result
 
+        stored_result = self._execute_stored_comment_tool(fn_name, fn_args)
+        if stored_result is not None:
+            return stored_result
+
         hub_result = await self._execute_skillhub_tool(fn_name, fn_args, skills_by_id=skills_by_id)
         if hub_result is not None:
             return hub_result
@@ -936,6 +996,145 @@ class AgentService:
                 intent_keywords=[str(x) for x in intent_keywords if x],
                 max_leads=min(max_leads, 200),
             )
+
+        return None
+
+    def _execute_stored_comment_tool(
+        self,
+        fn_name: str,
+        fn_args: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if fn_name not in STORED_COMMENT_TOOL_NAMES:
+            return None
+        if self.db_session is None:
+            return {"error": "数据库未连接，无法操作已入库评论", "source": "database"}
+
+        from app.platforms.types import normalize_platform
+
+        platform = normalize_platform(str(fn_args.get("platform") or self.platform))
+        service = StoredCommentService(self.db_session, self.settings, tenant_id=self.tenant_id)
+
+        if fn_name == "query_stored_contents":
+            return service.query_contents(
+                platform=platform,
+                offset=int(fn_args.get("offset") or 0),
+                limit=int(fn_args.get("limit") or 20),
+            )
+
+        if fn_name == "query_stored_comments":
+            content_id = str(fn_args.get("content_id") or "").strip() or None
+            comment_text_contains = str(fn_args.get("comment_text_contains") or "").strip() or None
+            return service.query_comments(
+                platform=platform,
+                content_id=content_id,
+                comment_text_contains=comment_text_contains,
+                offset=int(fn_args.get("offset") or 0),
+                limit=int(fn_args.get("limit") or 20),
+            )
+
+        if fn_name == "get_stored_content_detail":
+            content_id = str(fn_args.get("content_id") or "").strip()
+            if not content_id:
+                return {"error": "缺少 content_id", "source": "database", "status": "failed"}
+            detail = service.get_content_detail(
+                platform=platform,
+                content_id=content_id,
+                max_comments=int(fn_args.get("max_comments") or 50),
+            )
+            if detail is None:
+                return {
+                    "source": "database",
+                    "status": "not_found",
+                    "error": "内容不存在",
+                    "platform": platform,
+                    "content_id": content_id,
+                }
+            return detail
+
+        if fn_name == "get_stored_comment":
+            comment_id = str(fn_args.get("comment_id") or "").strip()
+            if not comment_id:
+                return {"error": "缺少 comment_id", "source": "database", "status": "failed"}
+            content_id = str(fn_args.get("content_id") or "").strip() or None
+            return service.get_comment(
+                platform=platform,
+                comment_id=comment_id,
+                content_id=content_id,
+            )
+
+        if fn_name == "create_stored_comment":
+            content_id = str(fn_args.get("content_id") or "").strip()
+            comment_id = str(fn_args.get("comment_id") or "").strip()
+            comment_text = str(fn_args.get("comment_text") or "").strip()
+            if not content_id or not comment_id or not comment_text:
+                return {
+                    "error": "缺少 content_id / comment_id / comment_text",
+                    "source": "database",
+                    "status": "failed",
+                }
+            raw_data = fn_args.get("raw_data")
+            if raw_data is not None and not isinstance(raw_data, dict):
+                return {"error": "raw_data 必须是对象", "source": "database", "status": "failed"}
+            return service.create_comment(
+                platform=platform,
+                content_id=content_id,
+                comment_id=comment_id,
+                comment_text=comment_text,
+                nickname=str(fn_args.get("nickname") or ""),
+                content_url=str(fn_args.get("content_url") or "").strip() or None,
+                parent_comment_id=str(fn_args.get("parent_comment_id") or "").strip() or None,
+                digg_count=int(fn_args.get("digg_count") or 0),
+                create_time=int(fn_args["create_time"]) if fn_args.get("create_time") is not None else None,
+                raw_data=raw_data,
+            )
+
+        if fn_name == "update_stored_comment":
+            content_id = str(fn_args.get("content_id") or "").strip()
+            comment_id = str(fn_args.get("comment_id") or "").strip()
+            if not content_id or not comment_id:
+                return {
+                    "error": "缺少 content_id / comment_id",
+                    "source": "database",
+                    "status": "failed",
+                }
+            raw_data = fn_args.get("raw_data")
+            if raw_data is not None and not isinstance(raw_data, dict):
+                return {"error": "raw_data 必须是对象", "source": "database", "status": "failed"}
+            return service.update_comment(
+                platform=platform,
+                content_id=content_id,
+                comment_id=comment_id,
+                nickname=str(fn_args["nickname"]) if fn_args.get("nickname") is not None else None,
+                comment_text=str(fn_args["comment_text"]) if fn_args.get("comment_text") is not None else None,
+                digg_count=int(fn_args["digg_count"]) if fn_args.get("digg_count") is not None else None,
+                parent_comment_id=(
+                    str(fn_args["parent_comment_id"]) if fn_args.get("parent_comment_id") is not None else None
+                ),
+                content_url=str(fn_args["content_url"]) if fn_args.get("content_url") is not None else None,
+                raw_data=raw_data,
+                create_time=int(fn_args["create_time"]) if fn_args.get("create_time") is not None else None,
+            )
+
+        if fn_name == "delete_stored_comment":
+            content_id = str(fn_args.get("content_id") or "").strip()
+            comment_id = str(fn_args.get("comment_id") or "").strip()
+            if not content_id or not comment_id:
+                return {
+                    "error": "缺少 content_id / comment_id",
+                    "source": "database",
+                    "status": "failed",
+                }
+            return service.delete_comment(
+                platform=platform,
+                content_id=content_id,
+                comment_id=comment_id,
+            )
+
+        if fn_name == "delete_stored_content":
+            content_id = str(fn_args.get("content_id") or "").strip()
+            if not content_id:
+                return {"error": "缺少 content_id", "source": "database", "status": "failed"}
+            return service.delete_content(platform=platform, content_id=content_id)
 
         return None
 
@@ -1602,6 +1801,15 @@ class AgentService:
                             )
                         yield event
 
+                    if controller.is_cancelled(run.run_id):
+                        terminal_status = "cancelled"
+                        terminal_summary = "用户已停止执行"
+                        yield AgentEvent(
+                            type="cancelled",
+                            data={"run_id": run.run_id, "summary": terminal_summary},
+                        )
+                        break
+
                     if fn_name == "task_complete":
                         phase = "review"
                         terminal_status = "completed"
@@ -1767,6 +1975,18 @@ class AgentService:
             },
         )
 
+        if run_id and self._is_run_cancelled(run_id):
+            yield AgentEvent(
+                type="tool_result",
+                data={
+                    "tool": fn_name,
+                    "tool_call_id": tool_call_id,
+                    "result": self._cancelled_tool_result(),
+                    "is_skill": is_skill,
+                },
+            )
+            return
+
         if session is not None and tool_needs_browser(fn_name, is_skill=is_skill):
             await self._prepare_visible_browser_for_tool(session, fn_args, is_skill=is_skill)
             yield AgentEvent(
@@ -1774,7 +1994,18 @@ class AgentService:
                 data={"phase": "browser", "message": "正在启动浏览器…"},
             )
             try:
-                await session.ensure_started()
+                page = await self._ensure_browser_with_cancel(session, run_id)
+                if page is None:
+                    yield AgentEvent(
+                        type="tool_result",
+                        data={
+                            "tool": fn_name,
+                            "tool_call_id": tool_call_id,
+                            "result": self._cancelled_tool_result(),
+                            "is_skill": is_skill,
+                        },
+                    )
+                    return
             except TimeoutError:
                 yield AgentEvent(
                     type="tool_result",
@@ -1990,7 +2221,11 @@ class AgentService:
             hub_tools = build_skillhub_tool_definitions(has_packages=has_packages or True)
             all_tools = self._append_tools_for_mode(
                 filter_tools_for_mode(
-                    TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + skill_tools + hub_tools,
+                    TOOL_DEFINITIONS
+                    + COMMENT_DATA_TOOL_DEFINITIONS
+                    + STORED_COMMENT_TOOL_DEFINITIONS
+                    + skill_tools
+                    + hub_tools,
                     mode,
                 ),
                 mode,
@@ -2154,7 +2389,11 @@ class AgentService:
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
+                TOOL_DEFINITIONS
+                + COMMENT_DATA_TOOL_DEFINITIONS
+                + STORED_COMMENT_TOOL_DEFINITIONS
+                + build_skill_tool_definitions(skills)
+                + hub_tools,
                 mode,
             ),
             mode,
@@ -2268,7 +2507,11 @@ class AgentService:
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
         all_tools = self._append_tools_for_mode(
             filter_tools_for_mode(
-                TOOL_DEFINITIONS + COMMENT_DATA_TOOL_DEFINITIONS + build_skill_tool_definitions(skills) + hub_tools,
+                TOOL_DEFINITIONS
+                + COMMENT_DATA_TOOL_DEFINITIONS
+                + STORED_COMMENT_TOOL_DEFINITIONS
+                + build_skill_tool_definitions(skills)
+                + hub_tools,
                 mode,
             ),
             mode,

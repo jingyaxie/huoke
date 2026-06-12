@@ -21,6 +21,7 @@ BUILTIN_HANDLERS = {
     "unfollow_user": "取消关注用户",
     "send_dm": "发送私信",
     "reply_comment": "回复评论（DB 定位 + 页面 JS 接口）",
+    "query_stored_comments": "从数据库查询已入库评论/内容",
     "pipeline_keyword_comments": "Pipeline：关键词内容+评论（含兜底）",
 }
 

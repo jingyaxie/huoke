@@ -73,6 +73,7 @@ class CommentItemOut(BaseModel):
     digg_count: int = 0
     create_time: int | None = None
     reply_comment_total: int = 0
+    photo_author_id: str | None = None
     user: CommentUserOut
 
 

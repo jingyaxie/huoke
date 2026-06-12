@@ -8,8 +8,8 @@ COMMENT_DATA_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_local_comment_files",
             "description": (
-                "列出本租户已下载到服务器的评论 JSON 文件（/app/reports/comments_*.json）。"
-                "分析或筛选评论前应先调用此工具或复用对话里已有的 output_file，不要重新爬取网页。"
+                "列出磁盘上的评论 JSON 文件（/app/reports/comments_*.json），不是 MySQL 数据库。"
+                "用户要求「从数据库查」时请用 query_stored_comments；本工具仅用于分析本地导出文件。"
             ),
             "parameters": {
                 "type": "object",

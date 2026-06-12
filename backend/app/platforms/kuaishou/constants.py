@@ -13,4 +13,4 @@ PROFILE_GET_PATH = "/rest/v/profile/get"
 FOLLOW_PATH = "/rest/v/relation/follow"
 GRAPHQL_PATH = "/graphql"
 
-VIDEO_URL_PATTERN = re.compile(r"/short-video/([0-9a-zA-Z]+)")
+VIDEO_URL_PATTERN = re.compile(r"/short-video/([0-9a-zA-Z_-]+)")

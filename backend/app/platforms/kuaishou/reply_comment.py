@@ -17,43 +17,16 @@ from app.platforms.kuaishou.js_constants import (
     VIDEO_DETAIL_QUERY,
 )
 from app.platforms.kuaishou.utils import (
+    extract_comment_user_id,
+    extract_photo_author_from_page,
     extract_photo_id,
     find_comment_author_id,
     normalize_ks_comment,
     parse_video_detail,
+    resolve_photo_author_id,
 )
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
-
-
-def _walk_photo_author_id(node: Any, photo_id: str) -> str | None:
-    if isinstance(node, dict):
-        current_photo = str(
-            node.get("photoId")
-            or node.get("photo_id")
-            or node.get("id")
-            or ""
-        )
-        if current_photo == photo_id:
-            author = node.get("author")
-            if isinstance(author, dict):
-                author_id = author.get("id") or author.get("authorId")
-                if author_id:
-                    return str(author_id)
-            for key in ("photoAuthorId", "authorId"):
-                value = node.get(key)
-                if value:
-                    return str(value)
-        for value in node.values():
-            found = _walk_photo_author_id(value, photo_id)
-            if found:
-                return found
-    elif isinstance(node, list):
-        for item in node:
-            found = _walk_photo_author_id(item, photo_id)
-            if found:
-                return found
-    return None
 
 
 class KuaishouReplyCommentTool(KuaishouJsApiTool):
@@ -107,7 +80,50 @@ class KuaishouReplyCommentTool(KuaishouJsApiTool):
         result["output_file"] = str(output)
         return result
 
-    async def _fetch_video_detail(self, page, photo_id: str) -> dict[str, str | None]:
+    async def _resolve_photo_author_on_page(
+        self,
+        page,
+        *,
+        photo_id: str,
+        video_url: str,
+        photo_author_id: str | None,
+    ) -> tuple[dict[str, str | None], list[dict]]:
+        parsed: dict[str, str | None] = {
+            "photo_author_id": photo_author_id,
+            "exp_tag": None,
+            "photo_id": photo_id,
+        }
+        captured: list[dict] = []
+
+        async def on_response(resp) -> None:
+            try:
+                if GRAPHQL_PATH not in resp.url:
+                    return
+                data = await resp.json()
+                if isinstance(data, dict):
+                    captured.append(data)
+            except Exception:
+                return
+
+        page.on("response", on_response)
+        try:
+            await page.goto(video_url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(2500)
+        finally:
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
+
+        for data in captured:
+            detail = parse_video_detail(data)
+            if detail.get("photo_author_id"):
+                return detail, captured
+            walked = resolve_photo_author_id(data, photo_id)
+            if walked:
+                detail["photo_author_id"] = walked
+                return detail, captured
+
         data = await self.graphql_via_page(
             page,
             operation_name=VIDEO_DETAIL_OPERATION,
@@ -115,7 +131,50 @@ class KuaishouReplyCommentTool(KuaishouJsApiTool):
             variables={"photoId": photo_id},
             timeout_ms=12000,
         )
-        return parse_video_detail(data)
+        detail = parse_video_detail(data)
+        if not detail.get("photo_author_id"):
+            walked = resolve_photo_author_id(data, photo_id)
+            if walked:
+                detail["photo_author_id"] = walked
+        if detail.get("photo_author_id"):
+            return detail, captured
+
+        try:
+            raw = await page.evaluate(
+                """() => {
+                    if (window.__INITIAL_STATE__) return window.__INITIAL_STATE__;
+                    if (window.__APOLLO_STATE__) return window.__APOLLO_STATE__;
+                    return null;
+                }"""
+            )
+            if isinstance(raw, dict):
+                walked = resolve_photo_author_id(raw, photo_id)
+                if walked:
+                    detail["photo_author_id"] = walked
+                    return detail, captured
+        except Exception:
+            pass
+
+        dom_author = await extract_photo_author_from_page(page)
+        if dom_author:
+            detail["photo_author_id"] = dom_author
+        elif photo_author_id:
+            detail["photo_author_id"] = photo_author_id
+        return detail, captured
+
+    def _reply_to_user_from_graphql_packets(
+        self,
+        packets: list[dict],
+        *,
+        comment_id: str,
+    ) -> str | None:
+        for data in packets:
+            vision = (data.get("data") or {}).get("visionCommentList") or {}
+            rows = [normalize_ks_comment(item) for item in vision.get("rootCommentsV2") or []]
+            author_id = find_comment_author_id(rows, comment_id)
+            if author_id:
+                return author_id
+        return None
 
     async def _resolve_reply_to_user_id(
         self,
@@ -124,9 +183,18 @@ class KuaishouReplyCommentTool(KuaishouJsApiTool):
         photo_id: str,
         comment_id: str,
         reply_to_user_id: str | None,
+        captured_graphql: list[dict] | None = None,
     ) -> str | None:
-        if reply_to_user_id:
-            return str(reply_to_user_id)
+        resolved = extract_comment_user_id({"user_id": reply_to_user_id}) if reply_to_user_id else None
+        if resolved:
+            return resolved
+
+        from_packets = self._reply_to_user_from_graphql_packets(
+            captured_graphql or [],
+            comment_id=comment_id,
+        )
+        if from_packets:
+            return from_packets
 
         pcursor = ""
         guard = 0
@@ -162,11 +230,13 @@ class KuaishouReplyCommentTool(KuaishouJsApiTool):
     ) -> dict:
         captured_urls: list[str] = []
         await self.warmup_for_js_api(page, captured_urls)
-        await page.goto(video_url, wait_until="domcontentloaded", timeout=45000)
-        await page.wait_for_timeout(2500)
-
-        detail = await self._fetch_video_detail(page, photo_id)
-        resolved_author_id = photo_author_id or detail.get("photo_author_id")
+        detail, captured_graphql = await self._resolve_photo_author_on_page(
+            page,
+            photo_id=photo_id,
+            video_url=video_url,
+            photo_author_id=photo_author_id,
+        )
+        resolved_author_id = detail.get("photo_author_id")
         exp_tag = detail.get("exp_tag") or ""
         if not resolved_author_id:
             return await self._failure_result(
@@ -184,6 +254,7 @@ class KuaishouReplyCommentTool(KuaishouJsApiTool):
             photo_id=photo_id,
             comment_id=comment_id,
             reply_to_user_id=reply_to_user_id,
+            captured_graphql=captured_graphql,
         )
         if not resolved_reply_to:
             return await self._failure_result(

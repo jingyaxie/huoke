@@ -15,6 +15,8 @@ from app.schemas.skill import SkillOut
 from app.services.comment_crawler_service import CommentCrawlerService
 from app.services.playwright_tools import PlaywrightToolExecutor
 from app.services.agent_browser_session import AgentBrowserSession
+from app.platforms.types import platform_from_content_url
+from app.services.platform_skill_map import platform_for_skill_id
 
 _TEMPLATE_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
@@ -132,6 +134,25 @@ class SkillExecutor:
         self.pw_executor = pw_executor
         self.db_session = db_session
 
+    def _resolve_platform(self, skill: SkillOut, content_url: str | None = None) -> str:
+        """平台专属 skill 按 skill_id 路由；通用 skill 优先从内容链接推断平台。"""
+        mapped = platform_for_skill_id(skill.id)
+        if mapped:
+            return mapped
+        url_platform = platform_from_content_url(content_url)
+        if url_platform:
+            return url_platform
+        return self.platform
+
+    def _comment_crawler_service(self, skill: SkillOut, content_url: str | None = None) -> CommentCrawlerService:
+        return CommentCrawlerService(
+            self.settings,
+            tenant_id=self.tenant_id,
+            platform=self._resolve_platform(skill, content_url),
+            account_id=self.session.account_id,
+            session=self.db_session,
+        )
+
     async def execute(self, skill: SkillOut, raw_args: dict[str, Any]) -> dict[str, Any]:
         try:
             params = _resolve_params(skill, raw_args)
@@ -245,18 +266,16 @@ class SkillExecutor:
             return await self._execute_send_dm(params)
         if handler == "reply_comment":
             return await self._execute_reply_comment(skill, params)
+        if handler == "query_stored_comments":
+            return self._execute_query_stored_comments(params)
         if handler == "crawl_video_comments":
             video_url = params.get("video_url") or params.get("url") or params.get("note_url")
             if not video_url:
                 return {"error": "缺少参数 video_url / note_url"}
             show_browser = bool(params.get("show_browser", False))
-            service = CommentCrawlerService(
-                self.settings,
-                tenant_id=self.tenant_id,
-                platform=self.platform,
-                account_id=self.session.account_id,
-                session=self.db_session,
-            )
+            video_url_str = str(video_url)
+            platform = self._resolve_platform(skill, video_url_str)
+            service = self._comment_crawler_service(skill, video_url_str)
             payload, output, _cache = await service.crawl_video_comments(
                 str(video_url),
                 show_browser=show_browser,
@@ -277,6 +296,7 @@ class SkillExecutor:
                 "type": "builtin",
                 "handler": handler,
                 "status": status,
+                "platform": platform,
                 "summary": summary,
                 "video_url": payload.get("video_url") or payload.get("note_url") or video_url,
                 "total_comments_captured": captured,
@@ -292,16 +312,11 @@ class SkillExecutor:
             show_browser = bool(params.get("show_browser", False))
             guest_mode = bool(params.get("guest_mode", False))
             include_full = bool(params.get("include_full_results", False))
+            platform = self._resolve_platform(skill)
             existing_page = None
-            if show_browser and self.session.is_started:
+            if show_browser and self.session.is_started and platform == self.platform:
                 existing_page = self.session.page
-            service = CommentCrawlerService(
-                self.settings,
-                tenant_id=self.tenant_id,
-                platform=self.platform,
-                account_id=self.session.account_id,
-                session=self.db_session,
-            )
+            service = self._comment_crawler_service(skill)
             results, outputs, error, session_meta, _cache = await service.crawl_keyword_comments(
                 keyword=str(keyword),
                 limit=int(params.get("limit", 3)),
@@ -323,6 +338,7 @@ class SkillExecutor:
                 "type": "builtin",
                 "handler": handler,
                 "status": "completed",
+                "platform": platform,
                 "summary": f"关键词「{keyword}」共处理 {len(results)} 个视频，抓取 {total_captured} 条评论",
                 "keyword": keyword,
                 "videos_processed": len(results),
@@ -339,13 +355,8 @@ class SkillExecutor:
             if not keyword:
                 return {"error": "缺少参数 keyword"}
             show_browser = bool(params.get("show_browser", False))
-            service = CommentCrawlerService(
-                self.settings,
-                tenant_id=self.tenant_id,
-                platform=self.platform,
-                account_id=self.session.account_id,
-                session=self.db_session,
-            )
+            platform = self._resolve_platform(skill)
+            service = self._comment_crawler_service(skill)
             try:
                 payload, output, _cache = await service.search_videos(
                     keyword=str(keyword),
@@ -378,6 +389,7 @@ class SkillExecutor:
                 "type": "builtin",
                 "handler": handler,
                 "status": "completed",
+                "platform": platform,
                 "summary": summary,
                 "keyword": keyword,
                 "video_count": payload.get("video_count", len(videos)),
@@ -516,6 +528,39 @@ class SkillExecutor:
             "error": None if ok else dm.get("error") or dm.get("hint"),
         }
 
+    def _execute_query_stored_comments(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self.db_session is None:
+            return {"error": "查询已入库评论需要数据库会话", "status": "failed"}
+
+        from app.platforms.types import normalize_platform
+        from app.services.stored_comment_service import StoredCommentService
+
+        platform = normalize_platform(str(params.get("platform") or self.platform))
+        service = StoredCommentService(self.db_session, self.settings, tenant_id=self.tenant_id)
+        query_type = str(params.get("query_type") or "comments").strip().lower()
+        offset = int(params.get("offset") or 0)
+        limit = int(params.get("limit") or 20)
+
+        if query_type == "contents":
+            result = service.query_contents(platform=platform, offset=offset, limit=limit)
+        else:
+            content_id = str(params.get("content_id") or "").strip() or None
+            comment_text_contains = str(params.get("comment_text_contains") or "").strip() or None
+            result = service.query_comments(
+                platform=platform,
+                content_id=content_id,
+                comment_text_contains=comment_text_contains,
+                offset=offset,
+                limit=limit,
+            )
+        return {
+            "status": "completed",
+            "handler": "query_stored_comments",
+            "platform": platform,
+            "summary": f"已从数据库查询 {result.get('count', result.get('total', 0))} 条记录",
+            "result": result,
+        }
+
     async def _execute_reply_comment(self, skill: SkillOut, params: dict[str, Any]) -> dict[str, Any]:
         comment_id = str(params.get("comment_id") or "").strip()
         reply_text = str(params.get("reply_text") or params.get("message") or "").strip()
@@ -545,6 +590,7 @@ class SkillExecutor:
                 note_url=str(params.get("note_url") or "") or None,
                 content_url=str(params.get("content_url") or "") or None,
                 photo_author_id=str(params.get("photo_author_id") or "") or None,
+                reply_to_user_id=str(params.get("reply_to_user_id") or "") or None,
                 show_browser=bool(params.get("show_browser", False)),
             )
         except LoginRequiredError as exc:

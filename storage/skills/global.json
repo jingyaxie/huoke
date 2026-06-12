@@ -22,11 +22,38 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
-        {"name": "limit", "type": "integer", "description": "返回数量上限", "required": false, "default": 20},
-        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false},
-        {"name": "region", "type": "string", "description": "地域筛选", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "返回数量上限",
+          "required": false,
+          "default": 20
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地域筛选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "",
       "actions": [],
@@ -42,9 +69,25 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "video_url", "type": "string", "description": "视频/笔记链接", "required": false},
-        {"name": "note_url", "type": "string", "description": "笔记链接（同 video_url）", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "video_url",
+          "type": "string",
+          "description": "视频/笔记链接",
+          "required": false
+        },
+        {
+          "name": "note_url",
+          "type": "string",
+          "description": "笔记链接（同 video_url）",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "",
       "actions": [],
@@ -60,10 +103,31 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
-        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
-        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "user_id",
+          "type": "string",
+          "description": "用户 ID",
+          "required": false
+        },
+        {
+          "name": "sec_uid",
+          "type": "string",
+          "description": "抖音 sec_uid",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "description": "昵称（展示用）",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "",
       "actions": [],
@@ -79,10 +143,31 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
-        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
-        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "user_id",
+          "type": "string",
+          "description": "用户 ID",
+          "required": false
+        },
+        {
+          "name": "sec_uid",
+          "type": "string",
+          "description": "抖音 sec_uid",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "description": "昵称（展示用）",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "",
       "actions": [],
@@ -98,11 +183,37 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "user_id", "type": "string", "description": "用户 ID", "required": false},
-        {"name": "sec_uid", "type": "string", "description": "抖音 sec_uid", "required": false},
-        {"name": "username", "type": "string", "description": "昵称（展示用）", "required": false},
-        {"name": "message", "type": "string", "description": "私信内容", "required": true},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "user_id",
+          "type": "string",
+          "description": "用户 ID",
+          "required": false
+        },
+        {
+          "name": "sec_uid",
+          "type": "string",
+          "description": "抖音 sec_uid",
+          "required": false
+        },
+        {
+          "name": "username",
+          "type": "string",
+          "description": "昵称（展示用）",
+          "required": false
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "description": "私信内容",
+          "required": true
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "",
       "actions": [],
@@ -118,15 +229,61 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "comment_id", "type": "string", "description": "目标评论 ID（必填；优先从 DB 定位 content_url）", "required": true},
-        {"name": "reply_text", "type": "string", "description": "回复内容", "required": true},
-        {"name": "content_id", "type": "string", "description": "内容 ID（可选，缩小 DB 查询）", "required": false},
-        {"name": "comment_text", "type": "string", "description": "评论原文（可选，辅助 DB 定位）", "required": false},
-        {"name": "comment_hint", "type": "string", "description": "同 comment_text（兼容旧参数）", "required": false},
-        {"name": "video_url", "type": "string", "description": "视频链接（DB 无记录时必填）", "required": false},
-        {"name": "note_url", "type": "string", "description": "笔记链接（DB 无记录时必填）", "required": false},
-        {"name": "photo_author_id", "type": "string", "description": "快手视频作者 ID（可选，无法自动解析时传入）", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "comment_id",
+          "type": "string",
+          "description": "目标评论 ID（必填；优先从 DB 定位 content_url）",
+          "required": true
+        },
+        {
+          "name": "reply_text",
+          "type": "string",
+          "description": "回复内容",
+          "required": true
+        },
+        {
+          "name": "content_id",
+          "type": "string",
+          "description": "内容 ID（可选，缩小 DB 查询）",
+          "required": false
+        },
+        {
+          "name": "comment_text",
+          "type": "string",
+          "description": "评论原文（可选，辅助 DB 定位）",
+          "required": false
+        },
+        {
+          "name": "comment_hint",
+          "type": "string",
+          "description": "同 comment_text（兼容旧参数）",
+          "required": false
+        },
+        {
+          "name": "video_url",
+          "type": "string",
+          "description": "视频链接（DB 无记录时必填）",
+          "required": false
+        },
+        {
+          "name": "note_url",
+          "type": "string",
+          "description": "笔记链接（DB 无记录时必填）",
+          "required": false
+        },
+        {
+          "name": "photo_author_id",
+          "type": "string",
+          "description": "快手视频作者 ID（可选，无法自动解析时传入）",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "流程：content_comments 表按 comment_id 定位 content_url → 直接打开该视频/笔记页 → 调用 comment/publish 或 comment/post 或 visionAddComment 接口，无需翻页找评论。",
       "actions": [],
@@ -142,12 +299,46 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
-        {"name": "limit", "type": "integer", "description": "抓取视频数量", "required": false, "default": 3},
-        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
-        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false},
-        {"name": "guest_mode", "type": "boolean", "description": "游客模式（仅抖音）", "required": false, "default": false}
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取视频数量",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地区筛选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "guest_mode",
+          "type": "boolean",
+          "description": "游客模式（仅抖音）",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "生产链路：PlaywrightPool 持久 Profile → 热榜搜索 → 拦截 search/comment 接口。",
       "actions": [],
@@ -163,11 +354,39 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
-        {"name": "limit", "type": "integer", "description": "抓取笔记数量", "required": false, "default": 3},
-        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
-        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取笔记数量",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地区筛选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "生产链路：PlaywrightPool 持久 Profile → 搜索笔记 → 拦截 comment 接口。",
       "actions": [],
@@ -183,11 +402,39 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
-        {"name": "limit", "type": "integer", "description": "抓取视频数量", "required": false, "default": 3},
-        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
-        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
-        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取视频数量",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地区筛选",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
       ],
       "content": "生产链路：PlaywrightPool → 搜索 → 抓评论。",
       "actions": [],
@@ -203,17 +450,99 @@
       "enabled": true,
       "scope": "global",
       "parameters": [
-        {"name": "keyword", "type": "string", "description": "搜索关键词", "required": true},
-        {"name": "video_limit", "type": "integer", "description": "内容数量上限", "required": false, "default": 5},
-        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
-        {"name": "region", "type": "string", "description": "地域筛选", "required": false},
-        {"name": "agent_fallback", "type": "boolean", "description": "失败时 Agent 兜底", "required": false, "default": true}
+        {
+          "name": "keyword",
+          "type": "string",
+          "description": "搜索关键词",
+          "required": true
+        },
+        {
+          "name": "video_limit",
+          "type": "integer",
+          "description": "内容数量上限",
+          "required": false,
+          "default": 5
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "最近天数筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "地域筛选",
+          "required": false
+        },
+        {
+          "name": "agent_fallback",
+          "type": "boolean",
+          "description": "失败时 Agent 兜底",
+          "required": false,
+          "default": true
+        }
       ],
       "content": "编排 Skill：T0 平台 keyword-comments → T1 show_browser 重试 → T2 Recovery Agent。",
       "actions": [],
       "builtin_handler": "pipeline_keyword_comments",
       "created_at": "2026-06-12T00:00:00.000000+00:00",
       "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "query-stored-comments",
+      "name": "查询已入库评论",
+      "description": "从 MySQL content_comments 表查询已抓取入库的评论/内容（非磁盘 JSON）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "platform",
+          "type": "string",
+          "description": "平台：douyin / xiaohongshu / kuaishou",
+          "required": false
+        },
+        {
+          "name": "query_type",
+          "type": "string",
+          "description": "comments（默认）或 contents",
+          "required": false,
+          "default": "comments"
+        },
+        {
+          "name": "content_id",
+          "type": "string",
+          "description": "限定某条内容 ID",
+          "required": false
+        },
+        {
+          "name": "comment_text_contains",
+          "type": "string",
+          "description": "评论正文模糊匹配",
+          "required": false
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "description": "分页偏移",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "返回条数",
+          "required": false,
+          "default": 20
+        }
+      ],
+      "content": "用户说「从数据库找评论」时用此技能；找到后配合 reply-comment 回复。勿与 list_local_comment_files（磁盘 JSON）混淆。",
+      "actions": [],
+      "builtin_handler": "query_stored_comments",
+      "created_at": "2026-06-12T10:11:10.769498+00:00",
+      "updated_at": "2026-06-12T10:11:10.769498+00:00"
     }
   ]
 }

@@ -182,7 +182,11 @@ class CommentStoreService:
                 if row.get("parent_comment_id") in kept_ids and row.get("comment_id")
             )
             comments = [row for row in comments if row.get("comment_id") in kept_ids]
-        return {
+        photo_author_id = next(
+            (str(row.get("photo_author_id")).strip() for row in comments if row.get("photo_author_id")),
+            "",
+        ) or None
+        payload: dict[str, Any] = {
             "platform": platform,
             "content_id": content_id,
             "video_url": content_url,
@@ -198,3 +202,6 @@ class CommentStoreService:
                 "db_total_comments": len(stored_rows),
             },
         }
+        if photo_author_id:
+            payload["photo_author_id"] = photo_author_id
+        return payload

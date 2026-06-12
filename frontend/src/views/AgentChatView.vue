@@ -2348,20 +2348,29 @@ async function doRestoreCheckpoint(checkpointId) {
 
 async function stopRun() {
   if (!running.value) return;
-  const targetRunId = runId.value || sessionId.value;
+  const targetRunId = runId.value;
+  // 先本地中断 SSE/WS，避免 cancel API 失败时 UI 卡在「运行中」
+  if (abortController) abortController.abort();
+  releaseWsChatWait("用户已停止执行");
+  if (useWebSocket.value && agentWs?.readyState === WebSocket.OPEN && targetRunId) {
+    try {
+      sendAgentWsMessage(agentWs, "cancel", { run_id: targetRunId });
+    } catch {
+      // ignore
+    }
+  }
+  running.value = false;
+  streamingText.value = "";
+  statusMessage.value = "";
+  finalStatus.value = { status: "cancelled", summary: "用户已停止执行" };
+  runResumable.value = true;
   try {
     if (targetRunId) {
       await cancelAgentRun(targetRunId);
     }
-    if (abortController) abortController.abort();
-    releaseWsChatWait("用户已停止执行");
-    running.value = false;
-    streamingText.value = "";
-    statusMessage.value = "";
-    finalStatus.value = { status: "cancelled", summary: "用户已停止执行" };
-    ElMessage.warning("已发送停止请求");
+    ElMessage.warning("已停止执行");
   } catch (err) {
-    ElMessage.error(err.message || "停止失败");
+    ElMessage.warning(err.message || "停止请求已发送，后台可能仍在收尾");
   }
 }
 

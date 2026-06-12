@@ -18,26 +18,14 @@ from app.services.skill_failure import (
     is_recoverable_failure,
     is_terminal_failure,
 )
+from app.services.platform_skill_map import PLATFORM_KEYWORD_SKILL, keyword_skill_for_platform
 from app.services.skill_store import SkillStore
-
-PLATFORM_KEYWORD_SKILL: dict[str, str] = {
-    "douyin": "douyin-keyword-comments",
-    "xiaohongshu": "xhs-keyword-comments",
-    "kuaishou": "kuaishou-keyword-comments",
-}
 
 RECOVERY_SKILL_CHAIN: dict[str, list[str]] = {
     "douyin": ["check-login"],
     "xiaohongshu": ["check-login"],
     "kuaishou": ["check-login"],
 }
-
-
-def _keyword_skill_for_platform(platform: str) -> str:
-    skill_id = PLATFORM_KEYWORD_SKILL.get(platform)
-    if not skill_id:
-        raise ValueError(f"平台 {platform} 未配置关键词评论 Skill")
-    return skill_id
 
 
 def _is_success(result: dict[str, Any]) -> bool:
@@ -239,7 +227,7 @@ class SkillRunnerService:
         if not keyword.strip():
             return {"status": "failed", "error": "缺少 keyword", "skill_id": "pipeline-keyword-video-comments"}
 
-        keyword_skill_id = _keyword_skill_for_platform(self.platform)
+        keyword_skill_id = keyword_skill_for_platform(self.platform)
         base_params: dict[str, Any] = {
             "keyword": keyword,
             "limit": video_limit,

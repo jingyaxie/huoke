@@ -16,7 +16,13 @@ from app.platforms.kuaishou.js_constants import (
     VIDEO_DETAIL_QUERY,
     _is_comment_graphql_request,
 )
-from app.platforms.kuaishou.utils import extract_photo_id, normalize_ks_comment, parse_video_detail
+from app.platforms.kuaishou.utils import (
+    extract_photo_author_from_page,
+    extract_photo_id,
+    normalize_ks_comment,
+    parse_video_detail,
+    resolve_photo_author_id,
+)
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
 
@@ -130,15 +136,21 @@ class KuaishouCommentTool(KuaishouJsApiTool):
                 if row["comment_id"]:
                     comments_map[row["comment_id"]] = row
 
+        page_author_id = await extract_photo_author_from_page(page)
+
         if not comments_map:
             api_data = await self._fetch_comments_from_graphql(page, photo_id, max_comments=max_comments)
             if api_data.get("comments"):
                 api_data["video_url"] = video_url
+                if page_author_id:
+                    api_data["photo_author_id"] = page_author_id
                 return api_data
             dom_rows = await self._extract_comments_from_dom(page)
             return {
                 "platform": PLATFORM,
                 "photo_id": photo_id,
+                "photo_author_id": page_author_id,
+                "author_id": page_author_id,
                 "video_url": video_url,
                 "api_total_top_comments": 0,
                 "top_comments_captured": len(dom_rows),
@@ -160,13 +172,15 @@ class KuaishouCommentTool(KuaishouJsApiTool):
             variables={"photoId": photo_id},
         )
         video_detail = parse_video_detail(detail)
+        photo_author_id = video_detail.get("photo_author_id") or resolve_photo_author_id(detail, photo_id) or page_author_id
         warning = None
         if api_total > max_comments:
             warning = f"已限制抓取前 {max_comments} 条顶层评论（接口总数 {api_total}）。"
         return {
             "platform": PLATFORM,
             "photo_id": photo_id,
-            "photo_author_id": video_detail.get("photo_author_id"),
+            "photo_author_id": photo_author_id,
+            "author_id": photo_author_id,
             "video_url": video_url,
             "api_total_top_comments": api_total,
             "top_comments_captured": len(top_rows),

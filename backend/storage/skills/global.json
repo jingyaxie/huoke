@@ -111,6 +111,27 @@
       "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
+      "id": "query-stored-comments",
+      "name": "查询已入库评论",
+      "description": "从 MySQL content_comments 表查询已抓取入库的评论/内容（非磁盘 JSON）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "platform", "type": "string", "description": "平台：douyin / xiaohongshu / kuaishou", "required": false},
+        {"name": "query_type", "type": "string", "description": "comments（默认）或 contents", "required": false, "default": "comments"},
+        {"name": "content_id", "type": "string", "description": "限定某条内容 ID", "required": false},
+        {"name": "comment_text_contains", "type": "string", "description": "评论正文模糊匹配", "required": false},
+        {"name": "offset", "type": "integer", "description": "分页偏移", "required": false, "default": 0},
+        {"name": "limit", "type": "integer", "description": "返回条数", "required": false, "default": 20}
+      ],
+      "content": "用户说「从数据库找评论」时用此技能；找到后配合 reply-comment 回复。勿与 list_local_comment_files（磁盘 JSON）混淆。",
+      "actions": [],
+      "builtin_handler": "query_stored_comments",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
       "id": "reply-comment",
       "name": "回复评论",
       "description": "从 DB 定位评论所属视频/笔记，打开内容页后直接调用页面 JS 接口回复（builtin，全平台）",
@@ -126,9 +147,10 @@
         {"name": "video_url", "type": "string", "description": "视频链接（DB 无记录时必填）", "required": false},
         {"name": "note_url", "type": "string", "description": "笔记链接（DB 无记录时必填）", "required": false},
         {"name": "photo_author_id", "type": "string", "description": "快手视频作者 ID（可选，无法自动解析时传入）", "required": false},
+        {"name": "reply_to_user_id", "type": "string", "description": "被回复评论作者 user_id（可选，query_stored_comments 可返回）", "required": false},
         {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
       ],
-      "content": "流程：content_comments 表按 comment_id 定位 content_url → 直接打开该视频/笔记页 → 调用 comment/publish 或 comment/post 或 visionAddComment 接口，无需翻页找评论。",
+      "content": "流程：query-stored-comments 或 content_comments 表按 comment_id 定位 → 打开视频/笔记页 → 调用页面 JS 接口回复，无需翻页找评论。",
       "actions": [],
       "builtin_handler": "reply_comment",
       "created_at": "2026-06-12T00:00:00.000000+00:00",

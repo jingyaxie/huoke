@@ -296,6 +296,7 @@ const replyTarget = reactive({
   comment: "",
   nickname: "",
   photoAuthorId: "",
+  replyToUserId: "",
 });
 
 const hasActiveFilter = computed(() => {
@@ -453,9 +454,15 @@ function resolveContentUrl(item, detail) {
   );
 }
 
-function resolvePhotoAuthorId(item, detail) {
+function resolvePhotoAuthorId(item, detail, comment) {
   const extra = detail?.meta?.extra || {};
-  return extra.photo_author_id || detail?.meta?.author_id || item.meta?.author_id || "";
+  return (
+    extra.photo_author_id ||
+    detail?.meta?.author_id ||
+    item.meta?.author_id ||
+    comment?.photo_author_id ||
+    ""
+  );
 }
 
 function openReplyDialog(comment, contentItem) {
@@ -471,7 +478,8 @@ function openReplyDialog(comment, contentItem) {
   replyTarget.commentId = comment.comment_id;
   replyTarget.comment = comment.comment || "";
   replyTarget.nickname = comment.nickname || comment.user?.username || "";
-  replyTarget.photoAuthorId = resolvePhotoAuthorId(contentItem, detail);
+  replyTarget.photoAuthorId = resolvePhotoAuthorId(contentItem, detail, comment);
+  replyTarget.replyToUserId = comment.user?.user_id || comment.user_id || "";
   replyText.value = "";
   replyShowBrowser.value = false;
   replyDialogVisible.value = true;
@@ -487,6 +495,7 @@ function resetReplyDialog() {
   replyTarget.comment = "";
   replyTarget.nickname = "";
   replyTarget.photoAuthorId = "";
+  replyTarget.replyToUserId = "";
 }
 
 async function submitReply() {
@@ -517,6 +526,7 @@ async function submitReply() {
       note_url: platform === "xiaohongshu" ? contentUrl : undefined,
       comment_text: replyTarget.comment,
       photo_author_id: replyTarget.photoAuthorId || undefined,
+      reply_to_user_id: replyTarget.replyToUserId || undefined,
       show_browser: replyShowBrowser.value,
     });
     const ok = Boolean(data?.ok);

@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas.crawl_cache import CacheMeta
-from app.services.skill_runner_service import PLATFORM_KEYWORD_SKILL, SkillRunnerService
+from app.services.platform_skill_map import PLATFORM_KEYWORD_SKILL
+from app.services.skill_runner_service import SkillRunnerService
 
 
 def keyword_skill_id(platform: str) -> str:
