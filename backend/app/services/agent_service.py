@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.antibot import AntibotContext
+from app.core.antibot import AntibotContext, headless_for_platform
 from app.platforms.constants import PLATFORM_LABELS
 from app.platforms.registry import get_session_store
 from app.schemas.agent import AgentEvent, AgentMode, RunMode
@@ -1723,6 +1723,21 @@ class AgentService:
                 },
             )
 
+    @staticmethod
+    async def _prepare_visible_browser_for_tool(
+        session: AgentBrowserSession,
+        fn_args: dict[str, Any],
+        *,
+        is_skill: bool,
+    ) -> None:
+        if not is_skill or not bool(fn_args.get("show_browser")):
+            return
+        if not headless_for_platform(session.settings, session.platform, session.headless):
+            return
+        session.headless = False
+        if session.is_started:
+            await session.close()
+
     async def _process_tool_call(
         self,
         *,
@@ -1753,6 +1768,7 @@ class AgentService:
         )
 
         if session is not None and tool_needs_browser(fn_name, is_skill=is_skill):
+            await self._prepare_visible_browser_for_tool(session, fn_args, is_skill=is_skill)
             yield AgentEvent(
                 type="status",
                 data={"phase": "browser", "message": "正在启动浏览器…"},

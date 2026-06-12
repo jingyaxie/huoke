@@ -89,19 +89,35 @@ class DouyinCommentCrawler:
         max_comments: int = DEFAULT_MAX_COMMENTS,
         *,
         guest_mode: bool = False,
+        existing_page=None,
     ) -> tuple[list[dict], list[Path], str | None, dict]:
         if guest_mode and show_browser:
             raise ValueError("guest_mode 与 show_browser 不能同时使用，游客态请使用无头模式")
         if not guest_mode:
             require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        resolved_headless = headless_for_platform(self.settings, PLATFORM, False if show_browser else None)
+        session_meta = self._build_session_meta(guest_mode=guest_mode)
+        if existing_page is not None:
+            results, files, diagnostic = await self._crawl_keyword_comments_on_page(
+                existing_page,
+                keyword=keyword,
+                limit=limit,
+                manual_search=show_browser,
+                headless=resolved_headless,
+                days=days,
+                region=region,
+                max_comments=max_comments,
+                from_existing=True,
+                session_meta=session_meta,
+            )
+            session_meta["session_mode"] = await self._detect_session_mode_from_page(existing_page)
+            return results, files, self._apply_session_diagnostic(diagnostic, session_meta), session_meta
+
         crawler = DouyinCrawler(self.settings, self.tenant_id, self.store)
         session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
         if show_browser and not session:
             await crawler.start_interactive_login_session()
             session = DouyinCrawler.get_interactive_session(PLATFORM, self.tenant_id, self.account_id)
-
-        resolved_headless = headless_for_platform(self.settings, PLATFORM, False if show_browser else None)
-        session_meta = self._build_session_meta(guest_mode=guest_mode)
         if session:
             page = session["page"]
             results, files, diagnostic = await self._crawl_keyword_comments_on_page(

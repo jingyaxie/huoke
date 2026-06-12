@@ -292,6 +292,9 @@ class SkillExecutor:
             show_browser = bool(params.get("show_browser", False))
             guest_mode = bool(params.get("guest_mode", False))
             include_full = bool(params.get("include_full_results", False))
+            existing_page = None
+            if show_browser and self.session.is_started:
+                existing_page = self.session.page
             service = CommentCrawlerService(
                 self.settings,
                 tenant_id=self.tenant_id,
@@ -308,6 +311,7 @@ class SkillExecutor:
                 guest_mode=guest_mode,
                 force_refresh=bool(params.get("force_refresh", False)),
                 cache_ttl_hours=float(params.get("cache_ttl_hours") or 24),
+                existing_page=existing_page,
             )
             if error and not results:
                 return {"error": error, "diagnostic": error}

@@ -78,6 +78,7 @@ class CommentCrawlerService:
         guest_mode: bool = False,
         force_refresh: bool = False,
         cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
+        existing_page=None,
     ) -> tuple[list[dict], list[Path], str | None, dict, CacheMeta | None]:
         if guest_mode and self.platform != "douyin":
             raise ValueError("guest_mode 仅支持抖音平台")
@@ -104,6 +105,7 @@ class CommentCrawlerService:
             days=days,
             region=region,
             guest_mode=guest_mode,
+            existing_page=existing_page,
         )
         return results, outputs, diagnostic, session_meta, None
 

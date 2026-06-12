@@ -56,6 +56,34 @@ class DouyinSearchTool(DouyinJsApiTool):
         return (self.settings.douyin_home_url, self.settings.douyin_hot_url)
 
 
+    @staticmethod
+    def _search_nil_diagnostic(data: dict) -> str | None:
+        nil = data.get("search_nil_info")
+        if not isinstance(nil, dict):
+            return None
+        nil_type = str(nil.get("search_nil_type") or nil.get("search_nil_item") or "").strip()
+        if nil_type == "verify_check":
+            return (
+                "抖音搜索触发人机验证(verify_check)，Cookie 文件有效但当前会话未通过风控。"
+                "请用 show_browser=true 在 VNC(6080) 完成验证后重试。"
+            )
+        if nil_type:
+            return f"抖音搜索无结果(search_nil={nil_type})，请换关键词或在 VNC 手动搜索。"
+        return None
+
+    @staticmethod
+    def _record_search_nil(data: dict, search_hints: dict[str, str] | None) -> None:
+        if search_hints is None:
+            return
+        diagnostic = DouyinSearchTool._search_nil_diagnostic(data)
+        if not diagnostic:
+            return
+        nil = data.get("search_nil_info") if isinstance(data.get("search_nil_info"), dict) else {}
+        nil_type = str(nil.get("search_nil_type") or nil.get("search_nil_item") or "").strip()
+        if nil_type:
+            search_hints["nil_type"] = nil_type
+        search_hints["diagnostic"] = diagnostic
+
     async def _thin_browser_keyword_search(
         self,
         page,
@@ -71,6 +99,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         await self.warmup_for_js_api(page, captured_api_urls)
         comment_template = await self.pick_api_template_url(page, captured_api_urls)
         api_items: dict[str, dict] = {}
+        search_hints: dict[str, str] = {}
         nav_result = await self._search_videos_via_thin_nav(
             page,
             filters,
@@ -78,17 +107,20 @@ class DouyinSearchTool(DouyinJsApiTool):
             api_items,
             captured_api_urls,
             template_url=comment_template,
+            search_hints=search_hints,
         )
         if not nav_result:
             search_template = await self.pick_api_template_url(page, captured_api_urls) or comment_template
             js_result = await self._search_videos_via_js_api(
-                page, filters, limit, search_template, api_items, max_attempts=1
+                page, filters, limit, search_template, api_items, max_attempts=1, search_hints=search_hints
             )
             nav_result = js_result
         if nav_result:
             await self._restore_comment_api_context(page, comment_template)
             return nav_result[0], nav_result[1], comment_template
         await self._restore_comment_api_context(page, comment_template)
+        if search_hints.get("diagnostic"):
+            return [], search_hints["diagnostic"], comment_template
         return (
             [],
             "薄浏览器搜索未返回视频，请确认 Cookie 有效或在 VNC 手动搜索后设 show_browser=true。",
@@ -108,8 +140,10 @@ class DouyinSearchTool(DouyinJsApiTool):
 
     async def search_videos_from_existing_page(self, page, keyword: str, limit: int) -> tuple[list[str], str | None]:
         api_aweme_ids: list[str] = []
+        verify_diagnostic: str | None = None
 
         async def on_response(resp):
+            nonlocal verify_diagnostic
             try:
                 url = resp.url
                 if "/aweme/v1/web/" not in url or "search" not in url:
@@ -117,6 +151,8 @@ class DouyinSearchTool(DouyinJsApiTool):
                 data = await resp.json()
             except Exception:
                 return
+            if not verify_diagnostic:
+                verify_diagnostic = self._search_nil_diagnostic(data)
             for vid in self._extract_aweme_ids_from_json(data):
                 if vid not in api_aweme_ids:
                     api_aweme_ids.append(vid)
@@ -125,16 +161,24 @@ class DouyinSearchTool(DouyinJsApiTool):
 
         page.on("response", on_response)
         try:
-            search_input = page.locator('[data-e2e="searchbar-input"]').first
-            if await search_input.count() > 0:
-                await search_input.click(force=True)
-                await search_input.fill(keyword)
-                btn = page.locator('[data-e2e="searchbar-button"]').first
-                if await btn.count() > 0:
-                    await btn.click(force=True)
-            # wait up to ~5 min for either links or captured ids
+            search_url = f"https://www.douyin.com/search/{_encode_search_keyword(keyword)}?type=video"
+            if "/search/" not in (page.url or ""):
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(2000)
+            else:
+                search_input = page.locator('[data-e2e="searchbar-input"]').first
+                if await search_input.count() > 0:
+                    await search_input.click(force=True)
+                    await search_input.fill(keyword)
+                    btn = page.locator('[data-e2e="searchbar-button"]').first
+                    if await btn.count() > 0:
+                        await btn.click(force=True)
+            # wait up to ~2 min for links / API ids / user verify
             links: list[str] = []
-            for _ in range(100):
+            for _ in range(40):
+                if verify_diagnostic and "verify_check" in verify_diagnostic:
+                    if await self._is_captcha_page(page):
+                        return [], verify_diagnostic
                 links = await page.locator('a[href*="/video/"]').evaluate_all("els => els.map(e => e.href)")
                 if links or api_aweme_ids:
                     break
@@ -153,6 +197,8 @@ class DouyinSearchTool(DouyinJsApiTool):
                     break
             if uniq:
                 return uniq, "已复用服务器可见浏览器会话提取到视频并自动抓取评论。"
+            if verify_diagnostic:
+                return [], verify_diagnostic
             if await self._is_captcha_page(page):
                 return [], "可见浏览器当前仍在验证码中间页，未提取到可用视频。请先在该窗口完成人工操作。"
             return [], "可见浏览器会话未检测到视频结果，请重试搜索词或重新触发搜索。"
@@ -227,6 +273,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         captured_api_urls: list[str],
         *,
         template_url: str,
+        search_hints: dict[str, str] | None = None,
     ) -> tuple[list[str], str | None] | None:
         """主路径：搜索页建立上下文 → 触发已签名 search 请求 → response 拦截解析。"""
         keyword = filters.composed_keyword()
@@ -234,7 +281,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         target_count = max(limit * fetch_multiplier(filters), 15)
         processed_responses: set[int] = set()
         listener, pending_tasks = self._make_search_response_listener(
-            api_items, target_count, captured_api_urls, processed_responses
+            api_items, target_count, captured_api_urls, processed_responses, search_hints
         )
         page.on("response", listener)
         try:
@@ -251,6 +298,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                     pending_tasks,
                     processed_responses,
                     target_count=target_count,
+                    search_hints=search_hints,
                 )
             await self._wait_search_ingest(
                 page, pending_tasks, api_items, target_count=limit, rounds=12
@@ -269,6 +317,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                     processed_responses,
                     target_count=target_count,
                     offset=10,
+                    search_hints=search_hints,
                 )
                 await self._wait_search_ingest(
                     page, pending_tasks, api_items, target_count=limit, rounds=8
@@ -301,6 +350,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         *,
         target_count: int,
         offset: int = 0,
+        search_hints: dict[str, str] | None = None,
     ) -> None:
         """仅触发 fetch，不在 evaluate 内解析；响应由监听器拦截。"""
         keyword = filters.composed_keyword()
@@ -334,6 +384,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                     captured_api_urls,
                     target_count,
                     processed_responses,
+                    search_hints,
                 )
             except Exception:
                 await page.evaluate(_FIRE_FETCH_JS, {"url": url, "timeoutMs": 15000})
@@ -375,6 +426,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         target_count: int,
         captured_api_urls: list[str],
         processed_responses: set[int],
+        search_hints: dict[str, str] | None = None,
     ) -> tuple[object, list[asyncio.Task]]:
         pending_tasks: list[asyncio.Task] = []
 
@@ -389,6 +441,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                         captured_api_urls,
                         target_count,
                         processed_responses,
+                        search_hints,
                     )
                 )
             )
@@ -403,6 +456,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         captured_api_urls: list[str],
         target_count: int,
         processed_responses: set[int],
+        search_hints: dict[str, str] | None = None,
     ) -> None:
         if id(resp) in processed_responses:
             return
@@ -420,6 +474,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         if not isinstance(data, dict):
             return
         processed_responses.add(id(resp))
+        self._record_search_nil(data, search_hints)
         for row in self._extract_aweme_items_from_json(data):
             api_items.setdefault(row["aweme_id"], row)
             if len(api_items) >= target_count:
@@ -495,6 +550,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         api_items: dict[str, dict],
         *,
         max_attempts: int = 6,
+        search_hints: dict[str, str] | None = None,
     ) -> tuple[list[str], str | None] | None:
         """兜底：fetch 搜索 API（部分环境缺 a_bogus 会挂起，仅少量尝试）。"""
         keyword = filters.composed_keyword()
@@ -522,6 +578,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 data = await self.fetch_json_via_page(page, url, timeout_ms=8000)
                 if not data:
                     continue
+                self._record_search_nil(data, search_hints)
                 status_code = data.get("status_code")
                 if status_code not in (None, 0):
                     continue
