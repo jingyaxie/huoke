@@ -243,6 +243,8 @@ class SkillExecutor:
             return await self._execute_follow(params, action="unfollow")
         if handler == "send_dm":
             return await self._execute_send_dm(params)
+        if handler == "reply_comment":
+            return await self._execute_reply_comment(skill, params)
         if handler == "crawl_video_comments":
             video_url = params.get("video_url") or params.get("url") or params.get("note_url")
             if not video_url:
@@ -508,6 +510,67 @@ class SkillExecutor:
             "message": dm,
             "output_file": result.get("output_file"),
             "error": None if ok else dm.get("error") or dm.get("hint"),
+        }
+
+    async def _execute_reply_comment(self, skill: SkillOut, params: dict[str, Any]) -> dict[str, Any]:
+        comment_id = str(params.get("comment_id") or "").strip()
+        reply_text = str(params.get("reply_text") or params.get("message") or "").strip()
+        if not comment_id:
+            return {"error": "缺少 comment_id", "status": "failed"}
+        if not reply_text:
+            return {"error": "缺少 reply_text", "status": "failed"}
+        if self.db_session is None:
+            return {"error": "回复评论需要数据库会话", "status": "failed"}
+
+        from app.services.comment_reply_service import CommentReplyService
+
+        service = CommentReplyService(
+            self.settings,
+            tenant_id=self.tenant_id,
+            platform=self.platform,
+            session=self.db_session,
+            account_id=self.session.account_id,
+        )
+        try:
+            result = await service.reply_comment(
+                comment_id=comment_id,
+                reply_text=reply_text,
+                content_id=str(params.get("content_id") or "") or None,
+                comment_text=str(params.get("comment_text") or params.get("comment_hint") or "") or None,
+                video_url=str(params.get("video_url") or "") or None,
+                note_url=str(params.get("note_url") or "") or None,
+                content_url=str(params.get("content_url") or "") or None,
+                photo_author_id=str(params.get("photo_author_id") or "") or None,
+                show_browser=bool(params.get("show_browser", False)),
+            )
+        except LoginRequiredError as exc:
+            return {"error": str(exc), "status": "failed"}
+        except ValueError as exc:
+            return {"error": str(exc), "status": "failed"}
+
+        ok = result.get("status") == "completed"
+        summary = (
+            f"已回复评论 {comment_id}"
+            if ok
+            else f"回复评论失败：{result.get('error') or 'unknown'}"
+        )
+        return {
+            "skill_id": skill.id,
+            "skill_name": skill.name,
+            "type": "builtin",
+            "handler": "reply_comment",
+            "status": result.get("status") or ("completed" if ok else "failed"),
+            "summary": summary,
+            "platform": self.platform,
+            "comment_id": comment_id,
+            "content_id": result.get("content_id"),
+            "content_url": result.get("content_url"),
+            "reply_text": reply_text,
+            "target_comment_text": result.get("target_comment_text"),
+            "capture_method": result.get("capture_method"),
+            "reply": result.get("reply"),
+            "output_file": result.get("output_file"),
+            "error": result.get("error"),
         }
 
 

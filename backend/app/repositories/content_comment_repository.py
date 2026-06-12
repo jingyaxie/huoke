@@ -99,6 +99,40 @@ class ContentCommentRepository(BaseRepository):
             .limit(1)
         )
 
+    def find_comment_record(
+        self,
+        *,
+        platform: str,
+        comment_id: str,
+        content_id: str | None = None,
+        comment_text: str | None = None,
+    ) -> ContentComment | None:
+        stmt = (
+            select(ContentComment)
+            .where(ContentComment.tenant_id == self.tenant_id)
+            .where(ContentComment.platform == platform)
+            .where(ContentComment.comment_id == comment_id)
+        )
+        if content_id:
+            stmt = stmt.where(ContentComment.content_id == content_id)
+        rows = list(self.session.scalars(stmt.order_by(ContentComment.last_seen_at.desc())).all())
+        if not rows and comment_text:
+            fuzzy = (
+                select(ContentComment)
+                .where(ContentComment.tenant_id == self.tenant_id)
+                .where(ContentComment.platform == platform)
+                .where(ContentComment.comment_text.contains(comment_text.strip()[:80]))
+            )
+            if content_id:
+                fuzzy = fuzzy.where(ContentComment.content_id == content_id)
+            rows = list(self.session.scalars(fuzzy.order_by(ContentComment.last_seen_at.desc()).limit(5)).all())
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]
+        with_url = [row for row in rows if row.content_url]
+        return with_url[0] if with_url else rows[0]
+
     def upsert_comment(
         self,
         *,

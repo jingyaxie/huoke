@@ -111,6 +111,30 @@
       "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
+      "id": "reply-comment",
+      "name": "回复评论",
+      "description": "从 DB 定位评论所属视频/笔记，打开内容页后直接调用页面 JS 接口回复（builtin，全平台）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "comment_id", "type": "string", "description": "目标评论 ID（必填；优先从 DB 定位 content_url）", "required": true},
+        {"name": "reply_text", "type": "string", "description": "回复内容", "required": true},
+        {"name": "content_id", "type": "string", "description": "内容 ID（可选，缩小 DB 查询）", "required": false},
+        {"name": "comment_text", "type": "string", "description": "评论原文（可选，辅助 DB 定位）", "required": false},
+        {"name": "comment_hint", "type": "string", "description": "同 comment_text（兼容旧参数）", "required": false},
+        {"name": "video_url", "type": "string", "description": "视频链接（DB 无记录时必填）", "required": false},
+        {"name": "note_url", "type": "string", "description": "笔记链接（DB 无记录时必填）", "required": false},
+        {"name": "photo_author_id", "type": "string", "description": "快手视频作者 ID（可选，无法自动解析时传入）", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
+      ],
+      "content": "流程：content_comments 表按 comment_id 定位 content_url → 直接打开该视频/笔记页 → 调用 comment/publish 或 comment/post 或 visionAddComment 接口，无需翻页找评论。",
+      "actions": [],
+      "builtin_handler": "reply_comment",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
       "id": "douyin-keyword-comments",
       "name": "抖音关键词视频+评论",
       "description": "热榜入口→搜索→逐条抓评论，一键 builtin",
@@ -291,19 +315,22 @@
     {
       "id": "douyin-reply-comment",
       "name": "抖音回复评论",
-      "description": "在视频页回复指定评论（Agent 手动任务）",
-      "type": "instruction",
+      "description": "回复抖音视频下指定评论（builtin，同 reply-comment；优先用 comment_id + DB 定位）",
+      "type": "builtin",
       "enabled": true,
-      "disable_model_invocation": true,
       "scope": "global",
       "parameters": [
-        {"name": "comment_hint", "type": "string", "description": "目标评论定位", "required": true},
+        {"name": "comment_id", "type": "string", "description": "目标评论 ID", "required": true},
         {"name": "reply_text", "type": "string", "description": "回复内容", "required": true},
-        {"name": "video_url", "type": "string", "description": "视频链接", "required": false}
+        {"name": "comment_hint", "type": "string", "description": "评论原文（辅助 DB 定位）", "required": false},
+        {"name": "comment_text", "type": "string", "description": "同 comment_hint", "required": false},
+        {"name": "video_url", "type": "string", "description": "视频链接（DB 无记录时必填）", "required": false},
+        {"name": "content_id", "type": "string", "description": "aweme_id（可选）", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器", "required": false, "default": false}
       ],
-      "content": "定位评论 {{comment_hint}} → 回复 {{reply_text}} → task_complete",
+      "content": "同 reply-comment：DB 定位 → 打开视频页 → POST /aweme/v1/web/comment/publish/（reply_id=comment_id）。勿 browser 翻页找评论。",
       "actions": [],
-      "builtin_handler": null,
+      "builtin_handler": "reply_comment",
       "created_at": "2026-06-01T23:10:35.567157+00:00",
       "updated_at": "2026-06-12T00:00:00.000000+00:00"
     }

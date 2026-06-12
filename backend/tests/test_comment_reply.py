@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.core.config import Settings
+from app.db.base import Base
+from app.models.content_comment import ContentComment
+from app.platforms.kuaishou.reply_comment import _walk_photo_author_id
+from app.repositories.content_comment_repository import ContentCommentRepository
+from app.schemas.skill import BUILTIN_HANDLERS
+from app.services.comment_reply_service import CommentReplyService
+
+
+@pytest.fixture()
+def db_session():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _insert_comment(session, **overrides):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row = ContentComment(
+        tenant_id="default",
+        platform="douyin",
+        content_id="7648234202216192997",
+        comment_id="7650081143698572051",
+        parent_comment_id=None,
+        nickname="测试用户",
+        comment_text="太快了对面伸手戳到眼睛怎么办",
+        digg_count=0,
+        create_time=1710000000,
+        content_url="https://www.douyin.com/video/7648234202216192997",
+        raw_data={"aweme_id": "7648234202216192997"},
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+    for key, value in overrides.items():
+        setattr(row, key, value)
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_builtin_handlers_include_reply_comment():
+    assert "reply_comment" in BUILTIN_HANDLERS
+
+
+def test_global_skills_include_reply_comment():
+    path = Path(__file__).resolve().parents[1] / "storage" / "skills" / "global.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in payload.get("skills", [])}
+    assert by_id["reply-comment"]["type"] == "builtin"
+    assert by_id["reply-comment"]["builtin_handler"] == "reply_comment"
+    assert by_id["douyin-reply-comment"]["builtin_handler"] == "reply_comment"
+    assert by_id["douyin-reply-comment"].get("disable_model_invocation") is not True
+
+
+def test_find_comment_record_by_comment_id(db_session):
+    _insert_comment(db_session)
+    repo = ContentCommentRepository(db_session, "default")
+    row = repo.find_comment_record(platform="douyin", comment_id="7650081143698572051")
+    assert row is not None
+    assert row.content_id == "7648234202216192997"
+    assert "7648234202216192997" in (row.content_url or "")
+
+
+def test_resolve_target_from_db(db_session):
+    _insert_comment(db_session)
+    service = CommentReplyService(
+        Settings(),
+        tenant_id="default",
+        platform="douyin",
+        session=db_session,
+    )
+    target = service.resolve_target(comment_id="7650081143698572051")
+    assert not isinstance(target, dict)
+    assert target.content_id == "7648234202216192997"
+    assert target.content_url.endswith("7648234202216192997")
+
+
+def test_resolve_target_with_url_when_db_missing(db_session):
+    service = CommentReplyService(
+        Settings(),
+        tenant_id="default",
+        platform="douyin",
+        session=db_session,
+    )
+    target = service.resolve_target(
+        comment_id="999",
+        video_url="https://www.douyin.com/video/7648234202216192997",
+    )
+    assert not isinstance(target, dict)
+    assert target.content_id == "7648234202216192997"
+
+
+def test_resolve_target_fails_without_db_or_url(db_session):
+    service = CommentReplyService(
+        Settings(),
+        tenant_id="default",
+        platform="douyin",
+        session=db_session,
+    )
+    result = service.resolve_target(comment_id="999")
+    assert isinstance(result, dict)
+    assert result.get("status") == "failed"
+
+
+def test_walk_photo_author_id_from_graphql_payload():
+    payload = {
+        "data": {
+            "visionVideoDetail": {
+                "photo": {
+                    "id": "3xabc123",
+                    "author": {"id": "123456789"},
+                }
+            }
+        }
+    }
+    assert _walk_photo_author_id(payload, "3xabc123") == "123456789"

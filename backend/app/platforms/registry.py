@@ -107,6 +107,24 @@ def get_dm_tool(settings: Settings, platform: str, tenant_id: str, account_id: s
     raise ValueError(f"平台 {platform} 尚未实现私信工具")
 
 
+def get_reply_comment_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
+    platform = normalize_platform(platform)
+    store = get_session_store(settings, platform)
+    if platform == "douyin":
+        from app.platforms.douyin.reply_comment import DouyinReplyCommentTool
+
+        return DouyinReplyCommentTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "xiaohongshu":
+        from app.platforms.xiaohongshu.reply_comment import XhsReplyCommentTool
+
+        return XhsReplyCommentTool(settings, tenant_id, store, account_id=account_id)
+    if platform == "kuaishou":
+        from app.platforms.kuaishou.reply_comment import KuaishouReplyCommentTool
+
+        return KuaishouReplyCommentTool(settings, tenant_id, store, account_id=account_id)
+    raise ValueError(f"平台 {platform} 尚未实现回复评论工具")
+
+
 def get_qr_login_tool(settings: Settings, platform: str, tenant_id: str, account_id: str = "default"):
     platform = normalize_platform(platform)
     store = get_session_store(settings, platform)
@@ -164,16 +182,16 @@ def list_platforms() -> list[dict]:
         {
             "id": "douyin",
             "name": "抖音",
-            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "account_dashboard"],
+            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "reply_comment", "account_dashboard"],
         },
         {
             "id": "xiaohongshu",
             "name": "小红书",
-            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "account_dashboard"],
+            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "reply_comment", "account_dashboard"],
         },
         {
             "id": "kuaishou",
             "name": "快手",
-            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "account_bind", "account_dashboard"],
+            "capabilities": ["hot", "comments", "login", "qr_login", "keyword_search", "follow", "dm", "reply_comment", "account_bind", "account_dashboard"],
         },
     ]

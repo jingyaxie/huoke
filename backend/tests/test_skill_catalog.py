@@ -13,6 +13,7 @@ def test_global_skills_has_core_builtin_handlers():
     for required in (
         "follow_user",
         "send_dm",
+        "reply_comment",
         "pipeline_keyword_comments",
         "crawl_keyword_comments",
     ):
@@ -22,3 +23,4 @@ def test_global_skills_has_core_builtin_handlers():
 def test_builtin_handlers_registry_matches_code():
     assert "pipeline_keyword_comments" in BUILTIN_HANDLERS
     assert "follow_user" in BUILTIN_HANDLERS
+    assert "reply_comment" in BUILTIN_HANDLERS

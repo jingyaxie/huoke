@@ -20,6 +20,7 @@ BUILTIN_HANDLERS = {
     "follow_user": "关注用户",
     "unfollow_user": "取消关注用户",
     "send_dm": "发送私信",
+    "reply_comment": "回复评论（DB 定位 + 页面 JS 接口）",
     "pipeline_keyword_comments": "Pipeline：关键词内容+评论（含兜底）",
 }
 
