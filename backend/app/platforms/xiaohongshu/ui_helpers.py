@@ -4,7 +4,9 @@ import json
 import logging
 from typing import Any
 
-from playwright.async_api import Page
+from playwright.async_api import BrowserContext, Page
+
+from app.platforms.session_store import PlatformSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -127,28 +129,69 @@ async def dismiss_login_overlay(page: Page) -> dict[str, Any]:
     return result
 
 
-async def activate_session(page: Page) -> dict[str, Any]:
-    """用已登录 Cookie 激活小红书 Web 会话。"""
+async def fetch_user_me(page: Page) -> dict[str, Any]:
+    """读取 /user/me，用于区分扫码用户与游客态。"""
     try:
-        response = await page.goto(LOGIN_ACTIVATE_URL, wait_until="commit", timeout=15000)
-        status = response.status if response else 0
-        body = ""
-        if response:
-            try:
-                body = await response.text()
-            except Exception:
-                body = ""
-        if body:
-            try:
-                parsed = json.loads(body)
-                if isinstance(parsed, dict):
-                    return {"ok": status == 200, "status": status, "data": parsed}
-            except Exception:
-                return {"ok": status == 200, "status": status, "raw": body[:200]}
-        return {"ok": status == 200, "status": status}
+        data = await page.evaluate(
+            """async () => {
+                const resp = await fetch('https://edith.xiaohongshu.com/api/sns/web/v2/user/me', {
+                    credentials: 'include',
+                });
+                const text = await resp.text();
+                try {
+                    return { status: resp.status, body: JSON.parse(text) };
+                } catch {
+                    return { status: resp.status, raw: text.slice(0, 300) };
+                }
+            }"""
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "invalid_user_me"}
+    body = data.get("body") if isinstance(data.get("body"), dict) else {}
+    inner = body.get("data") if isinstance(body.get("data"), dict) else {}
+    guest = inner.get("guest")
+    return {
+        "ok": body.get("success") is True and body.get("code") == 0,
+        "guest": guest,
+        "user_id": inner.get("user_id"),
+        "status": data.get("status"),
+        "raw": body,
+    }
+
+
+async def activate_session(page: Page) -> dict[str, Any]:
+    """用已登录 Cookie 激活小红书 Web 会话（须在小红书页面上下文内 fetch）。"""
+    try:
+        data = await page.evaluate(
+            """async () => {
+                const resp = await fetch('https://edith.xiaohongshu.com/api/sns/web/v1/login/activate', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json;charset=UTF-8',
+                        'Accept': 'application/json, text/plain, */*',
+                    },
+                    body: '{}',
+                });
+                const text = await resp.text();
+                try {
+                    return { status: resp.status, body: JSON.parse(text) };
+                } catch {
+                    return { status: resp.status, raw: text.slice(0, 300) };
+                }
+            }"""
+        )
     except Exception as exc:
         logger.debug("xhs activate_session failed: %s", exc)
         return {"ok": False, "error": str(exc)}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "invalid_activate_response"}
+    body = data.get("body") if isinstance(data.get("body"), dict) else {}
+    status = int(data.get("status") or 0)
+    ok = status == 200 and (body.get("success") is True or body.get("code") == 0)
+    return {"ok": ok, "status": status, "data": body or data}
 
 
 async def prepare_logged_in_page(page: Page) -> dict[str, Any]:
@@ -157,4 +200,68 @@ async def prepare_logged_in_page(page: Page) -> dict[str, Any]:
     activate = await activate_session(page)
     if dismiss.get("had_modal"):
         dismiss = await dismiss_login_overlay(page)
-    return {"dismiss": dismiss, "activate": activate}
+    user_me = await fetch_user_me(page)
+    return {"dismiss": dismiss, "activate": activate, "user_me": user_me}
+
+
+async def ensure_logged_in_user(page: Page) -> dict[str, Any]:
+    """确保非游客态；guest=true 时返回明确错误。"""
+    prep = await prepare_logged_in_page(page)
+    user_me = prep.get("user_me") if isinstance(prep.get("user_me"), dict) else {}
+    if user_me.get("guest") is False:
+        return {"ok": True, "user_id": user_me.get("user_id"), "prep": prep}
+    if user_me.get("guest") is True:
+        return {
+            "ok": False,
+            "error": "当前为小红书游客态(guest=true)，评论回复需要扫码登录真实账号，请重新绑定后再试",
+            "prep": prep,
+        }
+    return {
+        "ok": False,
+        "error": "无法确认小红书登录态，请重新扫码登录",
+        "prep": prep,
+    }
+
+
+async def should_persist_login(page: Page) -> bool:
+    """小红书仅有 Cookie 不够，须 user/me 返回 guest=false 才允许落盘。"""
+    try:
+        user_me = await fetch_user_me(page)
+    except Exception:
+        return False
+    return user_me.get("guest") is False
+
+
+async def save_login_if_authenticated(
+    page: Page,
+    context: BrowserContext,
+    store: PlatformSessionStore,
+    tenant_id: str,
+    account_id: str = "default",
+    *,
+    rebake_profile: bool = False,
+) -> dict[str, Any]:
+    """激活会话并仅在真实登录态时写入 storage_state；可选同步持久化 Profile。"""
+    login = await ensure_logged_in_user(page)
+    if not login.get("ok"):
+        return {"saved": False, **login}
+    path = await store.save_from_context(tenant_id, context, account_id)
+    from app.platforms.xiaohongshu.session_meta import record_authenticated_snapshot
+
+    await record_authenticated_snapshot(
+        store, tenant_id, account_id, page, user_id=login.get("user_id")
+    )
+    result: dict[str, Any] = {
+        "saved": True,
+        "ok": True,
+        "user_id": login.get("user_id"),
+        "path": str(path),
+        "prep": login.get("prep"),
+    }
+    if rebake_profile:
+        from app.platforms.xiaohongshu.persistence import rebake_persistent_profile
+
+        result["profile_sync"] = await rebake_persistent_profile(
+            store.settings, store, tenant_id, account_id
+        )
+    return result

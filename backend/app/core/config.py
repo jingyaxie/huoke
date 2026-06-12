@@ -33,8 +33,9 @@ class Settings(BaseSettings):
     douyin_hot_url: str = "https://www.douyin.com/hot"
     default_tenant_id: str = "default"
     default_platform: str = "douyin"
-    storage_root: Path = BASE_DIR / "storage"
-    douyin_profile_dir: Path = BASE_DIR / "storage" / "douyin" / "profile"
+    # 默认使用仓库根目录 storage/；Docker 通过 STORAGE_ROOT 指向独立挂载点，避免 backend/storage 遮蔽
+    storage_root: Path = Field(default_factory=lambda: ROOT_DIR / "storage")
+    douyin_profile_dir: Path | None = None
     douyin_vnc_url: str = "http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
     douyin_headless: bool = False
 
@@ -113,6 +114,15 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    root = settings.storage_root
+    settings.storage_root = root.resolve() if root.is_absolute() else (ROOT_DIR / root).resolve()
+    if settings.douyin_profile_dir is None:
+        settings.douyin_profile_dir = settings.storage_root / "douyin" / "profile"
+    else:
+        profile = settings.douyin_profile_dir
+        settings.douyin_profile_dir = (
+            profile.resolve() if profile.is_absolute() else (ROOT_DIR / profile).resolve()
+        )
     settings.storage_root.mkdir(parents=True, exist_ok=True)
     settings.douyin_profile_dir.mkdir(parents=True, exist_ok=True)
     settings.report_output_dir.mkdir(parents=True, exist_ok=True)

@@ -55,25 +55,65 @@ _BLOCKED_PROTOCOL_SCHEMES = (
     "bytedance",
     "douyin",
     "tiktok",
+    "sslocal",
+    "sslocalb",
+    "sslocalc",
+    "live",
+    "tt",
+    "intent",
+    "market",
+    "xhsdiscover",
+    "xhs",
+    "xiaohongshu",
+    "kwai",
+    "kuaishou",
+    "bitbrowser",
 )
+
+_LINUX_POLICY_DIR = Path("/etc/huoke/chrome-policies/managed")
+
+_PROTOCOL_LAUNCH_ARGS = (
+    "--disable-features=ExternalProtocolPrompt,ExternalProtocolDialogShowAlwaysOpenCheckbox",
+)
+
+
+def _linux_protocol_launch_args() -> list[str]:
+    args = list(_PROTOCOL_LAUNCH_ARGS)
+    if _LINUX_POLICY_DIR.is_dir():
+        args.append(f"--policy-path={_LINUX_POLICY_DIR}")
+    return args
 
 _EXTERNAL_PROTOCOL_GUARD_JS = """
 (() => {
-  const allowed = new Set(['http','https','about','data','blob','file','javascript']);
+  const allowed = new Set(['http','https','about','data','blob','file','javascript','chrome','ws','wss']);
   const isBlocked = (url) => {
     if (!url || typeof url !== 'string') return false;
     const m = url.match(/^([a-z][a-z0-9+.-]*):/i);
     if (!m) return false;
     return !allowed.has(m[1].toLowerCase());
   };
+  const blockNav = (url) => {
+    if (!isBlocked(url)) return false;
+    return true;
+  };
   const origOpen = window.open;
   window.open = function(url, ...rest) {
-    if (isBlocked(url)) return null;
+    if (blockNav(url)) return null;
     return origOpen.call(window, url, ...rest);
+  };
+  const origAssign = window.location.assign.bind(window.location);
+  window.location.assign = function(url) {
+    if (blockNav(url)) return;
+    return origAssign(url);
+  };
+  const origReplace = window.location.replace.bind(window.location);
+  window.location.replace = function(url) {
+    if (blockNav(url)) return;
+    return origReplace(url);
   };
   document.addEventListener('click', (ev) => {
     const el = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
-    if (el && isBlocked(el.getAttribute('href') || '')) {
+    if (el && blockNav(el.getAttribute('href') || '')) {
       ev.preventDefault();
       ev.stopImmediatePropagation();
     }
@@ -121,9 +161,44 @@ def seed_profile_protocol_prefs(profile_dir: Path) -> None:
     for scheme in _BLOCKED_PROTOCOL_SCHEMES:
         excluded[scheme] = True
     try:
+        local_state_path.parent.mkdir(parents=True, exist_ok=True)
         local_state_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
+    prefs_path = profile_dir / "Default" / "Preferences"
+    prefs: dict = {}
+    if prefs_path.exists():
+        try:
+            prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        except Exception:
+            prefs = {}
+    pref_handler = prefs.setdefault("protocol_handler", {})
+    pref_excluded = pref_handler.setdefault("excluded_schemes", {})
+    for scheme in _BLOCKED_PROTOCOL_SCHEMES:
+        pref_excluded[scheme] = True
+    custom_handlers = prefs.setdefault("custom_handlers", {})
+    custom_handlers["enabled"] = False
+    try:
+        prefs_path.parent.mkdir(parents=True, exist_ok=True)
+        prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+async def install_dialog_auto_dismiss(context: BrowserContext) -> None:
+    async def _dismiss(dialog) -> None:
+        try:
+            await dialog.dismiss()
+        except Exception:
+            pass
+
+    def _bind_page(page: Page) -> None:
+        page.on("dialog", lambda dialog: asyncio.create_task(_dismiss(dialog)))
+
+    context.on("page", _bind_page)
+    for page in context.pages:
+        _bind_page(page)
 
 
 async def install_external_protocol_guard(context: BrowserContext) -> None:
@@ -162,6 +237,7 @@ def launch_args(settings: Settings | None = None) -> list[str]:
     args = list(_BASE_LAUNCH_ARGS)
     if sys.platform.startswith("linux"):
         args.extend(_LINUX_LAUNCH_ARGS)
+        args.extend(_linux_protocol_launch_args())
     return args
 
 
@@ -314,11 +390,16 @@ def profile_dir_for(
     tenant_id: str,
     account_id: str = "default",
 ) -> Path:
+    from app.platforms.account_id import normalize_account_id
+    from app.platforms.tenant import normalize_tenant_id
+
+    safe = normalize_tenant_id(tenant_id)
+    account = normalize_account_id(account_id)
     if platform == "douyin":
         base = settings.douyin_profile_dir
     else:
         base = settings.storage_root / platform / "profile"
-    return base / tenant_id / account_id
+    return base / safe / account
 
 
 def persistent_profile_enabled(settings: Settings, platform: str) -> bool:
@@ -398,6 +479,42 @@ async def _seed_cookies_from_state(context: BrowserContext, state: dict | None) 
             pass
 
 
+async def _seed_local_storage_from_state(context: BrowserContext, state: dict | None) -> None:
+    if not state:
+        return
+    origins = state.get("origins") or []
+    if not origins:
+        return
+    page = context.pages[0] if context.pages else await context.new_page()
+    for entry in origins:
+        if not isinstance(entry, dict):
+            continue
+        origin = str(entry.get("origin") or "").strip()
+        items = entry.get("localStorage") or []
+        if not origin or not items:
+            continue
+        try:
+            await page.goto(origin, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(400)
+            await page.evaluate(
+                """(entries) => {
+                    for (const item of entries) {
+                        if (!item || item.name == null) continue;
+                        localStorage.setItem(String(item.name), String(item.value ?? ''));
+                    }
+                }""",
+                items,
+            )
+        except Exception:
+            continue
+
+
+async def _seed_storage_from_state(context: BrowserContext, state: dict | None) -> None:
+    """把 storage_state.json 的 Cookie 与 localStorage 同步进持久化 Profile。"""
+    await _seed_cookies_from_state(context, state)
+    await _seed_local_storage_from_state(context, state)
+
+
 async def launch_persistent_context(
     playwright: Playwright,
     settings: Settings,
@@ -438,7 +555,7 @@ async def launch_persistent_context(
         raise last_error from None  # type: ignore[misc]
 
     await apply_stealth(context, settings, tenant_id=tenant_id)
-    await _seed_cookies_from_state(context, state)
+    await _seed_storage_from_state(context, state)
     return context
 
 
@@ -604,6 +721,7 @@ async def apply_stealth(
     tenant_id: str | None = None,
 ) -> None:
     await install_external_protocol_guard(context)
+    await install_dialog_auto_dismiss(context)
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if ctx.stealth_enabled:
         await context.add_init_script(stealth_init_script(settings))
@@ -801,6 +919,9 @@ def require_login(
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if not ctx.require_login:
         return
+    if hasattr(store, "is_usable") and callable(getattr(store, "is_usable")):
+        if store.is_usable(tenant_id, account_id):
+            return
     state = store.load(tenant_id, account_id)
     if store.is_ready(state):
         return

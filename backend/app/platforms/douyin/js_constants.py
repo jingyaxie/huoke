@@ -10,6 +10,7 @@ _SEARCH_API_EXCLUDES = ("hot/search", "search/sug", "suggest_words", "api/sugges
 
 COMMENT_PATH = "/aweme/v1/web/comment/list"
 REPLY_COMMENT_PATH = "/aweme/v1/web/comment/list/reply"
+COMMENT_PUBLISH_PATH = "/aweme/v1/web/comment/publish/"
 SEARCH_SINGLE_PATH = "/aweme/v1/web/general/search/single/"
 SEARCH_ITEM_PATH = "/aweme/v1/web/search/item/"
 DROP_QUERY_KEYS = {"a_bogus", "x-secsdk-web-signature", "msToken"}

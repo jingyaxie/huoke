@@ -15,20 +15,59 @@ from app.platforms.xiaohongshu.js_constants import (
 from app.platforms.xiaohongshu.session import XhsSessionStore
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-_POST_JSON_JS = """async ({ url, body, timeoutMs }) => {
+_POST_SIGNED_JSON_JS = """async ({ path, payload, referer, timeoutMs }) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+        if (typeof window._webmsxyw !== 'function') {
+            return { error: 'missing_webmsxyw_signer' };
+        }
+        const sign = await window._webmsxyw(path, payload);
+        const url = path.startsWith('http') ? path : ('https://edith.xiaohongshu.com' + path);
+        const headers = {
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Accept': 'application/json, text/plain, */*',
+            'Origin': 'https://www.xiaohongshu.com',
+            'Referer': referer,
+            'X-s': sign['X-s'],
+            'X-t': String(sign['X-t']),
+        };
         const resp = await fetch(url, {
             method: 'POST',
             credentials: 'include',
-            headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+        });
+        const text = await resp.text();
+        if (!text) return { status: resp.status };
+        try { return { ...JSON.parse(text), status: resp.status }; } catch { return { raw: text.slice(0, 300), status: resp.status }; }
+    } catch (error) { return { error: String(error) }; }
+    finally { clearTimeout(timer); }
+}"""
+
+_POST_JSON_JS = """async ({ url, body, referer, timeoutMs }) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const headers = {
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Accept': 'application/json, text/plain, */*',
+        };
+        if (referer) {
+            headers.Origin = 'https://www.xiaohongshu.com';
+            headers.Referer = referer;
+        }
+        const resp = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
             body,
             signal: controller.signal,
         });
         const text = await resp.text();
-        if (!text) return {};
-        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 300) }; }
+        if (!text) return { status: resp.status };
+        try { return { ...JSON.parse(text), status: resp.status }; } catch { return { raw: text.slice(0, 300), status: resp.status }; }
     } catch (error) { return { error: String(error) }; }
     finally { clearTimeout(timer); }
 }"""
@@ -138,12 +177,52 @@ class XhsJsApiTool:
             return {}
         return data if isinstance(data, dict) else {}
 
-    async def post_json_via_page(self, page, url: str, payload: dict, *, timeout_ms: int = 15000) -> dict:
+    async def post_signed_json_via_page(
+        self,
+        page,
+        path: str,
+        payload: dict,
+        *,
+        timeout_ms: int = 15000,
+        referer: str | None = None,
+    ) -> dict:
+        """经页面 _webmsxyw 签名后 POST（comment/post 等接口必需）。"""
+        try:
+            data = await asyncio.wait_for(
+                page.evaluate(
+                    _POST_SIGNED_JSON_JS,
+                    {
+                        "path": path,
+                        "payload": payload,
+                        "timeoutMs": timeout_ms,
+                        "referer": referer or page.url or self.settings.xhs_explore_url,
+                    },
+                ),
+                timeout=timeout_ms / 1000 + 5,
+            )
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    async def post_json_via_page(
+        self,
+        page,
+        url: str,
+        payload: dict,
+        *,
+        timeout_ms: int = 15000,
+        referer: str | None = None,
+    ) -> dict:
         try:
             data = await asyncio.wait_for(
                 page.evaluate(
                     _POST_JSON_JS,
-                    {"url": url, "body": json.dumps(payload, ensure_ascii=False), "timeoutMs": timeout_ms},
+                    {
+                        "url": url,
+                        "body": json.dumps(payload, ensure_ascii=False),
+                        "timeoutMs": timeout_ms,
+                        "referer": referer or page.url or self.settings.xhs_explore_url,
+                    },
                 ),
                 timeout=timeout_ms / 1000 + 5,
             )

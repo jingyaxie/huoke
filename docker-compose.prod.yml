@@ -1,16 +1,18 @@
 # 生产环境：仅本机监听，由宿主机 Nginx 对外暴露
 services:
   mysql:
-    ports:
-      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    # backend 通过 Docker 网络 mysql:3306 访问，不占用宿主机 3306
+    ports: !override []
 
   backend:
-    ports:
+    ports: !override
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
       - "127.0.0.1:${VNC_PORT:-6080}:6080"
     environment:
       UVICORN_RELOAD: "0"
 
   frontend_prod:
-    ports:
+    ports: !override
       - "127.0.0.1:${FRONTEND_PROD_PORT:-5174}:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro

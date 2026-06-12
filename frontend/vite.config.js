@@ -19,6 +19,11 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/vnc/, ""),
       },
+      "/websockify": {
+        target: "http://backend:6080",
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 });

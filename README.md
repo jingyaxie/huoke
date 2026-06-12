@@ -124,35 +124,37 @@ docker compose restart backend
 
 ### 后端双镜像分层（依赖层 + 业务层）
 
-后端已拆为两层镜像：
+后端拆为两层镜像，发布脚本会**按需**构建/上传：
 
-1. `douyin-backend-base:py312`：系统包 + Python 依赖 + Playwright Chromium
-2. `douyin-backend-app:latest`：业务代码层
+| 镜像 | 内容 | 何时重建/上传 |
+|------|------|----------------|
+| `douyin-backend-base:py312` | apt + pip + Playwright | `requirements.txt` / `Dockerfile` 变更 |
+| `douyin-backend-app:latest` | 仅业务代码 | 每次发版（秒级 build） |
 
-首次或依赖变更时：
+本地手动构建：
 
 ```bash
+# 首次或依赖变更：构建依赖层（慢，约 10–20 分钟）
 docker compose --profile build build backend_base
-docker compose build backend
-docker compose up -d backend
+# 或
+./scripts/build_prod_images_local.sh backend-base
+
+# 日常发版：只打业务层（快，约 10–30 秒）
+BUILD_BACKEND_BASE=0 ./scripts/build_prod_images_local.sh backend-app
+docker compose build backend   # 本地 dev 同样走 Dockerfile.app 逻辑
 ```
 
-仅改后端业务代码时（不改 `requirements.txt`）：
+**BuildKit 本地缓存**：构建缓存写入 `.docker-build-cache/`（已 gitignore），重复 build 时 pip/apt/playwright 不会从零下载。
+
+**上传优化**：`deploy_local_images.sh` 会对比服务器镜像 ID，未变化则跳过上传；依赖层未变更时不上传 base 镜像。
+
+推荐发版：
 
 ```bash
-docker compose build backend
-docker compose up -d --no-deps backend
+./scripts/deploy_local_images.sh   # 自动：依赖未变则只 build/push 业务层
 ```
 
-### 关于“每次都在下载依赖”的说明
-
-如果看到 backend 构建时反复执行 `playwright install chromium`，通常是因为触发了 backend 重新 build，而不是缓存完全失效。
-
-建议：
-
-1. 前端改动时只更新 frontend（`--no-deps frontend`），不要带动 backend 重建。
-2. 后端仅代码改动时只更新 backend（`--no-deps backend`）。
-3. 网络不稳定时，`playwright install chromium` 可能因 DNS/超时失败（如 `EAI_AGAIN`），此时先避免全量 rebuild，优先走增量更新。
+说明：`docker save | ssh docker load` 仍会传输 tar 流；若服务器已有相同 layer，load 时会跳过写入，但网络传输量仍偏大。后续可接私有镜像仓库实现真正的增量 push。
 
 ### 开发模式（改完自动生效）
 
@@ -186,21 +188,26 @@ docker compose --profile prod up -d --build frontend_prod
 cp .env.deploy.example .env.deploy.local
 # 填写 PROD_SSH_HOST / PROD_SSH_USER / PROD_SSH_PASSWORD
 
-# 发布（默认自动：仅改业务代码时跳过 docker build，约 1–3 分钟）
+# 发布（默认 auto：只 rsync + 重启，不打包不上传）
 ./scripts/deploy_backend_prod.sh
 
-# 或显式选择模式
-./scripts/deploy_fast.sh    # 快速：上传 + 重启，不装 apt/pip/playwright
-./scripts/deploy_full.sh    # 全量：重建镜像（改 Dockerfile/requirements 后）
+# 或显式快速发版（推荐）
+./scripts/deploy_fast.sh
+
+# 仅首次部署 / requirements.txt 变更后（本地打镜像上传）
+./scripts/deploy_local_images.sh
+
+# 在服务器全量重建镜像
+./scripts/deploy_full.sh
 ```
 
 发布模式说明：
 
 | 命令 | 何时用 | 耗时 |
 |------|--------|------|
-| `deploy_backend_prod.sh`（默认 auto） | 日常发版；自动检测 `Dockerfile`/`requirements.txt` 等是否变更 | 通常快 |
-| `deploy_fast.sh` / `--fast` | 确定只改了 `backend/app`、前端源码 | ~1–3 分钟 |
-| `deploy_full.sh` / `--full` | 改了依赖、Dockerfile、Playwright/VNC 相关 | ~10–30 分钟 |
+| `deploy_fast.sh` / `--fast` / `--auto`（业务代码） | **日常发版**，rsync + 重启 | ~1–3 分钟 |
+| `deploy_local_images.sh` | 首次部署或 `requirements.txt` 变更 | 视网络 |
+| `deploy_full.sh` / `--full` | 在服务器重建镜像 | ~10–30 分钟 |
 
 兼容旧环境变量：`SKIP_BUILD=1` 等同 `--fast`。
 

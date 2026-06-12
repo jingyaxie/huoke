@@ -29,8 +29,12 @@
 
       <div class="qr-login-actions">
         <el-button :loading="loading" @click="refreshQr">刷新二维码</el-button>
+        <el-button v-if="vncUrl" @click="$emit('open-vnc-login')">打开 VNC 登录</el-button>
         <el-button @click="handleClose">取消</el-button>
       </div>
+      <p v-if="vncUrl" class="qr-login-vnc-hint">
+        若二维码无法显示、或状态「已登录」但任务仍提示未登录，请用 VNC 查看真实浏览器界面（常见原因：Cookie 过期、Profile 不同步）。
+      </p>
     </div>
   </div>
 </template>
@@ -48,9 +52,10 @@ const props = defineProps({
   platform: { type: String, required: true },
   platformLabel: { type: String, default: "" },
   tenantId: { type: String, default: "" },
+  vncUrl: { type: String, default: "" },
 });
 
-const emit = defineEmits(["close", "success"]);
+const emit = defineEmits(["close", "success", "open-vnc-login"]);
 
 const loading = ref(false);
 const sessionId = ref("");
@@ -99,16 +104,26 @@ async function pollOnce() {
     validityHint.value = data.validity_hint || validityHint.value;
     statusMessage.value = data.message || statusMessage.value;
 
+    const authStatus = data.login_status?.auth_status || data.login_status?.status;
     const loginReady =
-      data.login_ready ||
-      data.status === "confirmed" ||
-      data.login_status?.status === "ready";
+      (data.login_ready || data.status === "confirmed") &&
+      (!props.platform || props.platform !== "xiaohongshu" || authStatus === "authenticated");
 
     if (loginReady) {
       loginStatus.value = "confirmed";
       statusMessage.value = data.message || data.login_status?.message || "登录成功";
       stopPolling();
       window.setTimeout(() => emit("success", data), 1200);
+      return;
+    }
+
+    if (data.status === "confirmed" && props.platform === "xiaohongshu") {
+      loginStatus.value = "error";
+      statusMessage.value =
+        data.message ||
+        data.login_status?.message ||
+        "扫码已完成，但登录态未成功写入，请刷新二维码或使用 VNC 登录";
+      stopPolling();
       return;
     }
 
@@ -253,7 +268,16 @@ onBeforeUnmount(() => {
 .qr-login-actions {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 14px;
+}
+
+.qr-login-vnc-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
+  text-align: center;
 }
 </style>

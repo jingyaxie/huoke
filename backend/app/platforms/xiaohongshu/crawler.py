@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
@@ -12,9 +13,10 @@ from app.core.antibot import (
     human_delay,
     human_scroll,
     launch_args,
+    launch_browser,
+    launch_persistent_context,
     require_login,
     user_agent,
-    launch_browser,
 )
 from app.core.config import Settings
 from app.platforms.session_store import PlatformSessionStore
@@ -25,9 +27,12 @@ from app.platforms.xiaohongshu.constants import (
     SEARCH_NOTES_PATH,
 )
 from app.platforms.xiaohongshu.session import XhsSessionStore
+from app.platforms.xiaohongshu.ui_helpers import save_login_if_authenticated
 from app.platforms.xiaohongshu.utils import parse_note_card, to_absolute_url, walk_note_ids
 from app.schemas.crawl import CrawlItem
 from app.services.playwright_pool import PlaywrightPool
+
+logger = logging.getLogger(__name__)
 
 
 class XhsCrawler:
@@ -78,12 +83,16 @@ class XhsCrawler:
             for _ in range(60):
                 cookies = await context.cookies()
                 cookie_names = {cookie.get("name") for cookie in cookies if cookie.get("name")}
-                if "web_session" in cookie_names:
-                    await self.store.save_from_context(self.tenant_id, context, self.account_id)
-                    return
+                if "web_session" in cookie_names and (cookie_names & REQUIRED_LOGIN_COOKIES):
+                    saved = await save_login_if_authenticated(
+                        page, context, self.store, self.tenant_id, self.account_id
+                    )
+                    if saved.get("saved"):
+                        return
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
-            await self.store.save_from_context(self.tenant_id, context, self.account_id)
-            raise RuntimeError("未检测到小红书登录态，请在浏览器中完成扫码/验证后重试。")
+            raise RuntimeError(
+                "未检测到小红书真实登录态（guest=false），请在浏览器中完成扫码/验证后重试。"
+            )
         finally:
             await context.close()
             await browser.close()
@@ -132,39 +141,51 @@ class XhsCrawler:
     async def _run_interactive_login_session(self) -> None:
         key = self._session_key(self.tenant_id, self.account_id)
         playwright = await async_playwright().start()
-        browser = None
         context = None
         try:
-            browser = await launch_browser(playwright, self.settings, headless=False)
-            context = await browser.new_context(**self._context_kwargs())
-            await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
-            page = await context.new_page()
+            context = await launch_persistent_context(
+                playwright,
+                self.settings,
+                PLATFORM,
+                self.tenant_id,
+                self.store,
+                headless=False,
+                account_id=self.account_id,
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
             XhsCrawler._interactive_sessions[key] = {
                 "platform": PLATFORM,
                 "tenant_id": self.tenant_id,
                 "account_id": self.account_id,
                 "playwright": playwright,
-                "browser": browser,
+                "browser": None,
                 "context": context,
                 "page": page,
             }
             await page.goto(self.settings.xhs_explore_url, wait_until="domcontentloaded", timeout=120000)
-            for _ in range(180):
+            saved = False
+            for _ in range(240):
                 cookies = await context.cookies()
                 cookie_names = {cookie.get("name") for cookie in cookies if cookie.get("name")}
                 if cookie_names & REQUIRED_LOGIN_COOKIES and "web_session" in cookie_names:
-                    await self.store.save_from_context(self.tenant_id, context, self.account_id)
-                    break
+                    result = await save_login_if_authenticated(
+                        page, context, self.store, self.tenant_id, self.account_id
+                    )
+                    if result.get("saved"):
+                        saved = True
+                        break
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
-            while True:
-                await page.wait_for_timeout(1000)
+            if not saved:
+                logger.warning(
+                    "xhs interactive login ended without guest=false save tenant=%s account=%s",
+                    self.tenant_id,
+                    self.account_id,
+                )
         finally:
             XhsCrawler._interactive_sessions.pop(key, None)
             XhsCrawler._interactive_tasks.pop(key, None)
             if context is not None:
                 await context.close()
-            if browser is not None:
-                await browser.close()
             await playwright.stop()
 
     async def fetch_hot(self, limit: int = 100) -> list[CrawlItem]:

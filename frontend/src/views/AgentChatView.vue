@@ -587,6 +587,7 @@
       <el-drawer v-model="accountsDrawerVisible" title="平台账号绑定" size="640px" @open="loadAccountBindings">
         <p class="skills-hint">
           当前租户：<strong>{{ tenantId }}</strong> · 账号 <strong>{{ activeAccountId }}</strong>。每个租户、每个账号可独立绑定抖音、小红书、快手。
+          若显示已登录但任务失败，可用 <strong>VNC 查看</strong> / <strong>VNC 登录</strong> 打开服务器真实浏览器排查 Cookie 是否过期。
         </p>
         <div class="skills-toolbar">
           <el-input v-model="newAccountId" size="small" placeholder="账号 ID，如 user-alice" style="width: 160px" />
@@ -607,7 +608,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="message" label="说明" min-width="160" show-overflow-tooltip />
-          <el-table-column label="操作" width="200">
+          <el-table-column label="操作" width="320">
             <template #default="{ row }">
               <el-button
                 link
@@ -616,6 +617,18 @@
                 @click="bindPlatformLogin(row)"
               >
                 {{ qrLoginTarget?.platform === row.platform ? "扫码中" : "扫码登录" }}
+              </el-button>
+              <el-button link type="primary" size="small" @click="openVncView(row, tenantId)">
+                VNC 查看
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :loading="vncLoginLoading === row.platform"
+                @click="openVncLogin(row, tenantId)"
+              >
+                VNC 登录
               </el-button>
               <el-button
                 link
@@ -637,8 +650,19 @@
           :tenant-id="tenantId"
           :platform="qrLoginTarget.platform"
           :platform-label="qrLoginTarget.platformLabel"
+          :vnc-url="qrLoginTarget.vncUrl"
           @close="qrLoginTarget = null"
           @success="onQrLoginSuccess"
+          @open-vnc-login="openVncLoginFromQr"
+        />
+
+        <ServerLoginDialog
+          v-model="vncDialogVisible"
+          :url="vncDialogUrl"
+          :title="vncDialogTitle"
+          :tenant-id="vncDialogTenantId || tenantId"
+          :account-id="activeAccountId"
+          :platform-label="vncDialogPlatformLabel"
         />
       </el-drawer>
 
@@ -997,6 +1021,8 @@ import { ArrowDown, ChatLineRound, DArrowLeft, DArrowRight, Delete, Loading, Plu
 import AgentMessageBlock from "../components/AgentMessageBlock.vue";
 import AgentStreamingBlock from "../components/AgentStreamingBlock.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
+import ServerLoginDialog from "../components/ServerLoginDialog.vue";
+import { usePlatformVnc } from "../composables/usePlatformVnc";
 import { getAccountId, getApiKey, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
 import {
   clearAccountPlatformLoginSession,
@@ -1189,6 +1215,16 @@ const newAccountLabel = ref("");
 const accountCreating = ref(false);
 const qrLoginTarget = ref(null);
 const clearingPlatform = ref("");
+const {
+  vncDialogVisible,
+  vncDialogUrl,
+  vncDialogTitle,
+  vncDialogPlatformLabel,
+  vncDialogTenantId,
+  vncLoginLoading,
+  openVncView,
+  openVncLogin,
+} = usePlatformVnc(() => activeAccountId.value);
 const bindingStatus = ref(null);
 const bindingBlocked = computed(() => bindingStatus.value && !bindingStatus.value.ready);
 const experiences = ref([]);
@@ -1549,7 +1585,20 @@ function bindPlatformLogin(row) {
   qrLoginTarget.value = {
     platform: row.platform,
     platformLabel: row.platform_label || row.platform,
+    vncUrl: row.vnc_url || "",
   };
+}
+
+function openVncLoginFromQr() {
+  if (!qrLoginTarget.value) return;
+  openVncLogin(
+    {
+      platform: qrLoginTarget.value.platform,
+      platform_label: qrLoginTarget.value.platformLabel,
+      vnc_url: qrLoginTarget.value.vncUrl,
+    },
+    tenantId.value,
+  );
 }
 
 async function clearPlatformLogin(row) {

@@ -26,7 +26,7 @@ fi
 
 export PROD_SSH_HOST="${PROD_SSH_HOST:-39.105.130.85}"
 export PROD_SSH_USER="${PROD_SSH_USER:-root}"
-export PROD_HOST="${PROD_HOST:-${PROD_SSH_USER}@${PROD_SSH_HOST}}"
+export PROD_HOST="${PROD_SSH_USER}@${PROD_SSH_HOST}"
 export PROD_ROOT="${PROD_ROOT:-/root/workspace/huoke}"
 export PROD_PROJECT_NAME="${PROD_PROJECT_NAME:-huoke}"
 
@@ -52,21 +52,27 @@ prod_rsync() {
   rsync_ssh="$(prod_rsync_ssh)"
   prod_ssh "command -v rsync >/dev/null 2>&1 || (dnf install -y rsync 2>/dev/null || yum install -y rsync)"
   prod_ssh "mkdir -p '$PROD_ROOT'"
+  local -a excludes=(
+    --exclude '.git/'
+    --exclude '._*'
+    --exclude '**/.DS_Store'
+    --exclude '.venv/'
+    --exclude 'backend/.venv/'
+    --exclude '.env.deploy.local'
+    --exclude 'frontend/node_modules/'
+    --exclude 'mysql/data/'
+    --exclude 'storage/'
+    --exclude 'reports/'
+    --exclude 'scripts/.deploy-state'
+    --exclude 'docker/ssh/*.pem'
+    --exclude '.docker-build-cache/'
+  )
+  if [[ "${RSYNC_FRONTEND_DIST:-0}" != "1" ]]; then
+    excludes+=(--exclude 'frontend/dist/')
+  fi
   rsync -az --delete \
     -e "$rsync_ssh" \
-    --exclude '.git/' \
-    --exclude '._*' \
-    --exclude '**/.DS_Store' \
-    --exclude '.venv/' \
-    --exclude 'backend/.venv/' \
-    --exclude '.env.deploy.local' \
-    --exclude 'frontend/node_modules/' \
-    --exclude 'frontend/dist/' \
-    --exclude 'mysql/data/' \
-    --exclude 'storage/' \
-    --exclude 'reports/' \
-    --exclude 'scripts/.deploy-state' \
-    --exclude 'docker/ssh/*.pem' \
+    "${excludes[@]}" \
     "$src" "$dest"
 }
 

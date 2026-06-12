@@ -44,6 +44,7 @@
         <p class="section-subtitle">
           平台「已登录」表示 Cookie 文件存在；若浏览器 Profile 与 Cookie 不同步，或 Cookie 已过期，页面仍可能弹出登录框。
           遇到此情况请先<strong>清除登录记录</strong>，再重新扫码登录。
+          也可点击 <strong>VNC 查看</strong> 打开服务器真实浏览器桌面，或 <strong>VNC 登录</strong> 在该桌面中打开平台首页排查登录态。
         </p>
 
         <div class="platform-toolbar">
@@ -66,7 +67,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
-          <el-table-column label="操作" width="200" fixed="right">
+          <el-table-column label="操作" width="320" fixed="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -75,6 +76,18 @@
                 @click="openQrLogin(row)"
               >
                 {{ qrLoginTarget?.platform === row.platform ? "扫码中" : "扫码登录" }}
+              </el-button>
+              <el-button link type="primary" size="small" @click="openVncView(row, tenantId)">
+                VNC 查看
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :loading="vncLoginLoading === row.platform"
+                @click="openVncLogin(row, tenantId)"
+              >
+                VNC 登录
               </el-button>
               <el-button
                 link
@@ -96,8 +109,19 @@
           :tenant-id="tenantId"
           :platform="qrLoginTarget.platform"
           :platform-label="qrLoginTarget.platformLabel"
+          :vnc-url="qrLoginTarget.vncUrl"
           @close="qrLoginTarget = null"
           @success="onQrLoginSuccess"
+          @open-vnc-login="openVncLoginFromQr"
+        />
+
+        <ServerLoginDialog
+          v-model="vncDialogVisible"
+          :url="vncDialogUrl"
+          :title="vncDialogTitle"
+          :tenant-id="vncDialogTenantId || tenantId"
+          :account-id="activeAccountId"
+          :platform-label="vncDialogPlatformLabel"
         />
       </div>
     </section>
@@ -109,6 +133,8 @@ import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import MainLayout from "../components/MainLayout.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
+import ServerLoginDialog from "../components/ServerLoginDialog.vue";
+import { usePlatformVnc } from "../composables/usePlatformVnc";
 import { fetchAuthMe, loginUser, logoutUser } from "../api/auth";
 import {
   clearAccountPlatformLoginSession,
@@ -130,6 +156,17 @@ const platformBindings = ref([]);
 const bindingsLoading = ref(false);
 const qrLoginTarget = ref(null);
 const clearingPlatform = ref("");
+
+const {
+  vncDialogVisible,
+  vncDialogUrl,
+  vncDialogTitle,
+  vncDialogPlatformLabel,
+  vncDialogTenantId,
+  vncLoginLoading,
+  openVncView,
+  openVncLogin,
+} = usePlatformVnc(() => activeAccountId.value);
 
 function statusLabel(status) {
   return (
@@ -174,7 +211,20 @@ function openQrLogin(row) {
   qrLoginTarget.value = {
     platform: row.platform,
     platformLabel: row.platform_label,
+    vncUrl: row.vnc_url || "",
   };
+}
+
+function openVncLoginFromQr() {
+  if (!qrLoginTarget.value) return;
+  openVncLogin(
+    {
+      platform: qrLoginTarget.value.platform,
+      platform_label: qrLoginTarget.value.platformLabel,
+      vnc_url: qrLoginTarget.value.vncUrl,
+    },
+    tenantId.value,
+  );
 }
 
 async function onQrLoginSuccess() {

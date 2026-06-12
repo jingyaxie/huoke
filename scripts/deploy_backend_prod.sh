@@ -17,10 +17,10 @@ usage() {
   3. 配置宿主机 Nginx 对外提供 API / 前端访问
 
 选项:
-  --local-images  推荐：本地构建镜像并上传，服务器只启动（避免服务器慢速打包）
-  --fast, fast    快速发布：上传代码并重启，不执行 docker build（约 1–3 分钟）
-  --full, full    全量发布：在服务器重建 backend 镜像（约 10–30 分钟）
-  --auto, auto    自动判断（默认）：仅当 Dockerfile/requirements 等变更时才 build
+  --local-images  可选：本地打镜像并上传（仅依赖变更或首次部署时用）
+  --fast, fast    默认推荐：rsync 代码 + 重启，不 build、不上传镜像（约 1–3 分钟）
+  --full, full    全量：在服务器重建镜像（改 Dockerfile/requirements 后）
+  --auto, auto    自动判断：业务代码 → 同 --fast；依赖变更 → 服务器 build
   -h, --help      显示帮助
 
 环境变量:
@@ -32,10 +32,10 @@ usage() {
   IMAGE_PUSH_TARGET    --local-images 时上传哪些镜像：all|backend|frontend
 
 示例:
-  ./scripts/deploy_local_images.sh
-  ./scripts/deploy_backend_prod.sh --local-images
-  ./scripts/deploy_backend_prod.sh --fast
-  ./scripts/deploy_backend_prod.sh --full
+  ./scripts/deploy_fast.sh          # 日常发版（推荐）
+  ./scripts/deploy_backend_prod.sh  # 同上，auto 模式
+  ./scripts/deploy_local_images.sh  # 仅首次或 requirements 变更后
+  ./scripts/deploy_full.sh
 EOF
 }
 
@@ -75,9 +75,33 @@ VNC_PORT="${VNC_PORT:-6080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 FRONTEND_PROD_PORT="${FRONTEND_PROD_PORT:-5174}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
-BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
 SETUP_NGINX="${SETUP_NGINX:-1}"
 NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-_}"
+BACKEND_BASE_IMAGE="${BACKEND_BASE_IMAGE:-douyin-backend-base:py312}"
+IMAGE_PLATFORM="${IMAGE_PLATFORM:-linux/amd64}"
+
+NEED_BASE=0
+NEED_FRONTEND_DIST=0
+NEED_FRONTEND_IMAGE=0
+if [[ "$LOCAL_IMAGES" == "1" ]]; then
+  NEED_BASE="$(deploy_needs_base_rebuild "$DEPLOY_MODE")"
+  if ! docker image inspect "$BACKEND_BASE_IMAGE" >/dev/null 2>&1 \
+    || ! docker image inspect "$BACKEND_BASE_IMAGE" --format '{{.Architecture}} {{.Os}}' 2>/dev/null | grep -q 'amd64 linux'; then
+    echo "本地无匹配 $IMAGE_PLATFORM 的依赖层镜像，将先构建 $BACKEND_BASE_IMAGE" >&2
+    NEED_BASE=1
+  fi
+elif [[ "$DEPLOY_MODE" != "full" ]]; then
+  NEED_FRONTEND_DIST="$(deploy_needs_frontend_dist "$DEPLOY_MODE")"
+  NEED_FRONTEND_IMAGE="$(deploy_needs_frontend_image "$DEPLOY_MODE")"
+fi
+
+if [[ -z "${BUILD_FRONTEND:-}" ]]; then
+  if [[ "$DEPLOY_MODE" == "full" ]] || [[ "$NEED_FRONTEND_IMAGE" == "1" ]]; then
+    BUILD_FRONTEND=1
+  else
+    BUILD_FRONTEND=0
+  fi
+fi
 
 if [[ "$LOCAL_IMAGES" == "1" ]]; then
   SKIP_BUILD=1
@@ -93,7 +117,7 @@ else
     SKIP_BUILD=1
     DID_BUILD=0
   fi
-  UP_FRONTEND_PROD="${UP_FRONTEND_PROD:-$BUILD_FRONTEND}"
+  UP_FRONTEND_PROD="${UP_FRONTEND_PROD:-1}"
 fi
 
 echo "Deploy target: $PROD_HOST"
@@ -101,19 +125,43 @@ echo "Remote root: $PROD_ROOT"
 echo "Compose project: $PROD_PROJECT_NAME"
 echo "Health URL: $HEALTH_URL"
 if [[ "$LOCAL_IMAGES" == "1" ]]; then
-  echo "Deploy mode: local-images（本地构建并上传镜像，服务器仅启动）"
+  echo "Deploy mode: local-images (NEED_BASE=${NEED_BASE})"
 else
   echo "Deploy mode: $DEPLOY_MODE → SKIP_BUILD=$SKIP_BUILD"
+  echo "NEED_FRONTEND_DIST=$NEED_FRONTEND_DIST BUILD_FRONTEND=$BUILD_FRONTEND"
 fi
 echo "BUILD_FRONTEND=$BUILD_FRONTEND UP_FRONTEND_PROD=${UP_FRONTEND_PROD:-0} SETUP_NGINX=$SETUP_NGINX"
 
 cd "$ROOT_DIR"
 
+if [[ "$LOCAL_IMAGES" != "1" && "$NEED_FRONTEND_DIST" == "1" ]]; then
+  echo "--- 本地构建前端 dist（同步静态文件，不重建 nginx 镜像）---"
+  (cd "$ROOT_DIR/frontend" && npm run build)
+  export RSYNC_FRONTEND_DIST=1
+fi
+
 if [[ "$LOCAL_IMAGES" == "1" ]]; then
   # shellcheck source=lib/docker_images.sh
   source "$ROOT_DIR/scripts/lib/docker_images.sh"
-  build_prod_images_local "$IMAGE_PUSH_TARGET"
-  push_prod_images_to_server "$IMAGE_PUSH_TARGET"
+  BUILD_BACKEND_BASE="$NEED_BASE"
+  PUSH_BACKEND_BASE="$NEED_BASE"
+  export BUILD_BACKEND_BASE PUSH_BACKEND_BASE
+  case "$IMAGE_PUSH_TARGET" in
+    backend)
+      build_prod_images_local backend
+      push_prod_images_to_server backend
+      ;;
+    frontend)
+      build_prod_images_local frontend
+      push_prod_images_to_server frontend
+      ;;
+    all|*)
+      build_prod_images_local backend
+      push_prod_images_to_server backend
+      build_prod_images_local frontend
+      push_prod_images_to_server frontend
+      ;;
+  esac
 fi
 
 echo "--- rsync 上传源码到服务器 ---"

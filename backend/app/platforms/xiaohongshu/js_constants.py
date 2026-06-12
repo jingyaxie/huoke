@@ -14,6 +14,7 @@ from app.platforms.xiaohongshu.constants import (
 EDITH_HOST = "edith.xiaohongshu.com"
 FOLLOW_PATH = "/api/sns/web/v1/user/follow"
 UNFOLLOW_PATH = "/api/sns/web/v1/user/unfollow"
+COMMENT_POST_PATH = "/api/sns/web/v1/comment/post"
 USER_OTHERINFO_PATH = "/api/sns/web/v1/user/otherinfo"
 
 DEFAULT_MAX_COMMENTS = 200
@@ -90,6 +91,10 @@ def _build_follow_url() -> str:
 
 def _build_unfollow_url() -> str:
     return f"https://{EDITH_HOST}{UNFOLLOW_PATH}"
+
+
+def _build_comment_post_url() -> str:
+    return f"https://{EDITH_HOST}{COMMENT_POST_PATH}"
 
 
 def _build_user_otherinfo_url(template_url: str, user_id: str) -> str:

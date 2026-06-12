@@ -44,7 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# BuildKit 缓存 pip 下载；镜像内仍不保留 pip cache（减小体积）
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /app/requirements.txt
+# Playwright 浏览器写入镜像层；不用 cache mount（buildx 并发会触发 __dirlock 失败）
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install chromium \
     && (playwright install chrome || true)
 

@@ -72,7 +72,18 @@ class AgentBrowserSession:
             if self._context is not None:
                 try:
                     store = get_session_store(self.settings, self.platform)
-                    await store.save_from_context(self.tenant_id, self._context, self.account_id)
+                    if self.platform == "xiaohongshu" and self._page is not None:
+                        from app.platforms.xiaohongshu.ui_helpers import save_login_if_authenticated
+
+                        await save_login_if_authenticated(
+                            self._page,
+                            self._context,
+                            store,
+                            self.tenant_id,
+                            self.account_id,
+                        )
+                    else:
+                        await store.save_from_context(self.tenant_id, self._context, self.account_id)
                 except Exception:
                     pass
                 await self._context.close()

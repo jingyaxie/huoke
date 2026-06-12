@@ -98,6 +98,9 @@ class PlatformSessionStore(ABC):
         if state_path.exists():
             state_path.unlink()
             storage_removed = True
+        meta_path = state_path.with_name("session_meta.json")
+        if meta_path.exists():
+            meta_path.unlink()
         profile_removed = False
         if profile_dir.exists():
             shutil.rmtree(profile_dir, ignore_errors=True)

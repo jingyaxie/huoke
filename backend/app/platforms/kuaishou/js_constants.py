@@ -27,6 +27,7 @@ _API_TEMPLATE_EXCLUDES = (
 )
 
 COMMENT_LIST_OPERATION = "commentListQuery"
+COMMENT_ADD_OPERATION = "visionAddComment"
 COMMENT_LIST_QUERY = """query commentListQuery($photoId: String, $pcursor: String) {
   visionCommentList(photoId: $photoId, pcursor: $pcursor) {
     commentCount
@@ -43,6 +44,14 @@ COMMENT_LIST_QUERY = """query commentListQuery($photoId: String, $pcursor: Strin
       hasSubComments
       status
     }
+  }
+}"""
+
+COMMENT_ADD_MUTATION = """mutation visionAddComment($photoId: String, $photoAuthorId: String, $content: String, $replyToCommentId: String) {
+  visionAddComment(photoId: $photoId, photoAuthorId: $photoAuthorId, content: $content, replyToCommentId: $replyToCommentId) {
+    commentId
+    content
+    timestamp
   }
 }"""
 

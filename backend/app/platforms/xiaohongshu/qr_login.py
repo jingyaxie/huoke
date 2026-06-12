@@ -16,7 +16,7 @@ from app.platforms.qr_login_store import QrLoginSession
 from app.platforms.session_store import PlatformSessionStore
 from app.platforms.xiaohongshu.constants import REQUIRED_LOGIN_COOKIES
 from app.platforms.xiaohongshu.session import XhsSessionStore
-from app.platforms.xiaohongshu.ui_helpers import activate_session
+from app.platforms.xiaohongshu.ui_helpers import activate_session, save_login_if_authenticated
 
 DEFAULT_TTL_SECONDS = 180
 VALIDITY_HINT = "小红书二维码约 3 分钟内有效，过期后请重新获取"
@@ -230,14 +230,34 @@ class XhsQrLoginTool:
                 and (cookie_names & REQUIRED_LOGIN_COOKIES)
             )
             if session_changed:
-                session.status = "confirmed"
-                session.message = "登录成功"
-                await self.store.save_from_context(self.tenant_id, context, self.account_id)
-                return
+                from app.platforms.xiaohongshu.ui_helpers import fetch_user_me
+
+                user_me = await fetch_user_me(page)
+                if user_me.get("guest") is False:
+                    saved = await save_login_if_authenticated(
+                        page,
+                        context,
+                        self.store,
+                        self.tenant_id,
+                        self.account_id,
+                        rebake_profile=True,
+                    )
+                    if saved.get("saved"):
+                        session.status = "confirmed"
+                        session.message = "登录成功"
+                        return
+                    session.status = "error"
+                    sync = saved.get("profile_sync") if isinstance(saved.get("profile_sync"), dict) else {}
+                    session.message = (
+                        saved.get("error")
+                        or sync.get("error")
+                        or "扫码成功，但登录态未能写入持久化存储，请重试或使用 VNC 登录"
+                    )
+                    return
             await page.wait_for_timeout(500)
 
         session.status = "error"
-        session.message = "扫码已成功，但登录 Cookie 未写入浏览器，请刷新二维码重试"
+        session.message = "扫码已成功，但账号仍处于游客态或未激活，请刷新二维码重试"
 
     async def cleanup_runtime(self, runtime: dict | None) -> None:
         if not runtime:

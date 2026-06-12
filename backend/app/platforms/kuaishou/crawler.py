@@ -10,8 +10,9 @@ from app.core.antibot import (
     headless_for_platform,
     human_delay,
     launch_args,
-    require_login,
     launch_browser,
+    launch_persistent_context,
+    require_login,
 )
 from app.core.config import Settings
 from app.platforms.kuaishou.constants import HOME_URL, PLATFORM, REQUIRED_LOGIN_COOKIES
@@ -123,19 +124,24 @@ class KuaishouCrawler:
     async def _run_interactive_login_session(self) -> None:
         key = self._session_key(self.tenant_id, self.account_id)
         playwright = await async_playwright().start()
-        browser = None
         context = None
         try:
-            browser = await launch_browser(playwright, self.settings, headless=False)
-            context = await browser.new_context(**self._context_kwargs())
-            await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
-            page = await context.new_page()
+            context = await launch_persistent_context(
+                playwright,
+                self.settings,
+                PLATFORM,
+                self.tenant_id,
+                self.store,
+                headless=False,
+                account_id=self.account_id,
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
             KuaishouCrawler._interactive_sessions[key] = {
                 "platform": PLATFORM,
                 "tenant_id": self.tenant_id,
                 "account_id": self.account_id,
                 "playwright": playwright,
-                "browser": browser,
+                "browser": None,
                 "context": context,
                 "page": page,
             }
@@ -155,8 +161,6 @@ class KuaishouCrawler:
             KuaishouCrawler._interactive_tasks.pop(key, None)
             if context is not None:
                 await context.close()
-            if browser is not None:
-                await browser.close()
             await playwright.stop()
 
     async def fetch_hot(self, limit: int = 100) -> list[CrawlItem]:

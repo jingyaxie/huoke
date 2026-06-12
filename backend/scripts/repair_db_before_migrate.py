@@ -31,6 +31,17 @@ def repair() -> None:
     with engine.begin() as conn:
         tables = set(inspector.get_table_names())
         if "alembic_version" not in tables:
+            if tables.intersection({"authors", "videos", "comments"}):
+                print("[db-repair] init.sql 已建表但无 alembic_version，stamp 0001_initial", file=sys.stderr)
+                conn.execute(
+                    text(
+                        "CREATE TABLE alembic_version ("
+                        "version_num VARCHAR(32) NOT NULL, "
+                        "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
+                        ")"
+                    )
+                )
+                conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0001_initial')"))
             return
 
         current = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()

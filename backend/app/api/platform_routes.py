@@ -40,6 +40,32 @@ def platform_login_status(
     return store.login_status(tenant_id, account_id)
 
 
+@router.post("/platforms/{platform}/login-status/verify", summary="在线校验并可选刷新登录态")
+async def platform_verify_login_status(
+    platform: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
+    refresh: bool = Query(default=False, description="校验通过时写回 storage_state 与 session_meta"),
+    settings: Settings = Depends(get_settings),
+):
+    pid = resolve_path_platform_id(platform)
+    if pid != "xiaohongshu":
+        store = get_session_store(settings, pid)
+        status = store.login_status(tenant_id, account_id)
+        return {
+            "live_ok": status.get("status") == "ready",
+            "refreshed": False,
+            "platform": pid,
+            **status,
+            "message": status.get("message") or "该平台暂不支持在线校验，仅返回本地 Cookie 状态",
+        }
+    from app.platforms.xiaohongshu.persistence import verify_live_session
+
+    store = get_session_store(settings, pid)
+    result = await verify_live_session(settings, store, tenant_id, account_id, refresh=refresh)
+    return {"platform": pid, "tenant_id": tenant_id, "account_id": account_id, **result}
+
+
 @router.delete("/platforms/{platform}/login-session", summary="清除平台登录记录")
 def platform_clear_login_session(
     platform: str,

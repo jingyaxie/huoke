@@ -16,3 +16,6 @@ frontend/dist/assets/*.map
 
 # Deploy state (local only)
 scripts/.deploy-state
+
+# Docker BuildKit 本地缓存（加速重复 build，勿提交）
+.docker-build-cache/

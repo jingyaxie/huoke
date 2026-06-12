@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import db_session, get_authenticated_tenant_id
@@ -124,6 +124,41 @@ def account_platform_login_status(
         raise HTTPException(status_code=404, detail="账号不存在")
     session_store = get_session_store(settings, platform)
     return session_store.login_status(tenant_id, normalize_account_id(account_id))
+
+
+@router.post(
+    "/{account_id}/platforms/{platform}/login-status/verify",
+    summary="在线校验并可选刷新登录态",
+)
+async def account_platform_verify_login_status(
+    account_id: str,
+    platform: str,
+    refresh: bool = Query(default=False, description="校验通过时写回 storage_state 与 session_meta"),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+    store: PlatformAccountStore = Depends(_store),
+) -> dict:
+    platform = platform.strip().lower()
+    if platform not in BINDABLE_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
+    if store.get_account(tenant_id, account_id) is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    account = normalize_account_id(account_id)
+    if platform != "xiaohongshu":
+        session_store = get_session_store(settings, platform)
+        status = session_store.login_status(tenant_id, account)
+        return {
+            "live_ok": status.get("status") == "ready",
+            "refreshed": False,
+            "platform": platform,
+            **status,
+            "message": status.get("message") or "该平台暂不支持在线校验，仅返回本地 Cookie 状态",
+        }
+    from app.platforms.xiaohongshu.persistence import verify_live_session
+
+    session_store = get_session_store(settings, platform)
+    result = await verify_live_session(settings, session_store, tenant_id, account, refresh=refresh)
+    return {"platform": platform, "tenant_id": tenant_id, "account_id": account, **result}
 
 
 @router.delete("/{account_id}/platforms/{platform}/login-session", summary="清除平台登录记录")

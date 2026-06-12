@@ -46,6 +46,9 @@ start_vnc() {
   fluxbox -display :99 >/tmp/fluxbox.log 2>&1 &
   sleep 1
   pkill -x xmessage 2>/dev/null || true
+  if command -v xsetroot >/dev/null 2>&1; then
+    xsetroot -solid "#1e293b" || true
+  fi
 
   echo "[vnc] starting x11vnc on :5900..."
   x11vnc -display :99 -nopw -forever -shared -listen 0.0.0.0 -xkb -rfbport 5900 \
@@ -88,19 +91,54 @@ PY
 sh /app/scripts/install-cjk-fonts.sh || echo "[fonts] WARN: CJK font install skipped" >&2
 
 # 禁止抖音等自定义协议唤起 xdg-open（自动化环境无法点击系统弹窗）
-if [ -d /opt/google/chrome ] || command -v google-chrome >/dev/null 2>&1; then
-  mkdir -p /etc/opt/chrome/policies/managed
-  cat >/etc/opt/chrome/policies/managed/huoke-protocol.json <<'EOF'
+install_noop_xdg_open() {
+  cat >/usr/local/bin/xdg-open <<'EOF'
+#!/bin/sh
+# Huoke automation: ignore external protocol handoff (douyin://, snssdk://, etc.)
+exit 0
+EOF
+  chmod +x /usr/local/bin/xdg-open
+}
+
+write_protocol_policies() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat >"$dir/huoke-protocol.json" <<'EOF'
 {
   "URLBlocklist": [
     "snssdk://*",
     "snssdk1128://*",
     "aweme://*",
     "bytedance://*",
-    "douyin://*"
-  ]
+    "douyin://*",
+    "tiktok://*",
+    "sslocal://*",
+    "sslocalb://*",
+    "sslocalc://*",
+    "live://*",
+    "tt://*",
+    "intent://*",
+    "market://*",
+    "xhsdiscover://*",
+    "xhs://*",
+    "xiaohongshu://*",
+    "kwai://*",
+    "kuaishou://*",
+    "bitbrowser://*"
+  ],
+  "ExternalProtocolDialogShowAlwaysOpenCheckbox": false
 }
 EOF
+}
+
+install_noop_xdg_open
+# Playwright 自带 Chromium，不读系统 Chrome 策略目录；统一写到固定路径并由 launch args 注入。
+write_protocol_policies /etc/huoke/chrome-policies/managed
+if [ -d /opt/google/chrome ] || command -v google-chrome >/dev/null 2>&1; then
+  write_protocol_policies /etc/opt/chrome/policies/managed
+fi
+if [ -d /etc/chromium ] || command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
+  write_protocol_policies /etc/chromium/policies/managed
 fi
 
 # 运行时兜底：某些旧镜像未包含 PyJWT，先补齐依赖再启动 API。
@@ -116,6 +154,7 @@ if importlib.util.find_spec("multipart") is None:
 PY
 
 start_vnc
+python /app/scripts/migrate_storage_layout.py || echo "[storage-migrate] skipped" >&2
 wait_mysql
 python /app/scripts/repair_db_before_migrate.py || echo "[db-repair] skipped or failed; continuing" >&2
 alembic upgrade head

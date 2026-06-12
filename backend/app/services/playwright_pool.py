@@ -19,6 +19,17 @@ from app.core.config import Settings
 from app.platforms.session_store import PlatformSessionStore
 
 
+async def _should_persist_session(platform: str, page: Page) -> bool:
+    if platform != "xiaohongshu":
+        return True
+    try:
+        from app.platforms.xiaohongshu.ui_helpers import should_persist_login
+
+        return await should_persist_login(page)
+    except Exception:
+        return False
+
+
 class PlaywrightPool:
     _instance: PlaywrightPool | None = None
 
@@ -93,7 +104,24 @@ class PlaywrightPool:
                 page = context.pages[0] if context.pages else await context.new_page()
                 yield context, page
                 if persist_state:
-                    await store.save_from_context(tenant_id, context, account_id)
+                    if await _should_persist_session(platform, page):
+                        await store.save_from_context(tenant_id, context, account_id)
+                        if platform == "xiaohongshu":
+                            from app.platforms.xiaohongshu.session_meta import record_authenticated_snapshot
+
+                            await record_authenticated_snapshot(
+                                store, tenant_id, account_id, page
+                            )
+                    elif platform == "xiaohongshu":
+                        from app.platforms.xiaohongshu.session_meta import mark_session_expired
+
+                        mark_session_expired(
+                            store,
+                            tenant_id,
+                            account_id,
+                            reason="guest",
+                            detail="任务结束时检测到游客态",
+                        )
             finally:
                 await context.close()
 

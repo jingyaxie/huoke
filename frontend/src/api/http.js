@@ -69,7 +69,8 @@ export function setAccessToken(token) {
 /** 将后端返回的 localhost:6080 VNC 地址转为同源 /vnc/ 代理，避免 WebSocket 连接失败 */
 export function resolveVncUrl(backendUrl = "") {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const proxyUrl = `${origin}/vnc/vnc.html?autoconnect=true&resize=scale&path=websockify`;
+  // noVNC 的 path 是相对站点根路径；dev/prod 都通过 /vnc/ 反代到 backend:6080
+  const proxyUrl = `${origin}/vnc/vnc.html?autoconnect=true&resize=scale&path=vnc/websockify`;
   if (!backendUrl) return proxyUrl;
   try {
     const u = new URL(backendUrl, origin || "http://localhost");

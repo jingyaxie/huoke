@@ -1,5 +1,12 @@
 <template>
-  <el-dialog v-model="visibleProxy" title="服务器登录" width="92vw" top="5vh" append-to-body destroy-on-close>
+  <el-dialog
+    v-model="visibleProxy"
+    :title="title"
+    width="92vw"
+    top="5vh"
+    append-to-body
+    destroy-on-close
+  >
     <div class="login-shell">
       <div v-if="contextLabel" class="login-context-banner">
         <div class="login-context-title">请在此窗口完成扫码登录</div>
@@ -8,7 +15,10 @@
           <span class="login-context-tag login-context-tenant">租户 {{ tenantId || "default" }}</span>
           <span class="login-context-tag login-context-account">账号 {{ accountId || "default" }}</span>
         </div>
-        <p class="login-context-hint">请确认以上信息与你要绑定的账号一致，避免扫错码导致串号。</p>
+        <p class="login-context-hint">
+          请确认以上信息与你要绑定的账号一致，避免扫错码导致串号。
+          若状态显示「已登录」但页面仍出现登录框，说明 Cookie 已过期或与 Profile 不同步，可在此直接查看真实浏览器界面。
+        </p>
       </div>
       <div class="login-toolbar">
         <el-button type="primary" @click="openInNewTab">新窗口打开</el-button>
@@ -30,6 +40,7 @@ const props = defineProps({
   tenantId: { type: String, default: "" },
   accountId: { type: String, default: "" },
   platformLabel: { type: String, default: "" },
+  title: { type: String, default: "VNC 浏览器" },
 });
 
 const emit = defineEmits(["update:modelValue"]);
