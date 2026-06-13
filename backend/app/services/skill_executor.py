@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.antibot import LoginRequiredError
+from app.core.antibot import LoginRequiredError, headless_for_platform
 from app.platforms.registry import get_dm_tool, get_follow_tool, get_session_store
 from app.platforms.douyin.profile import build_profile_url as douyin_profile_url
 from app.platforms.xiaohongshu.profile import build_profile_url as xhs_profile_url
@@ -153,6 +153,62 @@ class SkillExecutor:
             session=self.db_session,
         )
 
+    def _interaction_log_service(self):
+        from app.services.interaction_log_service import InteractionLogService
+
+        return InteractionLogService(self.db_session, self.settings, tenant_id=self.tenant_id)
+
+    def _record_interaction_log(
+        self,
+        params: dict[str, Any],
+        *,
+        action: str,
+        ok: bool,
+        platform: str | None = None,
+        comment_id: str | None = None,
+        content_id: str | None = None,
+        content_url: str | None = None,
+        target_user_id: str | None = None,
+        target_sec_uid: str | None = None,
+        target_nickname: str | None = None,
+        reply_text: str | None = None,
+        error_message: str | None = None,
+        raw_result: dict[str, Any] | None = None,
+    ) -> None:
+        if self.db_session is None:
+            return
+        try:
+            self._interaction_log_service().record(
+                platform=platform or self.platform,
+                action=action,
+                status="ok" if ok else "failed",
+                account_id=self.session.account_id,
+                comment_id=comment_id,
+                content_id=content_id,
+                content_url=content_url,
+                target_user_id=target_user_id,
+                target_sec_uid=target_sec_uid,
+                target_nickname=target_nickname,
+                reply_text=reply_text,
+                keyword=str(params.get("keyword") or "").strip() or None,
+                agent_profile_id=str(params.get("agent_profile_id") or "").strip() or None,
+                task_id=str(params.get("task_id") or "").strip() or None,
+                error_message=error_message,
+                raw_result=raw_result,
+            )
+        except Exception:
+            self.db_session.rollback()
+
+    def _resolve_show_browser(self, params: dict[str, Any]) -> bool:
+        """Agent 会话为可见模式时，Skill 默认走 VNC 可见浏览器。"""
+        if "show_browser" in params:
+            return bool(params.get("show_browser"))
+        if self.session.is_started and not headless_for_platform(
+            self.settings, self.platform, self.session.headless
+        ):
+            return True
+        return False
+
     async def execute(self, skill: SkillOut, raw_args: dict[str, Any]) -> dict[str, Any]:
         try:
             params = _resolve_params(skill, raw_args)
@@ -268,11 +324,15 @@ class SkillExecutor:
             return await self._execute_reply_comment(skill, params)
         if handler == "query_stored_comments":
             return self._execute_query_stored_comments(params)
+        if handler == "query_interaction_stats":
+            return self._execute_query_interaction_stats(params)
+        if handler == "social_roam":
+            return await self._execute_social_roam(params)
         if handler == "crawl_video_comments":
             video_url = params.get("video_url") or params.get("url") or params.get("note_url")
             if not video_url:
                 return {"error": "缺少参数 video_url / note_url"}
-            show_browser = bool(params.get("show_browser", False))
+            show_browser = self._resolve_show_browser(params)
             video_url_str = str(video_url)
             platform = self._resolve_platform(skill, video_url_str)
             service = self._comment_crawler_service(skill, video_url_str)
@@ -309,7 +369,7 @@ class SkillExecutor:
             keyword = params.get("keyword")
             if not keyword:
                 return {"error": "缺少参数 keyword"}
-            show_browser = bool(params.get("show_browser", False))
+            show_browser = self._resolve_show_browser(params)
             guest_mode = bool(params.get("guest_mode", False))
             include_full = bool(params.get("include_full_results", False))
             platform = self._resolve_platform(skill)
@@ -354,7 +414,7 @@ class SkillExecutor:
             keyword = params.get("keyword")
             if not keyword:
                 return {"error": "缺少参数 keyword"}
-            show_browser = bool(params.get("show_browser", False))
+            show_browser = self._resolve_show_browser(params)
             platform = self._resolve_platform(skill)
             service = self._comment_crawler_service(skill)
             try:
@@ -417,7 +477,7 @@ class SkillExecutor:
             self.tenant_id,
             account_id=self.session.account_id,
         )
-        show_browser = bool(params.get("show_browser", False))
+        show_browser = self._resolve_show_browser(params)
         username = str(params.get("username") or "")
         user_id = str(params.get("user_id") or "")
         sec_uid = str(params.get("sec_uid") or "")
@@ -457,6 +517,16 @@ class SkillExecutor:
 
         relation = result.get(action) or {}
         ok = bool(relation.get("ok"))
+        self._record_interaction_log(
+            params,
+            action=action,
+            ok=ok,
+            target_user_id=str(result.get("user_id") or user_id or "") or None,
+            target_sec_uid=str(result.get("sec_uid") or sec_uid or "") or None,
+            target_nickname=str(result.get("username") or username or "") or None,
+            error_message=None if ok else str(relation.get("error") or relation.get("reason") or ""),
+            raw_result=result if not ok else None,
+        )
         return {
             "type": "builtin",
             "handler": f"{action}_user",
@@ -484,7 +554,7 @@ class SkillExecutor:
             self.tenant_id,
             account_id=self.session.account_id,
         )
-        show_browser = bool(params.get("show_browser", False))
+        show_browser = self._resolve_show_browser(params)
         username = str(params.get("username") or "")
 
         if self.platform == "douyin":
@@ -513,6 +583,17 @@ class SkillExecutor:
 
         dm = result.get("message") or {}
         ok = bool(dm.get("ok"))
+        self._record_interaction_log(
+            params,
+            action="dm",
+            ok=ok,
+            target_user_id=str(result.get("user_id") or user_id or "") or None,
+            target_sec_uid=str(result.get("sec_uid") or sec_uid_val or "") or None,
+            target_nickname=str(result.get("username") or username or "") or None,
+            reply_text=message,
+            error_message=None if ok else str(dm.get("error") or dm.get("hint") or ""),
+            raw_result=result if not ok else None,
+        )
         return {
             "type": "builtin",
             "handler": "send_dm",
@@ -561,6 +642,74 @@ class SkillExecutor:
             "result": result,
         }
 
+    def _execute_query_interaction_stats(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self.db_session is None:
+            return {"error": "查询互动台账需要数据库会话", "status": "failed"}
+
+        from app.platforms.types import normalize_platform
+
+        platform = normalize_platform(str(params.get("platform") or self.platform))
+        service = self._interaction_log_service()
+        query_type = str(params.get("query_type") or "stats").strip().lower()
+        period = str(params.get("period") or "today").strip().lower()
+        account_id = str(params.get("account_id") or self.session.account_id or "").strip() or None
+        offset = int(params.get("offset") or 0)
+        limit = int(params.get("limit") or 20)
+
+        if query_type == "logs":
+            result = service.query_logs(
+                platform=platform,
+                action=str(params.get("action") or "").strip() or None,
+                comment_id=str(params.get("comment_id") or "").strip() or None,
+                target_user_id=str(params.get("target_user_id") or "").strip() or None,
+                period=period,
+                account_id=account_id,
+                offset=offset,
+                limit=limit,
+            )
+            summary = f"已查询 {result.get('total', 0)} 条互动记录"
+        else:
+            reply_limit = params.get("reply_limit")
+            follow_limit = params.get("follow_limit")
+            dm_limit = params.get("dm_limit")
+            result = service.query_stats(
+                platform=platform,
+                account_id=account_id,
+                period=period,
+                reply_limit=int(reply_limit) if reply_limit is not None else None,
+                follow_limit=int(follow_limit) if follow_limit is not None else None,
+                dm_limit=int(dm_limit) if dm_limit is not None else None,
+                comment_id=str(params.get("comment_id") or "").strip() or None,
+                target_user_id=str(params.get("target_user_id") or "").strip() or None,
+                target_sec_uid=str(params.get("target_sec_uid") or "").strip() or None,
+            )
+            summary = (
+                f"今日 reply {result['reply']['count']}/{result['reply']['limit']}，"
+                f"follow {result['follow']['count']}/{result['follow']['limit']}"
+            )
+
+        return {
+            "status": "completed",
+            "handler": "query_interaction_stats",
+            "platform": platform,
+            "summary": summary,
+            "result": result,
+        }
+
+    async def _execute_social_roam(self, params: dict[str, Any]) -> dict[str, Any]:
+        from app.services.social_roam.handler import SocialRoamService
+
+        if self.db_session is None:
+            return {"error": "social-roam 需要数据库会话（入库与 interaction_logs）", "status": "failed"}
+        service = SocialRoamService(
+            self.settings,
+            self.tenant_id,
+            self.platform,
+            self.session,
+            db_session=self.db_session,
+        )
+        return await service.execute(params)
+
     async def _execute_reply_comment(self, skill: SkillOut, params: dict[str, Any]) -> dict[str, Any]:
         comment_id = str(params.get("comment_id") or "").strip()
         reply_text = str(params.get("reply_text") or params.get("message") or "").strip()
@@ -591,7 +740,7 @@ class SkillExecutor:
                 content_url=str(params.get("content_url") or "") or None,
                 photo_author_id=str(params.get("photo_author_id") or "") or None,
                 reply_to_user_id=str(params.get("reply_to_user_id") or "") or None,
-                show_browser=bool(params.get("show_browser", False)),
+                show_browser=self._resolve_show_browser(params),
             )
         except LoginRequiredError as exc:
             return {"error": str(exc), "status": "failed"}
@@ -603,6 +752,17 @@ class SkillExecutor:
             f"已回复评论 {comment_id}"
             if ok
             else f"回复评论失败：{result.get('error') or 'unknown'}"
+        )
+        self._record_interaction_log(
+            params,
+            action="reply",
+            ok=ok,
+            comment_id=comment_id,
+            content_id=str(result.get("content_id") or params.get("content_id") or "") or None,
+            content_url=str(result.get("content_url") or "") or None,
+            reply_text=reply_text,
+            error_message=str(result.get("error") or "") or None if not ok else None,
+            raw_result=result if not ok else None,
         )
         return {
             "skill_id": skill.id,

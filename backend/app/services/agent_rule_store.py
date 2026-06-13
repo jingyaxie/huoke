@@ -176,8 +176,17 @@ class AgentRuleStore:
         path.write_text(json.dumps({"rules": new_rules}, ensure_ascii=False, indent=2), encoding="utf-8")
         return True
 
-    def build_rules_prompt(self, tenant_id: str, platform: str) -> str:
+    def build_rules_prompt(
+        self,
+        tenant_id: str,
+        platform: str,
+        *,
+        exclude_rule_ids: list[str] | None = None,
+    ) -> str:
         applicable = self.list_applicable(tenant_id, platform)
+        if exclude_rule_ids:
+            excluded = set(exclude_rule_ids)
+            applicable = [r for r in applicable if r.id not in excluded]
         if not applicable:
             return ""
         parts = []

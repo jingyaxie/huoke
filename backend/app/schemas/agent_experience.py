@@ -20,6 +20,10 @@ class AgentExperienceBase(BaseModel):
     do_tips: list[str] = Field(default_factory=list)
     avoid_tips: list[str] = Field(default_factory=list)
     platform: str = ""
+    agent_profile_id: str = Field(
+        default="",
+        description="来源 Agent 档案 ID；空表示全局经验，任意档案可引用",
+    )
     source_run_id: str | None = None
     enabled: bool = True
     version: int = 1

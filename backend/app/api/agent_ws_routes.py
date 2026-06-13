@@ -96,6 +96,7 @@ async def agent_websocket(
                 explicit_skill_ids=payload.get("explicit_skill_ids"),
                 mode=payload.get("mode", "agent"),
                 run_mode=payload.get("run_mode", "auto"),
+                agent_profile_id=payload.get("agent_profile_id"),
             ):
                 await websocket.send_json(event.model_dump(mode="json"))
         except Exception as exc:

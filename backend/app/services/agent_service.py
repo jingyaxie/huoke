@@ -30,7 +30,9 @@ from app.services.agent_policy import (
 from app.services.agent_run_controller import AgentRunController
 from app.services.agent_dream_service import AgentDreamService
 from app.services.agent_experience_store import AgentExperienceStore
+from app.services.agent_profile_store import AgentProfileStore
 from app.services.agent_rule_store import AgentRuleStore
+from app.schemas.agent_profile import AgentProfileOut
 from app.services.agent_network_capture import compact_tool_result_for_llm
 from app.services.agent_run_store import (
     AgentRunRecord,
@@ -85,45 +87,51 @@ from app.services.stored_comment_tools import (
     STORED_COMMENT_WRITE_TOOLS,
 )
 
-SYSTEM_PROMPT = """你是一个浏览器自动化智能体。架构分层如下：
+RUNTIME_KERNEL_PROMPT = """你是一个浏览器自动化智能体。
 
-【底层】BrowserRuntime（已内置，通过 browser_* 工具调用）
+【底层】BrowserRuntime（browser_* 工具）
 - 真实 Chrome + 人类延迟/滚动（browser_warmup、browser_browse）
-- 自动拦截 XHR/Fetch JSON（browser_wait_api、browser_get_network_data 返回完整 data）
-- 底层不做任何平台业务解析，只提供「像真人用 Chrome 浏览」的能力
+- 自动拦截 XHR/Fetch JSON（browser_wait_api、browser_get_network_data）
+- 底层只提供浏览能力，业务由 Skill 或档案任务说明决定
 
-【业务层】Skill（builtin）
-- 所有业务能力通过 invoke_skill / skill_* 调用；REST 与 Agent 共用同一 Skill 执行层
-- 仅使用 builtin：*-keyword-comments、content-comments、search-content、follow-user、send-dm、reply-comment、pipeline-keyword-video-comments
-- Pipeline 任务用 /pipeline-keyword-video-comments（内置 T0→T1→Agent Recovery 兜底）
-
-builtin 失败时的兜底顺序（禁止改用手动点页面完成业务）：
-1. check-login，未登录则 task_failed
-2. 同一 builtin 加 show_browser=true 重试（参数不变）
-3. 仍失败则 task_failed 上报 error；可用 browser_get_page_info 诊断，但禁止 browser_click/fill 模拟搜索/翻评论
+【业务层】Skill
+- 业务能力通过 invoke_skill / skill_* 调用；具体可用 Skill 见文末摘要与档案限定
+- SkillHub：skillhub_search / skillhub_install / read_skill_resource / run_skill_script
 
 可用 browser 工具：browser_goto、browser_browse、browser_warmup、browser_wait_api、browser_get_network_data、browser_click、browser_fill、browser_scroll、browser_get_page_info、browser_screenshot
 
-SkillHub：skillhub_search / skillhub_install / read_skill_resource / run_skill_script
-
-工作方式：
-1. 理解目标 → list_skills → 优先 invoke 对应 builtin skill
-2. 关键词+评论：invoke douyin-keyword-comments / xhs-keyword-comments / pipeline-keyword-video-comments
-3. 关注/私信/回复评论：invoke follow-user / send-dm / reply-comment（勿用 browser 翻页找评论）
-4. 复杂子任务 spawn_task；成功 task_complete，失败 task_failed
-6. 【数据库 content_comments 表】增删改查用 db 工具（勿用 list_local_comment_files 代替查库）：
-   - 查：query_stored_contents / query_stored_comments / get_stored_content_detail / get_stored_comment
-   - 增：create_stored_comment；改：update_stored_comment；删：delete_stored_comment / delete_stored_content
-7. 【本地 JSON 文件】仅分析磁盘 reports/*.json 时用 list_local_comment_files / read_local_comments / analyze_local_comments
-8. 找到评论后回复：invoke reply-comment（传入 comment_id、content_url、reply_to_user_id、photo_author_id）
-9. 优先复用历史 tool 返回与已拦截 JSON，避免重复打开页面
-
-注意：
-- 不要编造未观察到的数据；解析必须基于 browser_get_network_data 返回的 JSON
+通用约束：
+- 复杂子任务用 spawn_task；成功 task_complete，失败 task_failed
+- 不要编造未观察到的数据
 - 登录墙/验证码 → task_failed
-- 抖音关键词+评论/搜索：只 invoke douyin-keyword-comments / search-content / pipeline，禁止 browser 点搜索框或 goto /search/
+- 优先复用历史 tool 返回与已拦截 JSON
 - 回复使用中文
 """
+
+STANDARD_WORKFLOW_PROMPT = """【标准获客流程】（仅当档案未指定专用链路时适用）
+
+builtin Skill：*-keyword-comments、content-comments、search-content、follow-user、send-dm、reply-comment、pipeline-keyword-video-comments、query-stored-comments、query-interaction-stats、check-login
+
+Pipeline：/pipeline-keyword-video-comments（T0 builtin → T1 show_browser 重试 → T2 Agent Recovery）
+
+builtin 失败兜底（禁止改用手动点页面完成业务）：
+1. check-login，未登录则 task_failed
+2. 同一 builtin 加 show_browser=true 重试
+3. 仍失败则 task_failed；可用 browser_get_page_info 诊断，禁止 browser_click/fill 模拟搜索/翻评论
+
+工作方式：
+1. list_skills → 优先 invoke 对应 builtin
+2. 关键词+评论：douyin-keyword-comments / xhs-keyword-comments / pipeline-keyword-video-comments
+3. 关注/私信/回复：follow-user / send-dm / reply-comment（勿 browser 翻页找评论）
+4. 【数据库 content_comments】查：query_stored_contents / query_stored_comments / get_stored_content_detail / get_stored_comment；增删改用 create/update/delete_stored_*
+5. 【本地 JSON】仅分析磁盘 reports/*.json：list_local_comment_files / read_local_comments / analyze_local_comments
+6. 回复评论：reply-comment（comment_id、content_url、reply_to_user_id、photo_author_id）
+
+抖音关键词+评论/搜索：只 invoke douyin-keyword-comments / search-content / pipeline，禁止 browser 点搜索框或 goto /search/
+"""
+
+# 兼容旧引用
+SYSTEM_PROMPT = RUNTIME_KERNEL_PROMPT + "\n\n" + STANDARD_WORKFLOW_PROMPT
 
 
 def _build_system_prompt(
@@ -131,8 +139,23 @@ def _build_system_prompt(
     rules_prompt: str,
     experience_prompt: str,
     mode: AgentMode,
+    profile: AgentProfileOut | None = None,
 ) -> str:
-    parts = [SYSTEM_PROMPT]
+    profile = profile or AgentProfileStore.default_profile()
+    custom = (profile.system_prompt or "").strip()
+    parts: list[str] = []
+    if profile.inherit_base_prompt:
+        parts.append(RUNTIME_KERNEL_PROMPT)
+        if profile.inherit_workflow_prompt:
+            parts.append(STANDARD_WORKFLOW_PROMPT)
+        if custom:
+            parts.append(f"## 角色与任务（{profile.name}）\n{custom}")
+    elif custom:
+        parts = [custom]
+    else:
+        parts.append(RUNTIME_KERNEL_PROMPT)
+        if profile.inherit_workflow_prompt:
+            parts.append(STANDARD_WORKFLOW_PROMPT)
     if mode == "plan":
         parts.append(PLAN_MODE_PROMPT)
     elif mode == "ask":
@@ -144,6 +167,16 @@ def _build_system_prompt(
     if skills_summary:
         parts.append(f"可用技能摘要（完整内容在 invoke_skill 时加载）：\n{skills_summary}")
     return "\n\n".join(parts)
+
+
+def _apply_system_prompt_to_messages(
+    messages: list[dict[str, Any]],
+    content: str,
+) -> None:
+    if messages and messages[0].get("role") == "system":
+        messages[0] = {"role": "system", "content": content}
+    else:
+        messages.insert(0, {"role": "system", "content": content})
 
 
 def _has_image_content(messages: list[dict[str, Any]]) -> bool:
@@ -177,6 +210,7 @@ class AgentService:
         self.session_manager = AgentSessionManager.get_instance()
         self.run_store = AgentRunStore(settings)
         self.rule_store = AgentRuleStore(settings)
+        self.profile_store = AgentProfileStore(settings)
         self.checkpoint_store = AgentCheckpointStore(settings)
         self.run_controller = AgentRunController.get()
         self.ai_factory = AIClientFactory(settings)
@@ -420,6 +454,45 @@ class AgentService:
             if "search" in selector or "搜索" in selector:
                 return True
         return False
+
+    @staticmethod
+    def _filter_skills_for_profile(skills: list[Any], profile: AgentProfileOut) -> list[Any]:
+        if not profile.skill_ids:
+            return skills
+        allowed = set(profile.skill_ids)
+        return [skill for skill in skills if skill.id in allowed]
+
+    def _system_prompt_for_profile(
+        self,
+        profile: AgentProfileOut,
+        skills: list[Any],
+        explicit_skill_ids: set[str] | list[str],
+        mode: AgentMode,
+        *,
+        user_query: str = "",
+    ) -> str:
+        rules_prompt = self.rule_store.build_rules_prompt(
+            self.tenant_id,
+            self.platform,
+            exclude_rule_ids=profile.exclude_rule_ids,
+        )
+        experience_prompt = ""
+        if self.settings.agent_dream_enabled and profile.inherit_experience_prompt:
+            experience_prompt = self.experience_store.build_experience_prompt(
+                self.tenant_id,
+                query=user_query,
+                platform=self.platform,
+                limit=self.settings.agent_dream_inject_max,
+                agent_profile_id=profile.id,
+            )
+        explicit = set(explicit_skill_ids or [])
+        return _build_system_prompt(
+            skills_description_summary(skills, explicit),
+            rules_prompt,
+            experience_prompt,
+            mode,
+            profile,
+        )
 
     def _prioritize_skills(self, skills: list[Any]) -> list[Any]:
         if not skills:
@@ -857,6 +930,7 @@ class AgentService:
         run_mode: RunMode,
         status: str = "active",
         phase: str = "plan",
+        explicit_skill_ids: list[str] | None = None,
     ) -> None:
         snapshot = self._extract_task_snapshot(history)
         run.loop_state = LoopState(
@@ -864,7 +938,8 @@ class AgentService:
             history=list(history),
             step=step,
             provider=run.provider,
-            explicit_skill_ids=[],
+            agent_profile_id=run.agent_profile_id or "default",
+            explicit_skill_ids=list(explicit_skill_ids or []),
             mode=mode,
             run_mode=run_mode,
             phase=phase,
@@ -1288,6 +1363,7 @@ class AgentService:
         run_mode: RunMode,
         start_step: int = 1,
         provider: str = "openai",
+        explicit_skill_ids: list[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         max_steps = self.settings.agent_max_steps
         terminal_status: str | None = None
@@ -1670,6 +1746,7 @@ class AgentService:
                             history=history,
                             step=step,
                             provider=run.provider,
+                            agent_profile_id=run.agent_profile_id or profile.id,
                             explicit_skill_ids=[],
                             mode=mode,
                             run_mode=run_mode,
@@ -1730,6 +1807,10 @@ class AgentService:
                             "status": "failed",
                             "summary": "子任务未完成",
                         }
+                        parent_profile = self.profile_store.resolve(
+                            self.tenant_id,
+                            run.agent_profile_id,
+                        )
                         async for sub_event, sub_result in run_subagent(
                             task=str(fn_args.get("task", "")),
                             session=session,
@@ -1738,6 +1819,7 @@ class AgentService:
                             settings_max_steps=self.settings.agent_subagent_max_steps,
                             max_steps=fn_args.get("max_steps"),
                             parent_run_id=run.run_id,
+                            profile=parent_profile,
                         ):
                             if sub_result is not None:
                                 sub_terminal = sub_result
@@ -1874,6 +1956,7 @@ class AgentService:
                     mode=mode,
                     run_mode=run_mode,
                     phase=phase,
+                    explicit_skill_ids=explicit_skill_ids,
                 )
             else:
                 terminal_status = "failed"
@@ -2149,6 +2232,7 @@ class AgentService:
         provider: Literal["openai", "deepseek"] | None = None,
         headless: bool | None = None,
         explicit_skill_ids: list[str] | None = None,
+        agent_profile_id: str | None = None,
         mode: AgentMode = "agent",
         run_mode: RunMode = "auto",
     ) -> AsyncIterator[AgentEvent]:
@@ -2168,6 +2252,23 @@ class AgentService:
             return
 
         explicit_ids = set(explicit_skill_ids or []) | set(parse_explicit_skill_ids(message))
+        try:
+            profile = self.profile_store.resolve(self.tenant_id, agent_profile_id)
+        except ValueError as exc:
+            yield AgentEvent(type="error", data={"message": str(exc)})
+            return
+        if profile.platforms and self.platform not in profile.platforms:
+            yield AgentEvent(
+                type="error",
+                data={
+                    "message": (
+                        f"Agent「{profile.name}」不适用当前平台 {self.platform}，"
+                        f"适用平台：{', '.join(profile.platforms)}"
+                    ),
+                },
+            )
+            return
+
         yield AgentEvent(type="status", data={"phase": "init", "message": "正在准备对话…"})
         try:
             session, created_new = await self._resolve_session(session_id, headless)
@@ -2192,6 +2293,7 @@ class AgentService:
         run.mode = mode
         run.run_mode = run_mode
         run.provider = effective_provider
+        run.agent_profile_id = profile.id
 
         await self.run_controller.register(effective_run_id)
         try:
@@ -2214,6 +2316,7 @@ class AgentService:
                     )
 
             skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
+            skills = self._filter_skills_for_profile(skills, profile)
             skills_by_tool = {s.tool_name: s for s in skills}
             skills_by_id = {s.id: s for s in skills}
             skill_tools = build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
@@ -2235,15 +2338,6 @@ class AgentService:
                 self.settings,
             )
             vision_model = self._resolve_vision_model(effective_provider, model)
-            rules_prompt = self.rule_store.build_rules_prompt(self.tenant_id, self.platform)
-            experience_prompt = ""
-            if self.settings.agent_dream_enabled:
-                experience_prompt = self.experience_store.build_experience_prompt(
-                    self.tenant_id,
-                    query=message,
-                    platform=self.platform,
-                    limit=self.settings.agent_dream_inject_max,
-                )
             provider_info = self.get_config()["providers"].get(effective_provider, {})
 
             yield AgentEvent(
@@ -2268,6 +2362,8 @@ class AgentService:
                     "provider_note": provider_info.get("note"),
                     "mode": mode,
                     "run_mode": run_mode,
+                    "agent_profile_id": profile.id,
+                    "agent_profile_name": profile.name,
                     "phase": "plan",
                     "task_snapshot": {},
                     "agent_meta": self._agent_meta_payload(
@@ -2291,16 +2387,15 @@ class AgentService:
                 history = compressed
                 yield compress_event
 
+            system_content = self._system_prompt_for_profile(
+                profile,
+                skills,
+                explicit_ids,
+                mode,
+                user_query=message,
+            )
             messages: list[dict[str, Any]] = [
-                {
-                    "role": "system",
-                    "content": _build_system_prompt(
-                        skills_description_summary(skills, explicit_ids),
-                        rules_prompt,
-                        experience_prompt,
-                        mode,
-                    ),
-                },
+                {"role": "system", "content": system_content},
                 *history,
             ]
 
@@ -2322,6 +2417,7 @@ class AgentService:
                 mode=mode,
                 run_mode=run_mode,
                 phase="plan",
+                explicit_skill_ids=list(explicit_ids),
             )
 
             yield AgentEvent(type="status", data={"phase": "think", "message": "正在思考…"})
@@ -2342,6 +2438,7 @@ class AgentService:
                 mode=mode,
                 run_mode=run_mode,
                 provider=effective_provider,
+                explicit_skill_ids=list(explicit_ids),
             ):
                 yield event
         except asyncio.CancelledError:
@@ -2383,7 +2480,10 @@ class AgentService:
         history = list(state.history)
         start_step = max(1, state.step)
 
+        profile = self.profile_store.resolve(self.tenant_id, run.agent_profile_id)
         skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
+        skills = self._filter_skills_for_profile(skills, profile)
+        explicit_ids = set(state.explicit_skill_ids or [])
         skills_by_tool = {s.tool_name: s for s in skills}
         skills_by_id = {s.id: s for s in skills}
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
@@ -2392,7 +2492,7 @@ class AgentService:
                 TOOL_DEFINITIONS
                 + COMMENT_DATA_TOOL_DEFINITIONS
                 + STORED_COMMENT_TOOL_DEFINITIONS
-                + build_skill_tool_definitions(skills)
+                + build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
                 + hub_tools,
                 mode,
             ),
@@ -2400,6 +2500,22 @@ class AgentService:
         )
         vision_model = self._resolve_vision_model(state.provider, model)
         provider_info = self.get_config()["providers"].get(state.provider, {})
+
+        resume_query = ""
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    resume_query = content.strip()
+                    break
+        system_content = self._system_prompt_for_profile(
+            profile,
+            skills,
+            explicit_ids,
+            mode,
+            user_query=resume_query,
+        )
+        _apply_system_prompt_to_messages(messages, system_content)
 
         run.status = "active"
         run.mode = mode
@@ -2426,6 +2542,8 @@ class AgentService:
                 "provider_note": provider_info.get("note"),
                 "mode": mode,
                 "run_mode": run_mode,
+                "agent_profile_id": profile.id,
+                "agent_profile_name": profile.name,
                 "phase": state.phase,
                 "task_snapshot": state.task_snapshot,
                 "agent_meta": self._agent_meta_payload(
@@ -2465,6 +2583,7 @@ class AgentService:
                 run_mode=run_mode,
                 start_step=start_step,
                 provider=state.provider,
+                explicit_skill_ids=list(explicit_ids),
             ):
                 yield event
         except asyncio.CancelledError:
@@ -2501,7 +2620,10 @@ class AgentService:
         mode: AgentMode = state.mode  # type: ignore[assignment]
         run_mode: RunMode = state.run_mode  # type: ignore[assignment]
 
-        skills = self.skill_store.list_enabled(self.tenant_id)
+        profile = self.profile_store.resolve(self.tenant_id, run.agent_profile_id)
+        skills = self._prioritize_skills(self.skill_store.list_enabled(self.tenant_id))
+        skills = self._filter_skills_for_profile(skills, profile)
+        explicit_ids = set(state.explicit_skill_ids or [])
         skills_by_tool = {s.tool_name: s for s in skills}
         skills_by_id = {s.id: s for s in skills}
         hub_tools = build_skillhub_tool_definitions(has_packages=True)
@@ -2510,13 +2632,30 @@ class AgentService:
                 TOOL_DEFINITIONS
                 + COMMENT_DATA_TOOL_DEFINITIONS
                 + STORED_COMMENT_TOOL_DEFINITIONS
-                + build_skill_tool_definitions(skills)
+                + build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
                 + hub_tools,
                 mode,
             ),
             mode,
         )
         vision_model = self._resolve_vision_model(state.provider, model)
+
+        approval_query = ""
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    approval_query = content.strip()
+                    break
+        system_content = self._system_prompt_for_profile(
+            profile,
+            skills,
+            explicit_ids,
+            mode,
+            user_query=approval_query,
+        )
+        _apply_system_prompt_to_messages(messages, system_content)
+
         pw_executor = PlaywrightToolExecutor(session, self.settings)
         skill_executor = SkillExecutor(
             self.settings,
@@ -2567,6 +2706,7 @@ class AgentService:
                     },
                 )
             sub_terminal: dict[str, Any] = {"status": "failed", "summary": "子任务未完成"}
+            approval_profile = self.profile_store.resolve(self.tenant_id, run.agent_profile_id)
             async for sub_event, sub_result in run_subagent(
                 task=str(pending.arguments.get("task", "")),
                 session=session,
@@ -2575,6 +2715,7 @@ class AgentService:
                 settings_max_steps=self.settings.agent_subagent_max_steps,
                 max_steps=pending.arguments.get("max_steps"),
                 parent_run_id=run.run_id,
+                profile=approval_profile,
             ):
                 if sub_result is not None:
                     sub_terminal = sub_result
@@ -2719,6 +2860,7 @@ class AgentService:
             session_id=run.browser_session_id,
             run_id=run_id,
             provider=run.provider,  # type: ignore[arg-type]
+            agent_profile_id=run.agent_profile_id,
             mode="agent",
             run_mode=run.run_mode,  # type: ignore[arg-type]
         ):

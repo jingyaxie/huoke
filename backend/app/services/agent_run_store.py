@@ -31,6 +31,7 @@ class LoopState(BaseModel):
     history: list[dict[str, Any]] = Field(default_factory=list)
     step: int = 0
     provider: str = "openai"
+    agent_profile_id: str = "default"
     explicit_skill_ids: list[str] = Field(default_factory=list)
     mode: str = "agent"
     run_mode: str = "auto"
@@ -48,6 +49,7 @@ class AgentRunRecord(BaseModel):
     status: RunStatus = "active"
     mode: str = "agent"
     run_mode: str = "auto"
+    agent_profile_id: str = "default"
     messages: list[dict[str, Any]] = Field(default_factory=list)
     pending_plan: PendingPlan | None = None
     pending_approval: PendingApproval | None = None

@@ -24,6 +24,7 @@ from app.models import *  # noqa: F401,F403
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.playwright_pool import PlaywrightPool
 from app.services.bootstrap_service import ensure_bootstrap_admin
+from app.services.font_bootstrap import ensure_cjk_fonts
 from app.services.tenant_auth_service import TenantAuthService
 
 
@@ -48,6 +49,10 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         session.close()
+
+    await AgentSessionManager.get_instance().sync_browser_render_epoch()
+    await PlaywrightPool.get().sync_browser_render_epoch()
+    await ensure_cjk_fonts()
 
     yield
     await AgentSessionManager.get_instance().shutdown_all()

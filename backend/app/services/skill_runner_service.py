@@ -349,6 +349,7 @@ class SkillRunnerService:
                 task,
                 provider=provider,
                 explicit_skill_ids=explicit_skill_ids,
+                agent_profile_id="pipeline-recovery",
                 mode="agent",
                 run_mode="auto",
             ):

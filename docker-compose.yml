@@ -33,6 +33,7 @@ services:
     image: douyin-backend-app:latest
     container_name: douyin_backend
     restart: unless-stopped
+    shm_size: "256mb"
     env_file:
       - ./.env
     environment:
@@ -40,6 +41,9 @@ services:
       MYSQL_PASSWORD: douyin
       MYSQL_DATABASE: douyin_hot
       DISPLAY: :99
+      XVFB_SCREEN: 1440x900x24
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
       UVICORN_RELOAD: "1"
       STORAGE_ROOT: /data/huoke-storage
     depends_on:

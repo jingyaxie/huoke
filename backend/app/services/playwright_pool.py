@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from app.core.antibot import (
+    BROWSER_RENDER_EPOCH,
     apply_stealth,
     context_kwargs,
     headless_for_platform,
@@ -38,6 +39,13 @@ class PlaywrightPool:
         self._browser: Browser | None = None
         self._locks: dict[str, asyncio.Lock] = {}
         self._start_lock = asyncio.Lock()
+        self._browser_render_epoch = 0
+
+    async def sync_browser_render_epoch(self) -> None:
+        if self._browser_render_epoch == BROWSER_RENDER_EPOCH:
+            return
+        await self.shutdown()
+        self._browser_render_epoch = BROWSER_RENDER_EPOCH
 
     @classmethod
     def get(cls) -> PlaywrightPool:
@@ -78,6 +86,7 @@ class PlaywrightPool:
         persist_state: bool = True,
         account_id: str = "default",
     ) -> AsyncIterator[tuple[BrowserContext, Page]]:
+        await self.sync_browser_render_epoch()
         async with self._lock_for(platform, tenant_id, account_id):
             resolved_headless = headless_for_platform(settings, platform, headless)
             playwright = await self._ensure_playwright()
@@ -99,6 +108,7 @@ class PlaywrightPool:
                     settings,
                     state=store.load(tenant_id, account_id),
                     tenant_id=tenant_id,
+                    visible=not resolved_headless,
                 )
             try:
                 page = context.pages[0] if context.pages else await context.new_page()

@@ -351,12 +351,14 @@ export async function streamAgentChat({
   headless,
   mode,
   runMode,
+  agentProfileId,
   onEvent,
   signal,
 }) {
   const body = { message, provider, mode: mode || "agent", run_mode: runMode || "auto" };
   if (sessionId) body.session_id = sessionId;
   if (runId) body.run_id = runId;
+  if (agentProfileId) body.agent_profile_id = agentProfileId;
   if (headless !== null && headless !== undefined) body.headless = headless;
 
   return streamAgentEvents(`${baseURL}/agent/chat`, body, onEvent, signal);
@@ -471,6 +473,47 @@ export async function deleteRule(ruleId) {
     headers: agentHeaders(),
   });
   if (!resp.ok) throw new Error("删除规则失败");
+  return resp.json();
+}
+
+export async function fetchAgentProfiles() {
+  const resp = await fetch(`${baseURL}/agent/profiles`, { headers: agentHeaders() });
+  if (!resp.ok) throw new Error("获取 Agent 档案失败");
+  return resp.json();
+}
+
+export async function createAgentProfile(payload) {
+  const resp = await fetch(`${baseURL}/agent/profiles`, {
+    method: "POST",
+    headers: agentHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "创建 Agent 档案失败");
+  }
+  return resp.json();
+}
+
+export async function updateAgentProfile(profileId, payload) {
+  const resp = await fetch(`${baseURL}/agent/profiles/${profileId}`, {
+    method: "PUT",
+    headers: agentHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "更新 Agent 档案失败");
+  }
+  return resp.json();
+}
+
+export async function deleteAgentProfile(profileId) {
+  const resp = await fetch(`${baseURL}/agent/profiles/${profileId}`, {
+    method: "DELETE",
+    headers: agentHeaders(),
+  });
+  if (!resp.ok) throw new Error("删除 Agent 档案失败");
   return resp.json();
 }
 

@@ -26,6 +26,8 @@ IMAGE_REBUILD_PATTERNS=(
   'backend/scripts/docker-entrypoint.sh'
   'backend/scripts/install-cjk-fonts.sh'
   'backend/scripts/fluxbox/'
+  'backend/app/core/antibot.py'
+  'backend/app/services/font_bootstrap.py'
   'docker-compose.yml'
 )
 

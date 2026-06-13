@@ -86,6 +86,7 @@
           <button type="button" class="sidebar-link" @click="skillsDrawerVisible = true">技能</button>
           <button type="button" class="sidebar-link" @click="orchestrationDrawerVisible = true">编排</button>
           <button type="button" class="sidebar-link" @click="experiencesDrawerVisible = true">经验</button>
+          <button type="button" class="sidebar-link" @click="agentsDrawerVisible = true">Agent</button>
           <button type="button" class="sidebar-link" @click="rulesDrawerVisible = true">规则</button>
         </div>
       </aside>
@@ -149,6 +150,22 @@
               <p class="welcome-hint">侧栏切换平台后生效；Pipeline 与关键词指令仅对当前平台执行，带「请粘贴/评论ID」的示例需替换真实值</p>
               <div class="quick-prompts">
                 <button
+                  type="button"
+                  class="prompt-chip prompt-chip-featured"
+                  :disabled="running"
+                  @click="startHumanAgentFlow"
+                >
+                  人类漫游获客
+                </button>
+                <button
+                  type="button"
+                  class="prompt-chip prompt-chip-featured prompt-chip-secondary"
+                  :disabled="running"
+                  @click="startDailyRoamFlow"
+                >
+                  抖音日播获客
+                </button>
+                <button
                   v-for="item in quickPrompts"
                   :key="item"
                   type="button"
@@ -197,6 +214,8 @@
                         <span>浏览器可见</span>
                         <el-switch v-model="headless" size="small" inline-prompt active-text="无头" inactive-text="可见" />
                       </div>
+                      <p class="settings-hint">关闭无头（可见）后，Skill 在 VNC 桌面操作；右侧「VNC」标签可实时观看。</p>
+                      <el-button size="small" text @click="openCurrentPlatformVnc">打开 VNC 弹窗</el-button>
                       <div class="settings-row">
                         <span>传输协议</span>
                         <el-switch v-model="useWebSocket" size="small" inline-prompt active-text="WS" inactive-text="SSE" />
@@ -223,6 +242,36 @@
                     </div>
                   </el-popover>
 
+                  <el-select
+                    v-model="agentProfileId"
+                    size="small"
+                    class="pill-select pill-agent"
+                    placeholder="选择 Agent"
+                    :disabled="running"
+                  >
+                    <el-option
+                      v-for="item in agentProfiles"
+                      :key="item.id"
+                      :label="item.name"
+                      :value="item.id"
+                    />
+                  </el-select>
+                  <el-button
+                    size="small"
+                    class="pill-daily-roam"
+                    :disabled="running"
+                    @click="startHumanAgentFlow"
+                  >
+                    人类
+                  </el-button>
+                  <el-button
+                    size="small"
+                    class="pill-daily-roam pill-daily-roam-muted"
+                    :disabled="running"
+                    @click="startDailyRoamFlow"
+                  >
+                    日播
+                  </el-button>
                   <el-select v-model="agentMode" size="small" class="pill-select pill-mode">
                     <el-option label="Agent" value="agent" />
                     <el-option label="Plan" value="plan" />
@@ -263,6 +312,12 @@
           <el-tabs v-model="sideTab" class="side-tabs" stretch>
             <el-tab-pane label="预览" name="preview">
               <div class="side-scroll">
+                <div class="preview-toolbar">
+                  <el-button size="small" type="primary" plain @click="openCurrentPlatformVnc">
+                    观看 VNC
+                  </el-button>
+                  <span v-if="!headless" class="preview-vnc-hint">可见模式 · 浏览器在 VNC 中运行</span>
+                </div>
                 <div class="preview-frame">
                   <img v-if="screenshot" :src="screenshot" alt="页面截图" class="preview-img" />
                   <div v-else class="preview-empty">
@@ -342,6 +397,20 @@
                     <code>{{ formatIssueList(validationReport.suggestions) }}</code>
                   </div>
                 </div>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="VNC" name="vnc">
+              <div class="vnc-panel">
+                <div class="vnc-panel-head">
+                  <span v-if="headless" class="vnc-panel-warn">当前为无头模式，VNC 可能看不到浏览器操作</span>
+                  <span v-else class="vnc-panel-ok">可见模式 · 可实时观看 Chrome 操作</span>
+                  <el-button size="small" @click="openCurrentPlatformVnc">弹窗观看</el-button>
+                </div>
+                <iframe
+                  class="vnc-frame"
+                  :src="vncDisplayUrl"
+                  title="VNC 浏览器"
+                />
               </div>
             </el-tab-pane>
 
@@ -966,6 +1035,92 @@
         <pre v-if="benchmarkResult" class="import-preview">{{ JSON.stringify(benchmarkResult, null, 2) }}</pre>
       </el-drawer>
 
+      <el-drawer v-model="agentsDrawerVisible" title="Agent 档案管理" size="620px" @open="loadAgentProfiles">
+        <div class="skills-toolbar">
+          <el-button type="primary" size="small" @click="openAgentProfileForm()">新建 Agent</el-button>
+          <el-button size="small" @click="loadAgentProfiles">刷新</el-button>
+        </div>
+        <el-table :data="agentProfiles" stripe size="small">
+          <el-table-column prop="name" label="名称" min-width="120" />
+          <el-table-column prop="id" label="ID" min-width="120" show-overflow-tooltip />
+          <el-table-column prop="scope" label="范围" width="70">
+            <template #default="{ row }">{{ row.scope === "global" ? "内置" : "租户" }}</template>
+          </el-table-column>
+          <el-table-column prop="enabled" label="启用" width="60">
+            <template #default="{ row }">{{ row.enabled ? "是" : "否" }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button v-if="row.scope === 'tenant'" link type="primary" size="small" @click="openAgentProfileForm(row)">编辑</el-button>
+              <el-button v-if="row.scope === 'tenant'" link type="danger" size="small" @click="removeAgentProfile(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-drawer>
+
+      <el-dialog v-model="agentProfileFormVisible" :title="editingAgentProfile ? '编辑 Agent' : '新建 Agent'" width="640px">
+        <el-form label-width="110px">
+          <el-form-item label="档案 ID" required>
+            <el-input v-model="agentProfileForm.id" :disabled="!!editingAgentProfile" placeholder="如 comment-reply-bot" />
+          </el-form-item>
+          <el-form-item label="名称" required>
+            <el-input v-model="agentProfileForm.name" />
+          </el-form-item>
+          <el-form-item label="描述">
+            <el-input v-model="agentProfileForm.description" />
+          </el-form-item>
+          <el-form-item label="运行时内核">
+            <el-switch v-model="agentProfileForm.inherit_base_prompt" />
+            <span class="form-hint">BrowserRuntime + 通用约束（建议开启）</span>
+          </el-form-item>
+          <el-form-item label="标准获客流程">
+            <el-switch v-model="agentProfileForm.inherit_workflow_prompt" />
+            <span class="form-hint">keyword-comments / DB 查库等 Phase 0 流程；social-roam 等专用档案应关闭</span>
+          </el-form-item>
+          <el-form-item label="注入历史经验">
+            <el-switch v-model="agentProfileForm.inherit_experience_prompt" />
+            <span class="form-hint">做梦归纳的经验；专用档案可关闭避免标准流程经验干扰</span>
+          </el-form-item>
+          <el-form-item label="排除规则 ID">
+            <el-input
+              v-model="agentProfileForm.excludeRuleIdsText"
+              placeholder="逗号分隔，如 douyin-platform,douyin-social-actions"
+            />
+          </el-form-item>
+          <el-form-item label="角色提示词" required>
+            <el-input
+              v-model="agentProfileForm.system_prompt"
+              type="textarea"
+              :rows="8"
+              placeholder="描述该 Agent 的角色、职责与禁止事项"
+            />
+          </el-form-item>
+          <el-form-item label="限定 Skill">
+            <el-select
+              v-model="agentProfileForm.skill_ids"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="留空=全部已启用 Skill"
+              style="width: 100%"
+            >
+              <el-option v-for="skill in skills" :key="skill.id" :label="skill.name" :value="skill.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="适用平台">
+            <el-input v-model="agentProfileForm.platformsText" placeholder="留空=全部，逗号分隔如 douyin,kuaishou" />
+          </el-form-item>
+          <el-form-item label="启用">
+            <el-switch v-model="agentProfileForm.enabled" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="agentProfileFormVisible = false">取消</el-button>
+          <el-button type="primary" :loading="agentProfileSaving" @click="saveAgentProfile">保存</el-button>
+        </template>
+      </el-dialog>
+
       <el-drawer v-model="rulesDrawerVisible" title="Rules 规则管理" size="520px" @open="loadRules">
         <div class="skills-toolbar">
           <el-button type="primary" size="small" @click="openRuleForm()">新建规则</el-button>
@@ -1026,7 +1181,7 @@ import AgentStreamingBlock from "../components/AgentStreamingBlock.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
 import ServerLoginDialog from "../components/ServerLoginDialog.vue";
 import { usePlatformVnc } from "../composables/usePlatformVnc";
-import { getAccountId, getApiKey, getPlatformId, getTenantId, setAccountId, setApiKey, setTenantId } from "../api/http";
+import { getAccountId, getApiKey, getPlatformId, getTenantId, resolveVncUrl, setAccountId, setApiKey, setPlatformId, setTenantId } from "../api/http";
 
 const PLATFORM_META = {
   douyin: { label: "抖音", keywordSkill: "douyin-keyword-comments", urlParam: "video_url" },
@@ -1049,9 +1204,11 @@ import {
   cancelAgentJobTask,
   cancelAgentRun,
   consolidateDreams,
+  createAgentProfile,
   createAgentWebSocket,
   createRule,
   createSkill,
+  deleteAgentProfile,
   deleteAgentRun,
   deleteExperience,
   deleteRule,
@@ -1060,6 +1217,7 @@ import {
   dreamFromRun,
   exportSkillsJson,
   fetchAgentConfig,
+  fetchAgentProfiles,
   fetchAgentBindingStatus,
   fetchAgentJob,
   fetchAgentJobs,
@@ -1093,12 +1251,17 @@ import {
   skillMarkdownDownloadUrl,
   streamAgentChat,
   toggleExperienceEnabled,
+  updateAgentProfile,
   updateRule,
   updateSkill,
 } from "../api/agent";
 
 const RUN_STORAGE_KEY = "huoke_agent_run_id";
 const SESSION_STORAGE_KEY = "huoke_agent_session_id";
+const AGENT_PROFILE_STORAGE_KEY = "huoke_agent_profile_id";
+const DAILY_ROAM_PROFILE_ID = "douyin-daily-roam";
+const HUMAN_AGENT_PROFILE_ID = "douyin-human-agent";
+const SOCIAL_ROAM_PROFILE_ID = "douyin-social-roam";
 
 function emptyRuleForm() {
   return {
@@ -1108,6 +1271,22 @@ function emptyRuleForm() {
     content: "",
     always_apply: true,
     platformsText: "",
+  };
+}
+
+function emptyAgentProfileForm() {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    system_prompt: "",
+    inherit_base_prompt: true,
+    inherit_workflow_prompt: true,
+    inherit_experience_prompt: true,
+    excludeRuleIdsText: "",
+    skill_ids: [],
+    platformsText: "",
+    enabled: true,
   };
 }
 
@@ -1144,6 +1323,13 @@ const provider = ref("deepseek");
 const providerOptions = ref({});
 const providerNote = ref("");
 const PROVIDER_STORAGE_KEY = "huoke_agent_provider";
+const agentProfileId = ref(localStorage.getItem(AGENT_PROFILE_STORAGE_KEY) || "default");
+const agentProfiles = ref([]);
+const agentsDrawerVisible = ref(false);
+const agentProfileFormVisible = ref(false);
+const agentProfileSaving = ref(false);
+const editingAgentProfile = ref(null);
+const agentProfileForm = ref(emptyAgentProfileForm());
 const agentMode = ref("agent");
 const runMode = ref("auto");
 const headless = ref(true);
@@ -1276,6 +1462,7 @@ const historyLoading = ref(false);
 const sidebarCollapsed = ref(false);
 const platformId = ref(getPlatformId());
 const currentPlatformLabel = computed(() => platformMeta(platformId.value).label);
+const vncDisplayUrl = computed(() => resolveVncUrl(""));
 const quickPrompts = computed(() => {
   const meta = platformMeta(platformId.value);
   return [
@@ -1409,6 +1596,103 @@ async function loadRules() {
     ElMessage.error(err.message || "加载规则失败");
   }
 }
+
+async function loadAgentProfiles() {
+  try {
+    const data = await fetchAgentProfiles();
+    agentProfiles.value = data.items || [];
+    if (!agentProfiles.value.some((p) => p.id === agentProfileId.value)) {
+      agentProfileId.value = "default";
+      localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, "default");
+    }
+  } catch (err) {
+    ElMessage.error(err.message || "加载 Agent 档案失败");
+  }
+}
+
+function openAgentProfileForm(row = null) {
+  editingAgentProfile.value = row;
+  if (row) {
+    agentProfileForm.value = {
+      id: row.id,
+      name: row.name,
+      description: row.description || "",
+      system_prompt: row.system_prompt || "",
+      inherit_base_prompt: row.inherit_base_prompt ?? true,
+      inherit_workflow_prompt: row.inherit_workflow_prompt ?? true,
+      inherit_experience_prompt: row.inherit_experience_prompt ?? true,
+      excludeRuleIdsText: (row.exclude_rule_ids || []).join(","),
+      skill_ids: [...(row.skill_ids || [])],
+      platformsText: (row.platforms || []).join(","),
+      enabled: row.enabled ?? true,
+    };
+  } else {
+    agentProfileForm.value = emptyAgentProfileForm();
+  }
+  agentProfileFormVisible.value = true;
+}
+
+async function saveAgentProfile() {
+  const platforms = agentProfileForm.value.platformsText
+    ? agentProfileForm.value.platformsText.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const payload = {
+    name: agentProfileForm.value.name.trim(),
+    description: agentProfileForm.value.description.trim(),
+    system_prompt: agentProfileForm.value.system_prompt.trim(),
+    inherit_base_prompt: agentProfileForm.value.inherit_base_prompt,
+    inherit_workflow_prompt: agentProfileForm.value.inherit_workflow_prompt,
+    inherit_experience_prompt: agentProfileForm.value.inherit_experience_prompt,
+    exclude_rule_ids: agentProfileForm.value.excludeRuleIdsText
+      ? agentProfileForm.value.excludeRuleIdsText.split(",").map((s) => s.trim()).filter(Boolean)
+      : [],
+    skill_ids: agentProfileForm.value.skill_ids || [],
+    platforms,
+    enabled: agentProfileForm.value.enabled,
+  };
+  if (!payload.name || !payload.system_prompt) {
+    ElMessage.warning("请填写名称与角色提示词");
+    return;
+  }
+  agentProfileSaving.value = true;
+  try {
+    if (editingAgentProfile.value) {
+      await updateAgentProfile(editingAgentProfile.value.id, payload);
+    } else {
+      const id = agentProfileForm.value.id.trim();
+      if (!id) {
+        ElMessage.warning("请填写档案 ID");
+        return;
+      }
+      await createAgentProfile({ ...payload, id });
+    }
+    ElMessage.success("Agent 档案已保存");
+    agentProfileFormVisible.value = false;
+    await loadAgentProfiles();
+  } catch (err) {
+    ElMessage.error(err.message || "保存失败");
+  } finally {
+    agentProfileSaving.value = false;
+  }
+}
+
+async function removeAgentProfile(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除 Agent「${row.name}」？`, "确认");
+    await deleteAgentProfile(row.id);
+    if (agentProfileId.value === row.id) {
+      agentProfileId.value = "default";
+      localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, "default");
+    }
+    await loadAgentProfiles();
+  } catch (err) {
+    if (err !== "cancel") ElMessage.error(err.message || "删除失败");
+  }
+}
+
+watch(agentProfileId, (id) => {
+  if (id) localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, id);
+});
 
 async function loadAgentJobs() {
   try {
@@ -1618,6 +1902,27 @@ function openVncLoginFromQr() {
       platform: qrLoginTarget.value.platform,
       platform_label: qrLoginTarget.value.platformLabel,
       vnc_url: qrLoginTarget.value.vncUrl,
+    },
+    tenantId.value,
+  );
+}
+
+async function openCurrentPlatformVnc() {
+  if (!accountBindings.value.length) {
+    try {
+      const data = await fetchAccountBindings(activeAccountId.value);
+      accountBindings.value = data.platforms || [];
+    } catch (err) {
+      ElMessage.error(err.message || "加载绑定信息失败");
+      return;
+    }
+  }
+  const row = accountBindings.value.find((item) => item.platform === platformId.value);
+  openVncView(
+    row || {
+      platform: platformId.value,
+      platform_label: currentPlatformLabel.value,
+      vnc_url: "",
     },
     tenantId.value,
   );
@@ -2262,6 +2567,10 @@ async function syncRunState() {
     runMode.value = run.run_mode || runMode.value;
     if (run.provider) provider.value = run.provider;
   }
+  if (run.agent_profile_id) {
+    agentProfileId.value = run.agent_profile_id;
+    localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, run.agent_profile_id);
+  }
   reviewReport.value = run.review_report || {};
   validationReport.value = run.validation_report || {};
 }
@@ -2619,6 +2928,66 @@ function applyQuickPrompt(text) {
   inputText.value = text;
 }
 
+function applyDailyRoamPreset(keyword) {
+  const normalized = (keyword || "淋浴房").trim() || "淋浴房";
+  setPlatformId("douyin");
+  platformId.value = "douyin";
+  window.dispatchEvent(new CustomEvent("huoke-platform-changed", { detail: "douyin" }));
+  agentProfileId.value = DAILY_ROAM_PROFILE_ID;
+  localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, DAILY_ROAM_PROFILE_ID);
+  headless.value = false;
+  sideTab.value = "vnc";
+  inputText.value = `关键词：${normalized}，开始日播获客。`;
+  ElMessage.success(`已切换「抖音日播获客」· 可见模式 · 右侧 VNC 标签可观看浏览器`);
+}
+
+async function startDailyRoamFlow() {
+  if (running.value) return;
+  try {
+    const { value } = await ElMessageBox.prompt("请输入今日搜索关键词", "抖音日播获客", {
+      confirmButtonText: "开始",
+      cancelButtonText: "取消",
+      inputValue: "淋浴房",
+      inputPlaceholder: "如：淋浴房、全屋定制",
+    });
+    applyDailyRoamPreset(value);
+  } catch {
+    // 用户取消
+  }
+}
+
+function applyHumanAgentPreset(keyword) {
+  const normalized = (keyword || "淋浴房").trim() || "淋浴房";
+  setPlatformId("douyin");
+  platformId.value = "douyin";
+  window.dispatchEvent(new CustomEvent("huoke-platform-changed", { detail: "douyin" }));
+  agentProfileId.value = SOCIAL_ROAM_PROFILE_ID;
+  localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, SOCIAL_ROAM_PROFILE_ID);
+  headless.value = false;
+  sideTab.value = "vnc";
+  inputText.value = `关键词：${normalized}，请用 social-roam 全人工漫游：浏览、看评论、自然回复和关注。`;
+  ElMessage.success("已切换「抖音人类漫游」· social-roam · 请在 VNC 观看");
+}
+
+async function startHumanAgentFlow() {
+  if (running.value) return;
+  try {
+    const { value } = await ElMessageBox.prompt(
+      "请输入搜索关键词（social-roam 全人工 UI 链路）",
+      "抖音人类漫游",
+      {
+        confirmButtonText: "开始",
+        cancelButtonText: "取消",
+        inputValue: "淋浴房",
+        inputPlaceholder: "如：淋浴房、全屋定制",
+      },
+    );
+    applyHumanAgentPreset(value);
+  } catch {
+    // 用户取消
+  }
+}
+
 async function scrollToBottom() {
   await nextTick();
   if (messagesRef.value) {
@@ -2741,6 +3110,9 @@ function handleEvent(event) {
       break;
     case "status":
       statusMessage.value = data.message || "";
+      if (data.phase === "browser" && !headless.value) {
+        sideTab.value = "vnc";
+      }
       break;
     case "message_delta":
       streamingText.value += data.delta || "";
@@ -2894,6 +3266,7 @@ async function sendMessageViaSse(text, onEvent, signal) {
     headless: headless.value,
     mode: agentMode.value,
     runMode: runMode.value,
+    agentProfileId: agentProfileId.value,
     signal: signal || abortController?.signal,
     onEvent: onEvent || handleEvent,
   });
@@ -2926,6 +3299,7 @@ async function sendMessageViaWs(text) {
           headless: headless.value,
           mode: agentMode.value,
           run_mode: runMode.value,
+          agent_profile_id: agentProfileId.value,
         });
       } catch (err) {
         clearWsWatchdog();
@@ -3048,6 +3422,7 @@ onMounted(async () => {
   await loadAgentConfig();
   loadSkills();
   loadRules();
+  await loadAgentProfiles();
   await loadAccounts();
   await loadBindingStatus();
   loadBuiltinHandlers();
@@ -3656,6 +4031,34 @@ onBeforeUnmount(() => {
   box-shadow: 0 1px 3px rgba(15, 118, 110, 0.08);
 }
 
+.prompt-chip-featured {
+  border-color: var(--agent-primary-muted);
+  background: linear-gradient(135deg, var(--agent-primary-soft) 0%, var(--agent-bg) 100%);
+  font-weight: 600;
+  max-width: none;
+}
+
+.prompt-chip-secondary {
+  border-color: var(--agent-border);
+  background: var(--agent-bg);
+  font-weight: 500;
+}
+
+.pill-daily-roam-muted {
+  border-color: var(--agent-border);
+  background: var(--agent-bg);
+  color: var(--agent-text);
+}
+
+.pill-daily-roam {
+  border-radius: 999px;
+  padding: 0 12px;
+  height: 28px;
+  border: 1px solid var(--agent-primary-muted);
+  background: var(--agent-primary-soft);
+  color: var(--agent-primary);
+}
+
 .step-json {
   margin: 0;
   border-top: 1px solid #f0f0f0;
@@ -3918,6 +4321,61 @@ onBeforeUnmount(() => {
 }
 
 /* Preview — 16:10 桌面浏览器视口 (1440×900) */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.preview-vnc-hint {
+  font-size: 12px;
+  color: #0f766e;
+}
+
+.vnc-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 420px;
+  padding: 10px 12px 14px;
+  box-sizing: border-box;
+}
+
+.vnc-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.vnc-panel-warn {
+  font-size: 12px;
+  color: #b45309;
+}
+
+.vnc-panel-ok {
+  font-size: 12px;
+  color: #0f766e;
+}
+
+.vnc-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid var(--agent-border);
+  border-radius: 10px;
+  background: #111827;
+}
+
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--agent-text-muted, #64748b);
+}
+
 .preview-frame {
   width: 100%;
   aspect-ratio: 16 / 10;

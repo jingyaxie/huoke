@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VNC</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+    }
+    #screen {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+  </style>
+  <script type="module">
+    import RFB from "./core/rfb.js";
+
+    function readQueryVariable(name, defaultValue) {
+      const re = new RegExp(".*[?&]" + name + "=([^&#]*)");
+      const match = document.location.href.match(re);
+      return match ? decodeURIComponent(match[1]) : defaultValue;
+    }
+
+    const host = readQueryVariable("host", window.location.hostname);
+    const port = readQueryVariable("port", window.location.port);
+    const password = readQueryVariable("password");
+    const path = readQueryVariable("path", "websockify");
+
+    let url = window.location.protocol === "https:" ? "wss" : "ws";
+    url += "://" + host;
+    if (port) url += ":" + port;
+    url += "/" + path;
+
+    const rfb = new RFB(document.getElementById("screen"), url, {
+      credentials: { password: password },
+    });
+    rfb.scaleViewport = true;
+    rfb.clipViewport = false;
+  </script>
+</head>
+<body>
+  <div id="screen"></div>
+</body>
+</html>

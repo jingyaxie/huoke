@@ -1,0 +1,45 @@
+# 本地 Mac 开发：仅 MySQL + 前端容器；后端在宿主机运行，Playwright 使用系统 Chrome。
+# 用法: docker compose -f docker-compose.local.yml up -d
+# 后端: scripts/dev-local.sh 或见 README「本地开发（系统浏览器）」
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: douyin_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: douyin_hot
+      MYSQL_USER: douyin
+      MYSQL_PASSWORD: douyin
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  frontend:
+    image: node:20-alpine
+    container_name: douyin_frontend
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      VITE_API_BASE_URL: /api
+      # 本地模式：后端在 Mac 宿主机，Docker 内通过 host.docker.internal 访问
+      VITE_PROXY_TARGET: http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["sh", "-lc", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+
+volumes:
+  frontend_node_modules:

@@ -63,6 +63,10 @@ class BrowserRuntime:
             await page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
             pass
+        from app.core.antibot import force_vnc_page_repaint, headless_for_platform
+
+        if not headless_for_platform(self.settings, self.session.platform, self.session.headless):
+            await force_vnc_page_repaint(page)
         await human_delay(page, self.settings, tenant_id=self.session.tenant_id, profile="page_load")
         for _ in range(max(0, scroll_rounds)):
             await human_scroll(page, self.settings, tenant_id=self.session.tenant_id)

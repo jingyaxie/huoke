@@ -5,10 +5,14 @@ services:
     ports: !override []
 
   backend:
+    shm_size: "256mb"
     ports: !override
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
       - "127.0.0.1:${VNC_PORT:-6080}:6080"
     environment:
+      XVFB_SCREEN: 1440x900x24
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
       UVICORN_RELOAD: "0"
 
   frontend_prod:

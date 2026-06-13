@@ -10,8 +10,8 @@ from app.core.antibot import (
     context_kwargs,
     headless_for_platform,
     human_delay,
-    launch_args,
-    launch_persistent_context,
+    launch_browser,
+    open_tenant_page,
     require_login,
 )
 from app.core.config import Settings
@@ -55,9 +55,10 @@ class DouyinCrawler:
         self, headless: bool | None = None
     ) -> tuple[Playwright, Browser, BrowserContext, Page]:
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(
+        browser = await launch_browser(
+            playwright,
+            self.settings,
             headless=headless_for_platform(self.settings, self.platform, headless),
-            args=launch_args(),
         )
         context = await browser.new_context(**self._context_kwargs())
         await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
@@ -131,9 +132,10 @@ class DouyinCrawler:
     async def _run_interactive_login_session(self) -> None:
         key = self._session_key(self.tenant_id, self.account_id)
         playwright = await async_playwright().start()
+        browser = None
         context = None
         try:
-            context = await launch_persistent_context(
+            browser, context, page = await open_tenant_page(
                 playwright,
                 self.settings,
                 self.platform,
@@ -142,13 +144,12 @@ class DouyinCrawler:
                 headless=False,
                 account_id=self.account_id,
             )
-            page = context.pages[0] if context.pages else await context.new_page()
             DouyinCrawler._interactive_sessions[key] = {
                 "platform": self.platform,
                 "tenant_id": self.tenant_id,
                 "account_id": self.account_id,
                 "playwright": playwright,
-                "browser": None,
+                "browser": browser,
                 "context": context,
                 "page": page,
             }
@@ -168,6 +169,8 @@ class DouyinCrawler:
             DouyinCrawler._interactive_tasks.pop(key, None)
             if context is not None:
                 await context.close()
+            if browser is not None:
+                await browser.close()
             await playwright.stop()
 
     async def fetch_hot(self, limit: int = 100) -> list[CrawlItem]:

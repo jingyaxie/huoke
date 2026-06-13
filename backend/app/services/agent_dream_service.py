@@ -209,6 +209,7 @@ class AgentDreamService:
             do_tips=do_tips,
             avoid_tips=avoid_tips,
             platform=run.platform,
+            agent_profile_id=(run.agent_profile_id or "").strip(),
             source_run_id=run.run_id,
             enabled=True,
         )

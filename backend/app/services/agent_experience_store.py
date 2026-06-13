@@ -148,6 +148,7 @@ class AgentExperienceStore:
         query: str,
         platform: str,
         limit: int = 5,
+        agent_profile_id: str | None = None,
     ) -> list[AgentExperienceOut]:
         items = self.list_all(tenant_id, include_disabled=False)
         query_tokens = _tokenize(query)
@@ -155,6 +156,10 @@ class AgentExperienceStore:
         for item in items:
             if item.platform and item.platform != platform:
                 continue
+            if agent_profile_id:
+                exp_profile = (item.agent_profile_id or "").strip()
+                if exp_profile and exp_profile != agent_profile_id:
+                    continue
             score = 0.0
             kw_tokens = _tokenize(" ".join(item.task_keywords))
             overlap = query_tokens & kw_tokens
@@ -177,8 +182,15 @@ class AgentExperienceStore:
         query: str,
         platform: str,
         limit: int = 5,
+        agent_profile_id: str | None = None,
     ) -> str:
-        items = self.retrieve_for_task(tenant_id, query=query, platform=platform, limit=limit)
+        items = self.retrieve_for_task(
+            tenant_id,
+            query=query,
+            platform=platform,
+            limit=limit,
+            agent_profile_id=agent_profile_id,
+        )
         if not items:
             return ""
         lines = [

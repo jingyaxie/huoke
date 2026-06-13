@@ -12,7 +12,7 @@ ROOT_DIR = BASE_DIR.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(BASE_DIR / ".env", ROOT_DIR / ".env"),
+        env_file=(BASE_DIR / ".env", ROOT_DIR / ".env", ROOT_DIR / ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     antibot_viewport_height: int = 1200
     antibot_locale: str = "zh-CN"
     antibot_browser_channel: Optional[str] = "chrome"
+    # False 时 channel 启动失败直接报错，不回退 Playwright 内置 Chromium
+    antibot_playwright_fallback: bool = True
     antibot_persistent_profile: bool = True
     antibot_warmup_enabled: bool = True
 

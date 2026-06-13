@@ -15,6 +15,10 @@ class AgentChatRequest(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
     account_id: str | None = None
+    agent_profile_id: str | None = Field(
+        default=None,
+        description="Agent 档案 ID，默认 default",
+    )
     provider: Literal["openai", "deepseek"] = "openai"
     headless: bool | None = None
     explicit_skill_ids: list[str] = Field(default_factory=list)
@@ -40,6 +44,7 @@ class AgentChatSyncResponse(BaseModel):
 
 class AgentAsyncSubmitRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
+    agent_profile_id: str | None = None
     provider: Literal["openai", "deepseek"] = "openai"
     mode: AgentMode = "agent"
     run_mode: RunMode = "auto"
@@ -97,6 +102,7 @@ class AgentRunOut(BaseModel):
     status: str
     mode: str = "agent"
     run_mode: str = "auto"
+    agent_profile_id: str = "default"
     message_count: int
     messages: list[dict[str, Any]] = Field(default_factory=list)
     pending_plan: dict[str, Any] | None = None

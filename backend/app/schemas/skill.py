@@ -22,6 +22,8 @@ BUILTIN_HANDLERS = {
     "send_dm": "发送私信",
     "reply_comment": "回复评论（DB 定位 + 页面 JS 接口）",
     "query_stored_comments": "从数据库查询已入库评论/内容",
+    "query_interaction_stats": "查询互动台账统计与去重状态",
+    "social_roam": "社交平台漫游获客（全人工读+写）",
     "pipeline_keyword_comments": "Pipeline：关键词内容+评论（含兜底）",
 }
 

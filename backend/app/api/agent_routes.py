@@ -37,6 +37,12 @@ from app.schemas.agent_experience import (
     AgentExperienceOut,
     AgentExperienceUpdate,
 )
+from app.schemas.agent_profile import (
+    AgentProfileCreate,
+    AgentProfileListResponse,
+    AgentProfileOut,
+    AgentProfileUpdate,
+)
 from app.schemas.agent_rule import (
     AgentRuleCreate,
     AgentRuleListResponse,
@@ -74,6 +80,7 @@ from app.schemas.skillhub import (
 )
 from app.services.agent_dream_service import AgentDreamService
 from app.services.agent_experience_store import AgentExperienceStore
+from app.services.agent_profile_store import AgentProfileStore
 from app.services.agent_rule_store import AgentRuleStore
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.agent_service import AgentService
@@ -108,6 +115,10 @@ def _skill_store(settings: Settings = Depends(get_settings)) -> SkillStore:
 
 def _rule_store(settings: Settings = Depends(get_settings)) -> AgentRuleStore:
     return AgentRuleStore(settings)
+
+
+def _profile_store(settings: Settings = Depends(get_settings)) -> AgentProfileStore:
+    return AgentProfileStore(settings)
 
 
 def _experience_store(settings: Settings = Depends(get_settings)) -> AgentExperienceStore:
@@ -222,6 +233,7 @@ async def agent_chat(
                 provider=payload.provider,
                 headless=payload.headless,
                 explicit_skill_ids=payload.explicit_skill_ids,
+                agent_profile_id=payload.agent_profile_id,
                 mode=payload.mode,
                 run_mode=payload.run_mode,
             ):
@@ -278,6 +290,7 @@ async def agent_chat_sync(
             provider=payload.provider,
             headless=payload.headless,
             explicit_skill_ids=payload.explicit_skill_ids,
+            agent_profile_id=payload.agent_profile_id,
             mode=payload.mode,
             run_mode=payload.run_mode,
         ):
@@ -559,6 +572,55 @@ def delete_rule(
     return {"deleted": True}
 
 
+@router.get("/profiles", response_model=AgentProfileListResponse)
+def list_agent_profiles(
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    platform: str = Depends(get_platform_id),
+    store: AgentProfileStore = Depends(_profile_store),
+) -> AgentProfileListResponse:
+    items = store.list_all(tenant_id, platform=platform)
+    return AgentProfileListResponse(items=items, total=len(items))
+
+
+@router.post("/profiles", response_model=AgentProfileOut)
+def create_agent_profile(
+    payload: AgentProfileCreate,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: AgentProfileStore = Depends(_profile_store),
+) -> AgentProfileOut:
+    try:
+        return store.create(tenant_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/profiles/{profile_id}", response_model=AgentProfileOut)
+def update_agent_profile(
+    profile_id: str,
+    payload: AgentProfileUpdate,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: AgentProfileStore = Depends(_profile_store),
+) -> AgentProfileOut:
+    try:
+        return store.update(tenant_id, profile_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Agent 档案不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/profiles/{profile_id}")
+def delete_agent_profile(
+    profile_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    store: AgentProfileStore = Depends(_profile_store),
+) -> dict[str, bool]:
+    deleted = store.delete(tenant_id, profile_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Agent 档案不存在")
+    return {"deleted": True}
+
+
 @router.get("/skills", response_model=SkillListResponse)
 def list_skills(
     tenant_id: str = Depends(get_authenticated_tenant_id),
@@ -723,6 +785,7 @@ def get_agent_run(
         status=run.status,
         mode=run.mode,
         run_mode=run.run_mode,
+        agent_profile_id=run.agent_profile_id or "default",
         message_count=len(run.messages),
         messages=run.messages,
         pending_plan=run.pending_plan.model_dump() if run.pending_plan else None,

@@ -45,10 +45,18 @@ def repair() -> None:
             return
 
         current = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
-        known_heads = {"0001_initial"}
+        known_heads = {"0001_initial", "0002_interaction_logs"}
         if current and current not in known_heads and tables.intersection({"authors", "videos"}):
             print(f"[db-repair] stamping alembic_version: {current} -> 0001_initial", file=sys.stderr)
             conn.execute(text("UPDATE alembic_version SET version_num = '0001_initial'"))
+            current = "0001_initial"
+
+        if "interaction_logs" in tables and current != "0002_interaction_logs":
+            print(
+                "[db-repair] interaction_logs 已存在，stamp alembic_version -> 0002_interaction_logs",
+                file=sys.stderr,
+            )
+            conn.execute(text("UPDATE alembic_version SET version_num = '0002_interaction_logs'"))
 
         if "authors" in tables:
             author_cols = _column_names(inspector, "authors")

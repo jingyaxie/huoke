@@ -18,8 +18,18 @@ start_vnc() {
   mkdir -p /tmp/.X11-unix
   rm -f /tmp/.X11-unix/X99 2>/dev/null || true
 
-  echo "[vnc] starting Xvfb :99..."
-  Xvfb :99 -screen 0 1440x900x24 -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
+  pkill -f 'x11vnc.*5900' 2>/dev/null || true
+  pkill -f 'websockify.*6080' 2>/dev/null || true
+  sleep 1
+
+  # 需与 Chromium --window-size / viewport 一致；32-bit 高分辨率需配合 shm_size>=256mb
+  xvfb_screen="${XVFB_SCREEN:-1440x900x24}"
+  xvfb_w="${xvfb_screen%%x*}"
+  xvfb_rest="${xvfb_screen#*x}"
+  xvfb_h="${xvfb_rest%%x*}"
+  echo "[vnc] desktop=${xvfb_w}x${xvfb_h} (browser window will match)"
+  echo "[vnc] starting Xvfb :99 (${xvfb_screen})..."
+  Xvfb :99 -screen 0 "${xvfb_screen}" -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
   sleep 2
 
   i=0
@@ -42,6 +52,15 @@ start_vnc() {
   if [ -f /app/scripts/fluxbox/init ]; then
     cp /app/scripts/fluxbox/init /root/.fluxbox/init
   fi
+  # Chromium 窗口默认最大化，外框与 Xvfb 虚拟桌面同尺寸
+  cat >/root/.fluxbox/apps <<'EOF'
+[app] (name=Chrome)
+  [Maximized] {yes}
+[app] (name=chromium)
+  [Maximized] {yes}
+[app] (name=Google-chrome)
+  [Maximized] {yes}
+EOF
   # 避免默认 init 调用 fbsetbg 弹出 xmessage 挡住 VNC 登录窗口
   fluxbox -display :99 >/tmp/fluxbox.log 2>&1 &
   sleep 1
@@ -51,13 +70,25 @@ start_vnc() {
   fi
 
   echo "[vnc] starting x11vnc on :5900..."
+  set +e
   x11vnc -display :99 -nopw -forever -shared -listen 0.0.0.0 -xkb -rfbport 5900 \
+    -noxdamage -ncache 0 \
     -bg -o /tmp/x11vnc.log
+  x11vnc_rc=$?
+  set -e
+  if [ "$x11vnc_rc" -ne 0 ]; then
+    echo "[vnc] WARN: x11vnc start returned $x11vnc_rc" >&2
+    cat /tmp/x11vnc.log >&2 || true
+  fi
 
   sleep 1
   if ! port_open 5900; then
     echo "[vnc] WARN: x11vnc not listening on 5900" >&2
     cat /tmp/x11vnc.log >&2 || true
+  fi
+
+  if [ -f /app/scripts/novnc/vnc_embed.html ]; then
+    cp /app/scripts/novnc/vnc_embed.html /usr/share/novnc/vnc_embed.html
   fi
 
   echo "[vnc] starting websockify on :6080..."
@@ -89,6 +120,13 @@ PY
 }
 
 sh /app/scripts/install-cjk-fonts.sh || echo "[fonts] WARN: CJK font install skipped" >&2
+if command -v fc-list >/dev/null 2>&1; then
+  zh_count="$(fc-list :lang=zh family 2>/dev/null | wc -l | tr -d ' ')"
+  echo "[fonts] fc-list :lang=zh families=${zh_count:-0}"
+  if [ "${zh_count:-0}" = "0" ]; then
+    echo "[fonts] WARN: no Chinese fonts — VNC 网页中文可能为方框/空白，请重建 backend 镜像" >&2
+  fi
+fi
 
 # 禁止抖音等自定义协议唤起 xdg-open（自动化环境无法点击系统弹窗）
 install_noop_xdg_open() {

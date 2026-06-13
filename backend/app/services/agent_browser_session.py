@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 from app.core.antibot import (
+    BROWSER_RENDER_EPOCH,
     headless_for_platform,
     launch_browser,
     new_browser_context,
@@ -121,11 +122,13 @@ class AgentBrowserSession:
             if self._browser is None:
                 resolved_headless = headless_for_platform(self.settings, self.platform, self.headless)
                 self._browser = await launch_browser(self._playwright, self.settings, headless=resolved_headless)
+            resolved_headless = headless_for_platform(self.settings, self.platform, self.headless)
             self._context = await new_browser_context(
                 self._browser,
                 self.settings,
                 state=storage_state,
                 tenant_id=self.tenant_id,
+                visible=not resolved_headless,
             )
             self._page = await self._context.new_page()
             self.network_capture.clear()
@@ -140,6 +143,14 @@ class AgentSessionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, AgentBrowserSession] = {}
         self._manager_lock = asyncio.Lock()
+        self._browser_render_epoch = 0
+
+    async def sync_browser_render_epoch(self) -> None:
+        """渲染参数变更后自动关闭旧 Chrome，下次任务用新启动参数。"""
+        if self._browser_render_epoch == BROWSER_RENDER_EPOCH:
+            return
+        await self.shutdown_all()
+        self._browser_render_epoch = BROWSER_RENDER_EPOCH
 
     @classmethod
     def get_instance(cls) -> AgentSessionManager:
@@ -157,6 +168,7 @@ class AgentSessionManager:
         headless: bool | None = None,
         auto_start: bool = True,
     ) -> AgentBrowserSession:
+        await self.sync_browser_render_epoch()
         session_id = str(uuid.uuid4())
         session = AgentBrowserSession(
             session_id=session_id,

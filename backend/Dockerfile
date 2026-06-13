@@ -39,7 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     fontconfig \
     fonts-wqy-microhei \
+    fonts-wqy-zenhei \
+    fonts-noto-cjk \
     wget \
+    curl \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 

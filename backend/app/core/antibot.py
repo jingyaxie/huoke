@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import platform as py_platform
 import random
 import re
@@ -37,6 +38,9 @@ DEFAULT_LINUX_USER_AGENT = (
 DEFAULT_USER_AGENT = DEFAULT_MAC_USER_AGENT
 
 STEALTH_VERSION = "v4"
+
+# 变更 VNC 启动参数 / 页面文字渲染修复时递增，触发已有浏览器会话自动重建
+BROWSER_RENDER_EPOCH = 3
 
 _last_mouse_pos: dict[int, tuple[float, float]] = {}
 _BASE_LAUNCH_ARGS = [
@@ -75,6 +79,110 @@ _LINUX_POLICY_DIR = Path("/etc/huoke/chrome-policies/managed")
 _PROTOCOL_LAUNCH_ARGS = (
     "--disable-features=ExternalProtocolPrompt,ExternalProtocolDialogShowAlwaysOpenCheckbox",
 )
+
+# Xvfb + 可见 Chromium：GPU 合成层/懒加载会导致正文不绘制，获焦或滚动后才显示
+_VNC_LINUX_RENDER_ARGS = [
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-accelerated-2d-canvas",
+    "--disable-accelerated-video-decode",
+    "--disable-font-subpixel-positioning",
+    "--font-render-hinting=none",
+    "--force-color-profile=srgb",
+    "--disable-features=VizDisplayCompositor",
+]
+
+_VNC_TEXT_RENDER_FIX_JS = """
+(() => {
+  const IO = window.IntersectionObserver;
+  if (IO) {
+    window.IntersectionObserver = function (cb, opts) {
+      return new IO((entries, obs) => {
+        for (const e of entries) {
+          try {
+            Object.defineProperty(e, 'isIntersecting', { value: true, configurable: true });
+            Object.defineProperty(e, 'intersectionRatio', { value: 1, configurable: true });
+          } catch (_) {}
+        }
+        cb(entries, obs);
+      }, opts);
+    };
+    window.IntersectionObserver.prototype = IO.prototype;
+  }
+
+  const applyStyle = () => {
+    const id = 'huoke-vnc-text-fix';
+    if (document.getElementById(id)) return;
+    const el = document.createElement('style');
+    el.id = id;
+    el.textContent = `
+      html, body, * {
+        -webkit-font-smoothing: antialiased !important;
+        text-rendering: geometricPrecision !important;
+        -webkit-background-clip: border-box !important;
+        background-clip: border-box !important;
+      }
+      p, span, a, h1, h2, h3, h4, label, li, div {
+        opacity: 1 !important;
+        visibility: visible !important;
+        filter: none !important;
+        mix-blend-mode: normal !important;
+      }
+      input, textarea, [contenteditable="true"] {
+        -webkit-text-fill-color: currentColor !important;
+        caret-color: auto !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(el);
+  };
+
+  const nudgePaint = () => {
+    try {
+      window.scrollBy(0, 1);
+      window.scrollBy(0, -1);
+      document.querySelectorAll('p, span, a, h1, h2, h3, [data-e2e]').forEach((node) => {
+        if (!node || !node.style) return;
+        node.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
+        void node.offsetHeight;
+      });
+    } catch (_) {}
+  };
+
+  const boot = () => {
+    applyStyle();
+    nudgePaint();
+    requestAnimationFrame(() => requestAnimationFrame(nudgePaint));
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+  window.addEventListener('load', () => setTimeout(boot, 300));
+})();
+"""
+
+_VNC_FORCE_REPAINT_JS = """
+async () => {
+  const nudge = () => {
+    window.scrollBy(0, 1);
+    window.scrollBy(0, -1);
+    document.querySelectorAll('p, span, a, h1, h2, h3, [data-e2e]').forEach((el) => {
+      if (!el || !el.style) return;
+      el.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
+      el.style.setProperty('opacity', '1', 'important');
+      el.style.setProperty('visibility', 'visible', 'important');
+      void el.offsetHeight;
+    });
+  };
+  nudge();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  nudge();
+  await new Promise((r) => setTimeout(r, 400));
+  nudge();
+}
+"""
 
 
 def _linux_protocol_launch_args() -> list[str]:
@@ -232,12 +340,17 @@ def _stealth_init_script_template() -> str:
     return path.read_text(encoding="utf-8")
 
 
-def launch_args(settings: Settings | None = None) -> list[str]:
+def launch_args(settings: Settings | None = None, *, headless: bool = True) -> list[str]:
     del settings
     args = list(_BASE_LAUNCH_ARGS)
     if sys.platform.startswith("linux"):
         args.extend(_LINUX_LAUNCH_ARGS)
         args.extend(_linux_protocol_launch_args())
+        if not headless and os.environ.get("DISPLAY"):
+            args.extend(_VNC_LINUX_RENDER_ARGS)
+            args.extend(vnc_window_args())
+    elif py_platform.system() == "Darwin":
+        args.extend(["--no-first-run", "--disable-sync"])
     return args
 
 
@@ -247,7 +360,7 @@ def browser_channel(settings: Settings) -> str | None:
 
 
 def launch_kwargs(settings: Settings, *, headless: bool) -> dict:
-    kwargs: dict = {"headless": headless, "args": launch_args(settings)}
+    kwargs: dict = {"headless": headless, "args": launch_args(settings, headless=headless)}
     channel = browser_channel(settings)
     if channel:
         kwargs["channel"] = channel
@@ -340,7 +453,58 @@ def client_hints_headers(settings: Settings) -> dict[str, str]:
     }
 
 
-def viewport(settings: Settings) -> dict[str, int]:
+def parse_xvfb_screen(raw: str | None = None) -> tuple[int, int]:
+    """虚拟桌面像素尺寸，与 docker-entrypoint 中 Xvfb -screen 保持一致。"""
+    value = (raw or os.environ.get("XVFB_SCREEN") or "1440x900x24").strip().lower()
+    parts = value.split("x")
+    if len(parts) >= 2:
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            pass
+    return 1440, 900
+
+
+def vnc_display_active() -> bool:
+    return bool(os.environ.get("DISPLAY"))
+
+
+def vnc_window_args() -> list[str]:
+    if not vnc_display_active():
+        return []
+    width, height = parse_xvfb_screen()
+    return [
+        f"--window-size={width},{height}",
+        "--window-position=0,0",
+        "--start-maximized",
+    ]
+
+
+def visible_vnc_context_extras() -> dict:
+    if not vnc_display_active():
+        return {}
+    return {"no_viewport": True}
+
+
+async def fit_vnc_browser_window(context: BrowserContext) -> None:
+    """将可见模式浏览器外框对齐虚拟桌面，避免窗口大于 Xvfb 被裁切。"""
+    if not vnc_display_active():
+        return
+    width, height = parse_xvfb_screen()
+    for page in context.pages:
+        try:
+            await page.evaluate(
+                """([w, h]) => {
+                    window.moveTo(0, 0);
+                    window.resizeTo(w, h);
+                }""",
+                [width, height],
+            )
+        except Exception:
+            continue
+
+
+def viewport(settings: Settings, *, headless: bool = True) -> dict[str, int]:
     return {"width": settings.antibot_viewport_width, "height": settings.antibot_viewport_height}
 
 
@@ -404,7 +568,13 @@ def profile_dir_for(
 
 def persistent_profile_enabled(settings: Settings, platform: str) -> bool:
     del platform
-    return settings.antibot_persistent_profile
+    if not settings.antibot_persistent_profile:
+        return False
+    # Mac 系统 Chrome 不走 user-data-dir 持久化 Profile：Docker/Linux 遗留目录会损坏，
+    # 且易与日常 Chrome 冲突（「打开个人资料出错」「正在现有的浏览器会话中打开」）。
+    if py_platform.system() == "Darwin" and browser_channel(settings):
+        return False
+    return True
 
 
 def headless_for_platform(settings: Settings, platform: str, headless: bool | None = None) -> bool:
@@ -419,9 +589,9 @@ def headless_for_platform(settings: Settings, platform: str, headless: bool | No
     return settings.agent_headless
 
 
-def context_kwargs(settings: Settings, state: dict | None = None) -> dict:
+def context_kwargs(settings: Settings, state: dict | None = None, *, headless: bool = True) -> dict:
     kwargs: dict = {
-        "viewport": viewport(settings),
+        "viewport": viewport(settings, headless=headless),
         "user_agent": user_agent(settings),
         "locale": settings.antibot_locale,
         "timezone_id": settings.timezone,
@@ -432,8 +602,12 @@ def context_kwargs(settings: Settings, state: dict | None = None) -> dict:
     return kwargs
 
 
-def persistent_context_kwargs(settings: Settings) -> dict:
-    kwargs = context_kwargs(settings, None)
+def persistent_context_kwargs(settings: Settings, *, headless: bool = True) -> dict:
+    kwargs = context_kwargs(settings, None, headless=headless)
+    if not headless:
+        kwargs.update(visible_vnc_context_extras())
+        if kwargs.get("no_viewport"):
+            kwargs.pop("viewport", None)
     kwargs.pop("storage_state", None)
     return kwargs
 
@@ -453,10 +627,15 @@ def visible_browser_launch_kwargs(settings: Settings | None = None) -> dict:
 
 
 async def launch_browser(playwright: Playwright, settings: Settings, *, headless: bool) -> Browser:
+    from app.services.font_bootstrap import ensure_cjk_fonts_for_visible_browser
+
+    await ensure_cjk_fonts_for_visible_browser(headless)
     kwargs = launch_kwargs(settings, headless=headless)
     try:
         return await playwright.chromium.launch(**kwargs)
     except Exception:
+        if not settings.antibot_playwright_fallback:
+            raise
         fallback = dict(kwargs)
         fallback.pop("channel", None)
         return await playwright.chromium.launch(**fallback)
@@ -525,12 +704,15 @@ async def launch_persistent_context(
     headless: bool,
     account_id: str = "default",
 ) -> BrowserContext:
+    from app.services.font_bootstrap import ensure_cjk_fonts_for_visible_browser
+
+    await ensure_cjk_fonts_for_visible_browser(headless)
     profile_dir = profile_dir_for(settings, platform, tenant_id, account_id)
     profile_dir.mkdir(parents=True, exist_ok=True)
     seed_profile_protocol_prefs(profile_dir)
     state = store.load(tenant_id, account_id)
     kwargs = launch_kwargs(settings, headless=headless)
-    kwargs.update(persistent_context_kwargs(settings))
+    kwargs.update(persistent_context_kwargs(settings, headless=headless))
 
     context: BrowserContext | None = None
     last_error: Exception | None = None
@@ -540,6 +722,8 @@ async def launch_persistent_context(
             context = await playwright.chromium.launch_persistent_context(str(profile_dir), **kwargs)
         except Exception as exc:
             last_error = exc
+            if not settings.antibot_playwright_fallback:
+                raise
             fallback = dict(kwargs)
             fallback.pop("channel", None)
             try:
@@ -554,8 +738,10 @@ async def launch_persistent_context(
     if context is None:
         raise last_error from None  # type: ignore[misc]
 
-    await apply_stealth(context, settings, tenant_id=tenant_id)
+    await apply_stealth(context, settings, tenant_id=tenant_id, visible=not headless)
     await _seed_storage_from_state(context, state)
+    if not headless:
+        await fit_vnc_browser_window(context)
     return context
 
 
@@ -565,12 +751,19 @@ async def new_browser_context(
     *,
     state: dict | None = None,
     tenant_id: str | None = None,
+    visible: bool = False,
     **extra,
 ) -> BrowserContext:
-    kwargs = context_kwargs(settings, state)
+    kwargs = context_kwargs(settings, state, headless=not visible)
+    if visible:
+        kwargs.update(visible_vnc_context_extras())
+        if kwargs.get("no_viewport"):
+            kwargs.pop("viewport", None)
     kwargs.update(extra)
     context = await browser.new_context(**kwargs)
-    await apply_stealth(context, settings, tenant_id=tenant_id)
+    await apply_stealth(context, settings, tenant_id=tenant_id, visible=visible)
+    if visible:
+        await fit_vnc_browser_window(context)
     return context
 
 
@@ -604,6 +797,7 @@ async def open_tenant_page(
         settings,
         state=store.load(tenant_id, account_id),
         tenant_id=tenant_id,
+        visible=not resolved_headless,
     )
     page = await context.new_page()
     return browser, context, page
@@ -714,17 +908,56 @@ def tenant_antibot_config(settings: Settings, tenant_id: str) -> TenantAntibotCo
     )
 
 
+def _schedule_vnc_repaint(page: Page) -> None:
+    async def _run() -> None:
+        await force_vnc_page_repaint(page)
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
+def install_vnc_page_repaint_hooks(context: BrowserContext) -> None:
+    def on_page(page: Page) -> None:
+        page.on("domcontentloaded", lambda: _schedule_vnc_repaint(page))
+        _schedule_vnc_repaint(page)
+
+    context.on("page", on_page)
+    for existing in context.pages:
+        on_page(existing)
+
+
+async def force_vnc_page_repaint(page: Page) -> None:
+    """页面加载后强制重绘文字层（抖音热点榜等 SPA 在 Xvfb 下常需二次绘制）。"""
+    if not os.environ.get("DISPLAY"):
+        return
+    try:
+        await page.evaluate(_VNC_FORCE_REPAINT_JS)
+    except Exception:
+        pass
+
+
+async def apply_vnc_text_render_fix(context: BrowserContext) -> None:
+    """修复 Xvfb/VNC 下文字不获焦时不可见（合成层/懒加载/渐变字）。"""
+    await context.add_init_script(_VNC_TEXT_RENDER_FIX_JS)
+    install_vnc_page_repaint_hooks(context)
+
+
 async def apply_stealth(
     context: BrowserContext,
     settings: Settings,
     *,
     tenant_id: str | None = None,
+    visible: bool = False,
 ) -> None:
     await install_external_protocol_guard(context)
     await install_dialog_auto_dismiss(context)
     ctx = AntibotContext.for_tenant(settings, tenant_id)
     if ctx.stealth_enabled:
         await context.add_init_script(stealth_init_script(settings))
+    if visible:
+        await apply_vnc_text_render_fix(context)
 
 
 async def human_delay(

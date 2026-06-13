@@ -60,37 +60,53 @@ Skill 定义：`backend/storage/skills/global.json`。
 └── docker-compose.yml
 ```
 
-## 本地开发（Mac M 系列）
+## 本地开发（Mac，系统 Chrome）
 
-### 1) 启动 MySQL（Docker）
+Docker 容器内只能使用 Playwright 内置 Chromium，**无法调用 macOS 系统浏览器**。本地测试请用宿主机跑后端 + 系统 Chrome：
+
+### 1) 配置
 
 ```bash
-docker compose up -d mysql
+cp .env.local.example .env.local
+# 编辑 .env.local，填入 DEEPSEEK_API_KEY 等密钥
 ```
 
-### 2) 启动后端
+关键项：
+
+| 变量 | 说明 |
+|------|------|
+| `DATABASE_URL` | 指向 `127.0.0.1:3306`（非 Docker 内 `mysql` 主机名） |
+| `ANTIBOT_BROWSER_CHANNEL=chrome` | 使用本机 Google Chrome |
+| `ANTIBOT_PLAYWRIGHT_FALLBACK=false` | 禁止回退 Playwright Chromium |
+| `AGENT_HEADLESS=false` | Agent 可见浏览器窗口 |
+
+需已安装 [Google Chrome](https://www.google.com/chrome/)。
+
+### 2) 一键启动
 
 ```bash
-cd backend
-python3.12 -m venv .venv
-source .venv/bin/activate
+chmod +x scripts/dev-local.sh
+docker compose -f docker-compose.local.yml up -d frontend   # 可选：前端容器
+./scripts/dev-local.sh
+```
+
+`dev-local.sh` 会：启动 MySQL 容器 → 创建/激活 venv → 迁移数据库 → 用系统 Chrome 启动后端。
+
+### 3) 手动分步（可选）
+
+```bash
+docker compose -f docker-compose.local.yml up -d mysql
+cd backend && source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium
 alembic upgrade head
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### 3) 启动前端
-
-```bash
-cd frontend
-npm install
-npm run dev
 ```
 
 前端地址：`http://localhost:5173`  
 后端地址：`http://localhost:8000`  
 API 文档：`http://localhost:8000/docs`
+
+> **注意**：`docker compose up`（含 backend 服务）仍会走容器内 Chromium + VNC，仅适用于 Linux 服务器或无 Chrome 的环境。
 
 ## Linux 服务器部署
 

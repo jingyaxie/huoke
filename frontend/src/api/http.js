@@ -70,11 +70,11 @@ export function setAccessToken(token) {
 export function resolveVncUrl(backendUrl = "") {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   // noVNC 的 path 是相对站点根路径；dev/prod 都通过 /vnc/ 反代到 backend:6080
-  const proxyUrl = `${origin}/vnc/vnc.html?autoconnect=true&resize=scale&path=vnc/websockify`;
+  const proxyUrl = `${origin}/vnc/vnc_embed.html?path=vnc/websockify&scale=true`;
   if (!backendUrl) return proxyUrl;
   try {
     const u = new URL(backendUrl, origin || "http://localhost");
-    if (u.port === "6080" || u.port === "16080" || u.pathname.includes("vnc.html")) {
+    if (u.port === "6080" || u.port === "16080" || u.pathname.includes("vnc")) {
       return proxyUrl;
     }
   } catch {

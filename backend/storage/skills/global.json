@@ -132,6 +132,58 @@
       "updated_at": "2026-06-12T00:00:00.000000+00:00"
     },
     {
+      "id": "query-interaction-stats",
+      "name": "查询互动台账",
+      "description": "查询今日/本周 reply、follow、dm 配额与去重状态（interaction_logs 表）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "platform", "type": "string", "description": "平台：douyin / xiaohongshu / kuaishou", "required": false},
+        {"name": "query_type", "type": "string", "description": "stats（默认）或 logs", "required": false, "default": "stats"},
+        {"name": "period", "type": "string", "description": "today（默认）或 week", "required": false, "default": "today"},
+        {"name": "reply_limit", "type": "integer", "description": "reply 日配额上限", "required": false, "default": 5},
+        {"name": "follow_limit", "type": "integer", "description": "follow 日配额上限", "required": false, "default": 3},
+        {"name": "dm_limit", "type": "integer", "description": "dm 日配额上限", "required": false, "default": 3},
+        {"name": "comment_id", "type": "string", "description": "检查该评论是否已 reply", "required": false},
+        {"name": "target_user_id", "type": "string", "description": "检查该用户是否已 follow", "required": false},
+        {"name": "target_sec_uid", "type": "string", "description": "抖音 sec_uid（配合 target_user_id）", "required": false},
+        {"name": "action", "type": "string", "description": "logs 模式：reply / follow / dm", "required": false},
+        {"name": "offset", "type": "integer", "description": "logs 分页偏移", "required": false, "default": 0},
+        {"name": "limit", "type": "integer", "description": "logs 返回条数", "required": false, "default": 20}
+      ],
+      "content": "invoke 前查配额与去重：is_comment_replied / is_user_followed 在 result 中返回。reply/follow 成功后自动写 interaction_logs。",
+      "actions": [],
+      "builtin_handler": "query_interaction_stats",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
+      "id": "social-roam",
+      "name": "社交平台漫游获客",
+      "description": "全人工读+写：关键词浏览→抓评→匹配→UI 回复/关注（social_roam_human，Phase 2 MVP 暂支持抖音 keyword）",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {"name": "platform", "type": "string", "description": "平台，MVP 仅 douyin", "required": false, "default": "douyin"},
+        {"name": "keyword", "type": "string", "description": "搜索关键词（或 browse.keyword）", "required": true},
+        {"name": "content_limit", "type": "integer", "description": "浏览视频数量", "required": false, "default": 10},
+        {"name": "days", "type": "integer", "description": "最近天数筛选", "required": false, "default": 3},
+        {"name": "region", "type": "string", "description": "地区筛选", "required": false},
+        {"name": "show_browser", "type": "boolean", "description": "可见浏览器（VNC 观看）", "required": false, "default": true},
+        {"name": "dry_run", "type": "boolean", "description": "仅模拟，不实际回复/关注", "required": false, "default": false},
+        {"name": "comment_match", "type": "string", "description": "JSON：问价匹配规则 mode=keyword", "required": false},
+        {"name": "follow_match", "type": "string", "description": "JSON：关注匹配规则", "required": false},
+        {"name": "limits", "type": "string", "description": "JSON：max_replies/max_follows 等配额", "required": false}
+      ],
+      "content": "人工漫游单 Skill 入口：内部 human_click/human_type 完成搜索、回复、关注；不调用 reply-comment / douyin-keyword-comments。Agent 档案应只 invoke 本 Skill。",
+      "actions": [],
+      "builtin_handler": "social_roam",
+      "created_at": "2026-06-12T00:00:00.000000+00:00",
+      "updated_at": "2026-06-12T00:00:00.000000+00:00"
+    },
+    {
       "id": "reply-comment",
       "name": "回复评论",
       "description": "从 DB 定位评论所属视频/笔记，打开内容页后直接调用页面 JS 接口回复（builtin，全平台）",
