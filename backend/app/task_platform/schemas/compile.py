@@ -49,9 +49,14 @@ class TaskCompileAndCreateRequest(TaskCompileRequest):
     webhook_headers: dict[str, str] = Field(default_factory=dict)
     async_mode: bool = Field(default=True, alias="async")
     priority: int = Field(default=5, ge=1, le=10)
-    max_retries: int = Field(default=1, ge=0, le=5)
+    max_retries: int = Field(default=2, ge=0, le=5)
     auto_submit: bool = True
+    auto_restart: bool = True
     scheduled_at: datetime | None = None
+    headless: bool | None = Field(
+        default=None,
+        description="浏览器模式：true=无头，false=可见；创建时写入 spec",
+    )
 
     model_config = {"populate_by_name": True}
 

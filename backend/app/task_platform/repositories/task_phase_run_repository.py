@@ -43,3 +43,10 @@ class TaskPhaseRunRepository:
     def save(self, row: TaskPhaseRun) -> TaskPhaseRun:
         self.session.add(row)
         return row
+
+    def delete_for_task(self, task_id: str) -> None:
+        (
+            self.session.query(TaskPhaseRun)
+            .filter(TaskPhaseRun.task_id == task_id, TaskPhaseRun.tenant_id == self.tenant_id)
+            .delete(synchronize_session=False)
+        )

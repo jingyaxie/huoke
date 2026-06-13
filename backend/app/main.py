@@ -29,7 +29,7 @@ from app.services.font_bootstrap import ensure_cjk_fonts
 from app.services.tenant_auth_service import TenantAuthService
 from app.desktop_static import mount_desktop_frontend
 from app.task_platform import bootstrap_task_platform
-from app.task_platform.services.task_runtime_service import TaskWorkerPool
+from app.task_platform.services.task_runtime_service import TaskWorkerPool, TaskRuntimeService
 from app.task_platform.services.task_scheduler_service import TaskSchedulerService
 
 
@@ -41,6 +41,11 @@ async def lifespan(app: FastAPI):
     configure_logging()
     bootstrap_task_platform()
     TaskWorkerPool.get(settings).start()
+    recovered = TaskRuntimeService.recover_pending_tasks(settings)
+    if recovered:
+        import logging
+
+        logging.getLogger(__name__).info("TaskWorkerPool 恢复了 %s 个待执行任务", recovered)
     if not settings.desktop_mode:
         Base.metadata.create_all(bind=engine)
     session = SessionLocal()

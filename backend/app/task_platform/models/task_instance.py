@@ -38,6 +38,7 @@ class TaskInstance(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    auto_restart: Mapped[bool] = mapped_column(nullable=False, default=True)
 
     webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     webhook_headers: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from app.task_platform.schemas.instance import TaskCreateRequest
 from app.task_platform.services.task_event_bus import TaskEventBus
 from app.task_platform.services.task_schedule_utils import parse_scheduled_at, resolve_initial_task_status
 from app.task_platform.stores.task_template_store import TaskTemplateStore, get_task_template_store
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now_naive() -> datetime:
@@ -51,6 +54,7 @@ class TaskWorkerPool:
         self._cancel_flags: set[str] = set()
         self._concurrency = max(1, int(getattr(settings, "task_job_concurrency", 2)))
         self._event_bus = TaskEventBus()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @classmethod
     def get(cls, settings: Settings) -> TaskWorkerPool:
@@ -76,13 +80,25 @@ class TaskWorkerPool:
 
     def start(self) -> None:
         """在 FastAPI lifespan（有 event loop）中调用一次。"""
+        self._loop = asyncio.get_running_loop()
         self._ensure_workers()
 
+    def _put_item(self, item: _QueueItem) -> None:
+        self._queue.put_nowait((item.priority, time.monotonic(), item))
+
     def enqueue(self, *, tenant_id: str, task_id: str, priority: int = 5) -> None:
-        if not self._workers_started:
+        if not self._workers_started or self._loop is None:
             raise RuntimeError("TaskWorkerPool 未启动，请在应用 lifespan 中调用 start()")
         item = _QueueItem(tenant_id=tenant_id, task_id=task_id, priority=priority)
-        self._queue.put_nowait((priority, time.monotonic(), item))
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._loop:
+            self._put_item(item)
+        else:
+            self._loop.call_soon_threadsafe(self._put_item, item)
+        logger.info("任务已入队 tenant=%s task=%s priority=%s", tenant_id, task_id, priority)
 
     async def _worker_loop(self, worker_id: int) -> None:
         _ = worker_id
@@ -100,6 +116,7 @@ class TaskWorkerPool:
                 self._queue.task_done()
 
     async def _run_one(self, item: _QueueItem, session_factory: Any) -> None:
+        logger.info("开始执行任务 tenant=%s task=%s", item.tenant_id, item.task_id)
         session: Session = session_factory()
         runtime = TaskRuntimeService(self.settings, session, get_task_template_store())
         try:
@@ -129,6 +146,23 @@ class TaskRuntimeService:
 
     def _phase_repo(self, tenant_id: str) -> TaskPhaseRunRepository:
         return TaskPhaseRunRepository(self.session, tenant_id)
+
+    @staticmethod
+    def recover_pending_tasks(settings: Settings) -> int:
+        from app.db.session import SessionLocal
+
+        session = SessionLocal()
+        try:
+            rows = TaskInstanceRepository.list_pending_execution(session)
+            if not rows:
+                return 0
+            pool = TaskWorkerPool.get(settings)
+            for row in rows:
+                pool.enqueue(tenant_id=row.tenant_id, task_id=row.id, priority=row.priority)
+            logger.info("已恢复 %s 个排队/重试中的任务", len(rows))
+            return len(rows)
+        finally:
+            session.close()
 
     async def create_async(self, tenant_id: str, payload: TaskCreateRequest) -> TaskInstance:
         template = self.template_store.get(
@@ -191,6 +225,7 @@ class TaskRuntimeService:
             source=payload.source,
             priority=payload.priority,
             max_retries=payload.max_retries,
+            auto_restart=payload.auto_restart,
             webhook_url=payload.webhook_url,
             webhook_headers=payload.webhook_headers or None,
             raw_payload=payload.raw_payload,
@@ -210,7 +245,9 @@ class TaskRuntimeService:
         row = self._repo(tenant_id).get(task_id)
         if row is None:
             raise ValueError(f"任务不存在: {task_id}")
-        if row.status not in {"queued", "failed", "paused", "scheduled"}:
+        if row.status in {"failed", "dead_letter", "completed", "cancelled"}:
+            return self.restart(tenant_id, task_id, fresh=False)
+        if row.status not in {"queued", "paused", "scheduled"}:
             raise ValueError(f"任务状态 {row.status} 不可提交")
         row.status = "queued"
         row.updated_at = _utc_now_naive()
@@ -221,6 +258,58 @@ class TaskRuntimeService:
             priority=row.priority,
         )
         return row
+
+    def restart(self, tenant_id: str, task_id: str, *, fresh: bool = False) -> TaskInstance:
+        row = self._repo(tenant_id).get(task_id)
+        if row is None:
+            raise ValueError(f"任务不存在: {task_id}")
+        if row.status == "running":
+            raise ValueError("运行中任务不可重启")
+        if row.status not in {"failed", "dead_letter", "completed", "cancelled", "queued", "paused"}:
+            raise ValueError(f"任务状态 {row.status} 不可重启")
+
+        spec = dict(row.spec or {})
+        crawl = spec.get("crawl") if isinstance(spec.get("crawl"), dict) else {}
+        target = int(crawl.get("target_leads") or 100)
+
+        if fresh:
+            spec.pop("_resume", None)
+            row.spec = spec
+            row.progress = {
+                "crawl": {"done": 0, "total": target, "batches": 0},
+                "outreach": {"done": 0, "total": 0},
+                "overall_percent": 0,
+            }
+            row.result = None
+            row.current_phase = None
+        else:
+            spec["_resume"] = True
+            row.spec = spec
+
+        row.retry_count = 0
+        row.error = None
+        row.completed_at = None
+        row.status = "queued"
+        row.updated_at = _utc_now_naive()
+        self._repo(tenant_id).save(row)
+        TaskWorkerPool.get(self.settings).enqueue(
+            tenant_id=tenant_id,
+            task_id=task_id,
+            priority=row.priority,
+        )
+        return row
+
+    def delete(self, tenant_id: str, task_id: str) -> None:
+        row = self._repo(tenant_id).get(task_id)
+        if row is None:
+            raise ValueError(f"任务不存在: {task_id}")
+        if row.status == "running":
+            raise ValueError("运行中任务不可删除，请先取消")
+        if row.status in {"queued", "retrying", "paused", "scheduled"}:
+            TaskWorkerPool.get(self.settings).request_cancel(task_id)
+        self._phase_repo(tenant_id).delete_for_task(task_id)
+        if not self._repo(tenant_id).delete(task_id):
+            raise ValueError(f"任务不存在: {task_id}")
 
     async def execute_task(
         self,
@@ -285,18 +374,22 @@ class TaskRuntimeService:
             result = await executor.execute(ctx)
         except Exception as exc:
             row.retry_count += 1
-            if row.retry_count <= row.max_retries:
-                row.status = "queued"
+            if row.auto_restart and row.retry_count <= row.max_retries:
+                row.status = "retrying"
                 row.error = str(exc)
                 repo.save(row)
-                pool.enqueue(tenant_id=tenant_id, task_id=task_id, priority=row.priority)
                 phase_row.status = "failed"
                 phase_row.error = str(exc)
                 phase_row.completed_at = _utc_now_naive()
                 phase_repo.save(phase_row)
+                await asyncio.sleep(2)
+                row.status = "queued"
+                row.updated_at = _utc_now_naive()
+                repo.save(row)
+                pool.enqueue(tenant_id=tenant_id, task_id=task_id, priority=row.priority)
                 return
 
-            row.status = "dead_letter"
+            row.status = "dead_letter" if row.auto_restart else "failed"
             row.error = str(exc)
             row.completed_at = _utc_now_naive()
             repo.save(row)
@@ -335,18 +428,22 @@ class TaskRuntimeService:
 
         row.retry_count += 1
         row.error = result.error or "任务执行失败"
-        if row.retry_count <= row.max_retries:
-            row.status = "queued"
+        if row.auto_restart and row.retry_count <= row.max_retries:
+            row.status = "retrying"
             repo.save(row)
             phase_row.status = "failed"
             phase_row.error = row.error
             phase_row.output_snapshot = result.result
             phase_row.completed_at = _utc_now_naive()
             phase_repo.save(phase_row)
+            await asyncio.sleep(2)
+            row.status = "queued"
+            row.updated_at = _utc_now_naive()
+            repo.save(row)
             pool.enqueue(tenant_id=tenant_id, task_id=task_id, priority=row.priority)
             return
 
-        row.status = "failed"
+        row.status = "dead_letter" if row.auto_restart else "failed"
         row.result = result.result
         row.completed_at = _utc_now_naive()
         phase_row.status = "failed"
@@ -423,6 +520,37 @@ class TaskRuntimeService:
             priority=row.priority,
         )
         return row
+
+    def patch_settings(
+        self,
+        tenant_id: str,
+        task_id: str,
+        *,
+        headless: bool | None = None,
+        auto_restart: bool | None = None,
+        max_retries: int | None = None,
+    ) -> TaskInstance:
+        row = self._repo(tenant_id).get(task_id)
+        if row is None:
+            raise ValueError(f"任务不存在: {task_id}")
+        if row.status == "running":
+            raise ValueError("运行中任务不可修改配置")
+        if headless is None and auto_restart is None and max_retries is None:
+            raise ValueError("未提供可更新字段")
+        if headless is not None:
+            spec = dict(row.spec or {})
+            spec["headless"] = headless
+            row.spec = spec
+        if auto_restart is not None:
+            row.auto_restart = auto_restart
+        if max_retries is not None:
+            row.max_retries = max_retries
+        row.updated_at = _utc_now_naive()
+        self._repo(tenant_id).save(row)
+        return row
+
+    def patch_spec(self, tenant_id: str, task_id: str, *, headless: bool) -> TaskInstance:
+        return self.patch_settings(tenant_id, task_id, headless=headless)
 
     def _require_mutable(self, tenant_id: str, task_id: str) -> TaskInstance:
         row = self._repo(tenant_id).get(task_id)

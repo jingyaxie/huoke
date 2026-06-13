@@ -58,6 +58,8 @@
           :task="task"
           @open="goDetail"
           @submit="onSubmit"
+          @continue="onContinue"
+          @delete="onDelete"
         />
       </div>
 
@@ -77,13 +79,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import TaskCard from "../components/TaskCard.vue";
 import {
   SAMPLE_YINGXIAOYI_PAYLOAD,
   compileAndCreateTask,
+  deleteTask,
   fetchTaskTemplates,
   fetchTasks,
+  restartTask,
   submitTask,
 } from "../api/tasks";
 
@@ -101,6 +105,7 @@ const statusOptions = [
   { value: "scheduled", label: "已预约" },
   { value: "queued", label: "排队中" },
   { value: "running", label: "运行中" },
+  { value: "retrying", label: "重试中" },
   { value: "paused", label: "已暂停" },
   { value: "completed", label: "已完成" },
   { value: "failed", label: "失败" },
@@ -111,7 +116,7 @@ const statCards = computed(() => {
   const list = allItems.value;
   return [
     { key: "all", label: "全部", filterValue: "", count: list.length },
-    { key: "running", label: "运行中", filterValue: "running", count: list.filter((t) => t.status === "running").length },
+    { key: "running", label: "运行中", filterValue: "running", count: list.filter((t) => ["running", "retrying"].includes(t.status)).length },
     { key: "queued", label: "排队", filterValue: "queued", count: list.filter((t) => t.status === "queued").length },
     { key: "scheduled", label: "已预约", filterValue: "scheduled", count: list.filter((t) => t.status === "scheduled").length },
     { key: "completed", label: "已完成", filterValue: "completed", count: list.filter((t) => t.status === "completed").length },
@@ -131,10 +136,37 @@ function goDetail(taskId) {
 async function onSubmit(task) {
   try {
     await submitTask(task.task_id);
-    ElMessage.success("已提交执行");
+    ElMessage.success("已开始执行");
     await loadTasks();
   } catch (err) {
     ElMessage.error(err.message || "提交失败");
+  }
+}
+
+async function onContinue(task) {
+  try {
+    await restartTask(task.task_id, { fresh: false });
+    ElMessage.success("已继续执行");
+    await loadTasks();
+  } catch (err) {
+    ElMessage.error(err.message || "继续执行失败");
+  }
+}
+
+async function onDelete(task) {
+  try {
+    await ElMessageBox.confirm(`确定删除任务 ${task.name || task.task_id}？`, "删除任务", {
+      type: "warning",
+    });
+  } catch {
+    return;
+  }
+  try {
+    await deleteTask(task.task_id);
+    ElMessage.success("任务已删除");
+    await loadTasks();
+  } catch (err) {
+    ElMessage.error(err.message || "删除失败");
   }
 }
 
@@ -150,12 +182,14 @@ async function runQuickTest() {
       },
       adapter_id: "yingxiaoyi-lead-v1",
       source: "external",
-      auto_submit: false,
+      auto_submit: true,
+      auto_restart: true,
+      max_retries: 2,
     });
     if (!resp.task) {
       throw new Error(resp.compile?.plan?.validation_error || "创建失败");
     }
-    ElMessage.success("测试任务已创建");
+    ElMessage.success("测试任务已创建并开始执行");
     router.push(`/tasks/${resp.task.task_id}`);
   } catch (err) {
     errorMessage.value = err.message || "快速测试失败";
@@ -209,7 +243,7 @@ async function loadTasks() {
 function schedulePoll() {
   if (pollTimer) clearInterval(pollTimer);
   const hasRunning = items.value.some(
-    (t) => t.status === "running" || t.status === "queued" || t.status === "scheduled",
+    (t) => t.status === "running" || t.status === "queued" || t.status === "retrying" || t.status === "scheduled",
   );
   if (!hasRunning) return;
   pollTimer = setInterval(async () => {
@@ -222,7 +256,7 @@ function schedulePoll() {
       });
       items.value = data.items || [];
       await loadAllForStats();
-      if (!items.value.some((t) => t.status === "running" || t.status === "queued" || t.status === "scheduled")) {
+      if (!items.value.some((t) => ["running", "queued", "retrying", "scheduled"].includes(t.status))) {
         clearInterval(pollTimer);
         pollTimer = null;
       }

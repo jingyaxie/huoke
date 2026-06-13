@@ -117,6 +117,47 @@ def test_submit_scheduled_task(db_session, monkeypatch):
     assert updated.status == "queued"
 
 
+def test_submit_dead_letter_task_resets_retry(db_session, monkeypatch):
+    import app.task_platform.services.task_runtime_service as trs
+    from app.core.config import Settings
+
+    class _PoolStub:
+        def enqueue(self, **_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr(trs.TaskWorkerPool, "get", lambda _settings: _PoolStub())
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row = TaskInstance(
+        id="tsk_dead_letter",
+        tenant_id="default",
+        template_id="lead-acquisition",
+        template_version="1.0.0",
+        executor_id="lead_acquisition",
+        name="死信任务",
+        platform="douyin",
+        account_id="default",
+        status="dead_letter",
+        progress={},
+        spec={"keyword": "团餐", "platform": "douyin"},
+        retry_count=2,
+        max_retries=1,
+        auto_restart=True,
+        error="'TaskInstance' object has no attribute 'task_id'",
+        completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    runtime = TaskRuntimeService(Settings(), db_session, TaskTemplateStore())
+    updated = runtime.submit("default", "tsk_dead_letter")
+    assert updated.status == "queued"
+    assert updated.retry_count == 0
+    assert updated.error is None
+    assert updated.completed_at is None
+
+
 def test_scheduler_dispatches_due_task(db_session, monkeypatch):
     import app.task_platform.services.task_scheduler_service as tss
     import app.task_platform.services.task_runtime_service as trs

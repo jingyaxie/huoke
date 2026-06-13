@@ -9,7 +9,9 @@
         </div>
         <div v-if="task" class="header-actions">
           <el-button :loading="loading" @click="reload">刷新</el-button>
-          <el-button v-if="canSubmit" type="success" :loading="submitting" @click="onSubmit">提交执行</el-button>
+          <el-button v-if="canStart" type="success" :loading="submitting" @click="onSubmit">开始执行</el-button>
+          <el-button v-if="canContinue" type="success" :loading="restarting" @click="onContinue">继续执行</el-button>
+          <el-button v-if="canRestartFresh" plain :loading="restarting" @click="onRestartFresh">从头开始</el-button>
           <el-button v-if="hasCompileReport" plain @click="onRecompileTest">重新编译测试</el-button>
           <el-button v-if="task.status === 'running'" @click="onPause">暂停</el-button>
           <el-button v-if="task.status === 'paused'" type="primary" @click="onResume">恢复</el-button>
@@ -21,6 +23,7 @@
           >
             取消
           </el-button>
+          <el-button v-if="canDelete" type="danger" plain :loading="deleting" @click="onDelete">删除</el-button>
         </div>
       </div>
 
@@ -42,6 +45,47 @@
         <div v-if="task.current_phase" class="summary-row">
           <span>当前阶段</span>
           <code>{{ task.current_phase }}</code>
+        </div>
+        <div class="summary-row browser-row">
+          <span>浏览器</span>
+          <div class="browser-control">
+            <el-switch
+              v-model="headless"
+              :disabled="!canEditSettings"
+              :loading="patchingSettings"
+              active-text="无头"
+              inactive-text="可见"
+              @change="onHeadlessChange"
+            />
+            <span v-if="!canEditSettings" class="browser-hint">运行中不可切换</span>
+            <span v-else class="browser-hint">提交执行前可切换；可见模式可在 VNC 中观看</span>
+          </div>
+        </div>
+        <div class="summary-row browser-row">
+          <span>自动重启</span>
+          <div class="browser-control">
+            <el-switch
+              v-model="autoRestart"
+              :disabled="!canEditSettings"
+              :loading="patchingSettings"
+              active-text="失败时自动重试"
+              inactive-text="失败即停止"
+              @change="onAutoRestartChange"
+            />
+            <el-input-number
+              v-if="autoRestart"
+              v-model="maxRetries"
+              :min="0"
+              :max="5"
+              size="small"
+              :disabled="!canEditSettings"
+              @change="onMaxRetriesChange"
+            />
+            <span class="browser-hint">
+              已重试 {{ task.retry_count ?? 0 }}/{{ task.max_retries ?? 0 }}
+              · {{ task.auto_restart ? "失败自动重启" : "失败即停" }}
+            </span>
+          </div>
         </div>
         <div v-if="task.error" class="summary-row error-row">
           <span>错误</span>
@@ -81,7 +125,8 @@
           <dd v-if="task.adapter_id">{{ task.adapter_id }}</dd>
         </dl>
         <p class="test-hint">
-          「提交执行」将任务放入 worker 队列运行；「重新编译测试」用原始 JSON 再次编译，不修改当前任务。
+          「开始执行」用于排队/暂停中的任务；「继续执行」保留已抓线索与进度，仅补跑触达；「从头开始」会重新抓取线索。
+          「重新编译测试」用原始 JSON 再次编译，不修改当前任务。
         </p>
         <pre v-if="recompilePreview" class="code-block recompile-preview">{{ formatJson(recompilePreview) }}</pre>
       </div>
@@ -144,28 +189,49 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { cancelTask, compileTask, fetchTask, fetchTaskPhases, fetchTaskTemplate, pauseTask, resumeTask, submitTask } from "../api/tasks";
+import {
+  cancelTask,
+  compileTask,
+  deleteTask,
+  fetchTask,
+  fetchTaskPhases,
+  fetchTaskTemplate,
+  pauseTask,
+  patchTaskSpec,
+  restartTask,
+  resumeTask,
+  submitTask,
+} from "../api/tasks";
 
 const route = useRoute();
+const router = useRouter();
 const loading = ref(false);
 const submitting = ref(false);
+const restarting = ref(false);
+const deleting = ref(false);
 const errorMessage = ref("");
 const task = ref(null);
 const phases = ref([]);
 const templatePhases = ref([]);
 const recompilePreview = ref(null);
 const activeTab = ref("runtime");
+const headless = ref(true);
+const autoRestart = ref(true);
+const maxRetries = ref(2);
+const patchingSettings = ref(false);
 let pollTimer = null;
 
 const statusOptions = [
   { value: "scheduled", label: "已预约" },
   { value: "queued", label: "排队中" },
   { value: "running", label: "运行中" },
+  { value: "retrying", label: "重试中" },
   { value: "paused", label: "已暂停" },
   { value: "completed", label: "已完成" },
   { value: "failed", label: "失败" },
+  { value: "dead_letter", label: "死信" },
   { value: "cancelled", label: "已取消" },
 ];
 
@@ -173,10 +239,28 @@ const compilePlan = computed(() => task.value?.compile_plan || {});
 const hasCompileReport = computed(
   () => Boolean(task.value?.raw_payload) || Boolean(task.value?.compile_plan),
 );
-const canSubmit = computed(() => {
+const TERMINAL_STATUSES = ["failed", "dead_letter", "completed", "cancelled"];
+
+const canStart = computed(() => {
   const s = task.value?.status;
-  return s === "queued" || s === "failed" || s === "paused" || s === "scheduled";
+  return s === "queued" || s === "paused" || s === "scheduled";
 });
+
+const canContinue = computed(() => TERMINAL_STATUSES.includes(task.value?.status));
+
+const canRestartFresh = computed(() => TERMINAL_STATUSES.includes(task.value?.status));
+
+const canDelete = computed(() => task.value?.status && task.value.status !== "running");
+const canEditSettings = computed(() => {
+  const s = task.value?.status;
+  return s && !["running"].includes(s);
+});
+
+function syncSettingsFromTask() {
+  headless.value = task.value?.spec?.headless !== false;
+  autoRestart.value = task.value?.auto_restart !== false;
+  maxRetries.value = task.value?.max_retries ?? 1;
+}
 
 function statusLabel(status) {
   return statusOptions.find((o) => o.value === status)?.label || status;
@@ -185,6 +269,7 @@ function statusLabel(status) {
 function statusTagType(status) {
   if (status === "completed") return "success";
   if (status === "running") return "primary";
+  if (status === "retrying") return "warning";
   if (status === "failed" || status === "dead_letter") return "danger";
   if (status === "paused") return "warning";
   if (status === "scheduled") return "warning";
@@ -262,6 +347,7 @@ async function reload() {
   errorMessage.value = "";
   try {
     task.value = await fetchTask(taskId);
+    syncSettingsFromTask();
     if (task.value?.compile_plan || task.value?.raw_payload) {
       activeTab.value = "compile";
     } else {
@@ -280,11 +366,11 @@ async function reload() {
 
 function schedulePoll() {
   if (pollTimer) clearInterval(pollTimer);
-  if (!task.value || !["running", "queued"].includes(task.value.status)) return;
+  if (!task.value || !["running", "queued", "retrying"].includes(task.value.status)) return;
   pollTimer = setInterval(async () => {
     try {
       task.value = await fetchTask(route.params.taskId);
-      if (!["running", "queued"].includes(task.value.status)) {
+      if (!["running", "queued", "retrying"].includes(task.value.status)) {
         clearInterval(pollTimer);
         pollTimer = null;
         const phaseData = await fetchTaskPhases(route.params.taskId);
@@ -296,11 +382,53 @@ function schedulePoll() {
   }, 3000);
 }
 
+async function patchSettings(patch) {
+  if (!canEditSettings.value) return;
+  patchingSettings.value = true;
+  try {
+    task.value = await patchTaskSpec(route.params.taskId, patch);
+    syncSettingsFromTask();
+  } catch (err) {
+    syncSettingsFromTask();
+    ElMessage.error(err.message || "保存失败");
+    throw err;
+  } finally {
+    patchingSettings.value = false;
+  }
+}
+
+async function onHeadlessChange(value) {
+  try {
+    await patchSettings({ headless: value });
+    ElMessage.success(value ? "已切换为无头模式" : "已切换为可见模式");
+  } catch {
+    /* handled */
+  }
+}
+
+async function onAutoRestartChange(value) {
+  try {
+    await patchSettings({ auto_restart: value });
+    ElMessage.success(value ? "已开启自动重启" : "已关闭自动重启");
+  } catch {
+    /* handled */
+  }
+}
+
+async function onMaxRetriesChange(value) {
+  try {
+    await patchSettings({ max_retries: value });
+    ElMessage.success("已更新最大重试次数");
+  } catch {
+    /* handled */
+  }
+}
+
 async function onSubmit() {
   submitting.value = true;
   try {
     task.value = await submitTask(route.params.taskId);
-    ElMessage.success("已提交执行");
+    ElMessage.success("已开始执行");
     schedulePoll();
     const phaseData = await fetchTaskPhases(route.params.taskId);
     phases.value = phaseData.items || [];
@@ -308,6 +436,63 @@ async function onSubmit() {
     ElMessage.error(err.message || "提交失败");
   } finally {
     submitting.value = false;
+  }
+}
+
+async function onContinue() {
+  restarting.value = true;
+  try {
+    task.value = await restartTask(route.params.taskId, { fresh: false });
+    ElMessage.success("已继续执行，将保留已抓线索");
+    schedulePoll();
+    const phaseData = await fetchTaskPhases(route.params.taskId);
+    phases.value = phaseData.items || [];
+  } catch (err) {
+    ElMessage.error(err.message || "继续执行失败");
+  } finally {
+    restarting.value = false;
+  }
+}
+
+async function onRestartFresh() {
+  try {
+    await ElMessageBox.confirm(
+      "从头开始会清空进度并重新抓取线索，已触达的用户仍会通过互动记录去重。确定继续？",
+      "从头开始",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  restarting.value = true;
+  try {
+    task.value = await restartTask(route.params.taskId, { fresh: true });
+    ElMessage.success("已从头开始执行");
+    schedulePoll();
+    const phaseData = await fetchTaskPhases(route.params.taskId);
+    phases.value = phaseData.items || [];
+  } catch (err) {
+    ElMessage.error(err.message || "重启失败");
+  } finally {
+    restarting.value = false;
+  }
+}
+
+async function onDelete() {
+  try {
+    await ElMessageBox.confirm("删除后不可恢复，确定删除此任务？", "删除任务", { type: "warning" });
+  } catch {
+    return;
+  }
+  deleting.value = true;
+  try {
+    await deleteTask(route.params.taskId);
+    ElMessage.success("任务已删除");
+    router.push("/tasks");
+  } catch (err) {
+    ElMessage.error(err.message || "删除失败");
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -411,6 +596,21 @@ onUnmounted(() => {
 }
 .error-row span:last-child {
   color: var(--el-color-danger);
+}
+.browser-row {
+  align-items: flex-start;
+}
+.browser-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.browser-control .el-input-number {
+  width: 120px;
+}
+.browser-hint {
+  font-size: 12px;
+  color: #888;
 }
 .section-title {
   margin: 0 0 12px;

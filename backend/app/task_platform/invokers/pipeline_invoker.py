@@ -50,6 +50,7 @@ class PipelineInvoker:
             region=spec.region,
             provider=spec.provider,
             timeout_seconds=spec.timeout_seconds,
+            headless=spec.headless,
             force_refresh=spec.crawl.force_refresh and batch_index == 0,
             async_job=False,
         )

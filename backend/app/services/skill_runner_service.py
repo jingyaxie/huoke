@@ -236,7 +236,7 @@ class SkillRunnerService:
             "days": search_days,
             "comment_days": days if video_publish_days is not None else None,
             "region": region,
-            "show_browser": False,
+            "show_browser": headless is False,
             "guest_mode": guest_mode,
             "force_refresh": force_refresh,
             "cache_ttl_hours": cache_ttl_hours,

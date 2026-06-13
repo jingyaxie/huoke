@@ -16,6 +16,8 @@ from app.task_platform.schemas.instance import (
     TaskInstanceListResponse,
     TaskInstanceOut,
     TaskPhaseListResponse,
+    TaskSpecPatchRequest,
+    TaskRestartRequest,
 )
 from app.task_platform.schemas.template import TaskTemplateListResponse, TaskTemplateOut
 from app.task_platform.services.compile_create_helper import build_create_request_from_compile
@@ -100,11 +102,16 @@ async def compile_and_create_task(
             "async_mode": payload.async_mode,
             "priority": payload.priority,
             "max_retries": payload.max_retries,
+            "auto_restart": payload.auto_restart,
             "scheduled_at": payload.scheduled_at,
         },
     )
     if create_payload is None:
         return TaskCompileAndCreateResponse(compile=compiled, task=None)
+    if payload.headless is not None:
+        spec = dict(create_payload.spec or {})
+        spec["headless"] = payload.headless
+        create_payload = create_payload.model_copy(update={"spec": spec})
     runtime = _runtime(session, settings)
     try:
         row = await runtime.create_async(tenant_id, create_payload)
@@ -208,6 +215,31 @@ def list_task_phases(
     return TaskPhaseListResponse(items=items, total=len(items))
 
 
+@router.patch("/tasks/{task_id}", response_model=TaskInstanceOut)
+def patch_task(
+    task_id: str,
+    payload: TaskSpecPatchRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    session: Session = Depends(db_session),
+    settings: Settings = Depends(get_settings),
+) -> TaskInstanceOut:
+    runtime = _runtime(session, settings)
+    try:
+        row = runtime.patch_settings(
+            tenant_id,
+            task_id,
+            headless=payload.headless,
+            auto_restart=payload.auto_restart,
+            max_retries=payload.max_retries,
+        )
+        session.commit()
+        session.refresh(row)
+        return serialize_task_instance(row)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/tasks/{task_id}/pause", response_model=TaskInstanceOut)
 def pause_task(
     task_id: str,
@@ -257,6 +289,41 @@ def cancel_task(
         session.commit()
         session.refresh(row)
         return serialize_task_instance(row)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/tasks/{task_id}/restart", response_model=TaskInstanceOut)
+def restart_task(
+    task_id: str,
+    payload: TaskRestartRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    session: Session = Depends(db_session),
+    settings: Settings = Depends(get_settings),
+) -> TaskInstanceOut:
+    runtime = _runtime(session, settings)
+    try:
+        row = runtime.restart(tenant_id, task_id, fresh=payload.fresh)
+        session.commit()
+        session.refresh(row)
+        return serialize_task_instance(row)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/tasks/{task_id}", status_code=204)
+def delete_task(
+    task_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    session: Session = Depends(db_session),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    runtime = _runtime(session, settings)
+    try:
+        runtime.delete(tenant_id, task_id)
+        session.commit()
     except ValueError as exc:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(exc)) from exc

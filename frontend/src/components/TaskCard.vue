@@ -26,6 +26,10 @@
       <el-tag size="small" :type="task.source === 'external' ? 'warning' : ''" effect="plain">
         {{ task.source === "external" ? "外部" : "本地" }}
       </el-tag>
+      <el-tag v-if="task.auto_restart !== false" size="small" type="success" effect="plain">
+        自动重启 {{ task.retry_count ?? 0 }}/{{ task.max_retries ?? 0 }}
+      </el-tag>
+      <el-tag v-else size="small" effect="plain">失败即停</el-tag>
     </div>
 
     <div class="card-progress">
@@ -39,8 +43,14 @@
     <footer class="card-foot" @click.stop>
       <span class="time">{{ createdText }}</span>
       <div class="foot-actions">
-        <el-button v-if="canSubmit" size="small" type="success" plain @click="$emit('submit', task)">
-          提交执行
+        <el-button v-if="canStart" size="small" type="success" plain @click="$emit('submit', task)">
+          开始执行
+        </el-button>
+        <el-button v-if="canContinue" size="small" type="success" plain @click="$emit('continue', task)">
+          继续执行
+        </el-button>
+        <el-button v-if="canDelete" size="small" type="danger" plain @click="$emit('delete', task)">
+          删除
         </el-button>
         <el-button size="small" type="primary" link @click="$emit('open', task.task_id)">查看详情</el-button>
       </div>
@@ -55,12 +65,15 @@ const props = defineProps({
   task: { type: Object, required: true },
 });
 
-defineEmits(["open", "submit"]);
+defineEmits(["open", "submit", "continue", "delete"]);
+
+const TERMINAL_STATUSES = ["failed", "dead_letter", "completed", "cancelled"];
 
 const STATUS_MAP = {
   scheduled: "已预约",
   queued: "排队中",
   running: "运行中",
+  retrying: "重试中",
   paused: "已暂停",
   completed: "已完成",
   failed: "失败",
@@ -80,13 +93,14 @@ const statusTagType = computed(() => {
   const s = props.task.status;
   if (s === "completed") return "success";
   if (s === "running") return "primary";
+  if (s === "retrying") return "warning";
   if (s === "failed" || s === "dead_letter") return "danger";
   if (s === "paused") return "warning";
   if (s === "scheduled") return "warning";
   return "info";
 });
 
-const isRunning = computed(() => props.task.status === "running");
+const isRunning = computed(() => ["running", "retrying"].includes(props.task.status));
 
 const platformLabel = computed(
   () => PLATFORM_MAP[props.task.platform] || props.task.platform || "-",
@@ -102,7 +116,8 @@ const compileLabel = computed(() => {
 
 const phaseText = computed(() => {
   if (props.task.current_phase) return props.task.current_phase;
-  if (props.task.status === "queued") return "待提交";
+  if (props.task.status === "queued") return "排队中";
+  if (props.task.status === "retrying") return "重试中";
   if (props.task.status === "scheduled") return "等待定时";
   if (props.task.status === "completed") return "已完成";
   return "—";
@@ -117,10 +132,14 @@ const progressText = computed(() => {
   return pct != null ? `${pct}%` : "0%";
 });
 
-const canSubmit = computed(() => {
+const canStart = computed(() => {
   const s = props.task.status;
-  return s === "queued" || s === "failed" || s === "paused" || s === "scheduled";
+  return s === "queued" || s === "paused" || s === "scheduled";
 });
+
+const canContinue = computed(() => TERMINAL_STATUSES.includes(props.task.status));
+
+const canDelete = computed(() => props.task.status && props.task.status !== "running");
 
 const createdText = computed(() => {
   if (props.task.status === "scheduled" && props.task.scheduled_at) {

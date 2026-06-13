@@ -23,6 +23,18 @@
               编译并创建
             </el-button>
           </el-form-item>
+          <el-form-item label="自动执行">
+            <el-switch v-model="autoSubmit" active-text="创建后立即执行" inactive-text="仅创建" />
+          </el-form-item>
+          <el-form-item label="浏览器模式">
+            <el-switch v-model="headless" active-text="无头" inactive-text="可见" />
+          </el-form-item>
+          <el-form-item label="自动重启">
+            <el-switch v-model="autoRestart" active-text="失败时自动重试" inactive-text="失败即停止" />
+          </el-form-item>
+          <el-form-item v-if="autoRestart" label="最大重试">
+            <el-input-number v-model="maxRetries" :min="0" :max="5" size="small" />
+          </el-form-item>
         </el-form>
       </div>
 
@@ -80,6 +92,10 @@ import { SAMPLE_YINGXIAOYI_PAYLOAD, compileAndCreateTask, compileTask } from "..
 
 const router = useRouter();
 const adapterId = ref("yingxiaoyi-lead-v1");
+const headless = ref(true);
+const autoSubmit = ref(true);
+const autoRestart = ref(true);
+const maxRetries = ref(2);
 const rawJsonText = ref(JSON.stringify(SAMPLE_YINGXIAOYI_PAYLOAD, null, 2));
 const compiling = ref(false);
 const creating = ref(false);
@@ -150,14 +166,17 @@ async function runCreate() {
       raw_payload,
       adapter_id: adapterId.value,
       source: "external",
-      auto_submit: false,
+      auto_submit: autoSubmit.value,
+      headless: headless.value,
+      auto_restart: autoRestart.value,
+      max_retries: maxRetries.value,
     });
     compileResult.value = resp.compile;
     plan.value = resp.compile?.plan || {};
     if (!resp.task) {
       throw new Error(resp.compile?.plan?.validation_error || "创建失败");
     }
-    ElMessage.success("任务已创建");
+    ElMessage.success(autoSubmit.value ? "任务已创建并开始执行" : "任务已创建");
     router.push(`/tasks/${resp.task.task_id}`);
   } catch (err) {
     errorMessage.value = err.message || "创建失败";

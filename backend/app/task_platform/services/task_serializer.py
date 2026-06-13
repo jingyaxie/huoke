@@ -36,6 +36,8 @@ def serialize_task_instance(row: TaskInstance) -> TaskInstanceOut:
         adapter_id=row.adapter_id,
         source=row.source,
         retry_count=row.retry_count,
+        max_retries=row.max_retries,
+        auto_restart=row.auto_restart,
         created_at=row.created_at,
         updated_at=row.updated_at,
         started_at=row.started_at,

@@ -122,6 +122,39 @@ export async function submitTask(taskId) {
   return parseJson(resp);
 }
 
+export async function restartTask(taskId, { fresh = false } = {}) {
+  const resp = await fetch(`${baseURL}/open/tasks/${encodeURIComponent(taskId)}/restart`, {
+    method: "POST",
+    headers: taskHeaders(),
+    body: JSON.stringify({ fresh }),
+  });
+  return parseJson(resp);
+}
+
+export async function deleteTask(taskId) {
+  const resp = await fetch(`${baseURL}/open/tasks/${encodeURIComponent(taskId)}`, {
+    method: "DELETE",
+    headers: taskHeaders(),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `请求失败 (${resp.status})`);
+  }
+}
+
+export async function patchTaskSpec(taskId, patch) {
+  const body = {};
+  if (patch.headless !== undefined) body.headless = patch.headless;
+  if (patch.auto_restart !== undefined) body.auto_restart = patch.auto_restart;
+  if (patch.max_retries !== undefined) body.max_retries = patch.max_retries;
+  const resp = await fetch(`${baseURL}/open/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: taskHeaders(),
+    body: JSON.stringify(body),
+  });
+  return parseJson(resp);
+}
+
 export const SAMPLE_YINGXIAOYI_PAYLOAD = {
   task_name: "深圳团餐线索",
   keyword: "团餐配送",

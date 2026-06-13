@@ -53,8 +53,27 @@
               style="width: 280px"
             />
           </el-form-item>
-          <el-form-item label="立即执行">
-            <el-switch v-model="form.async_mode" active-text="无计划时间时自动执行" />
+          <el-form-item label="自动执行">
+            <el-switch v-model="form.async_mode" active-text="无计划时间时自动执行" inactive-text="仅创建" />
+          </el-form-item>
+          <el-form-item label="浏览器模式">
+            <el-switch
+              v-model="form.headless"
+              active-text="无头"
+              inactive-text="可见"
+            />
+            <p class="field-hint">可见模式下可在 VNC 中观看浏览器操作，适合调试或过人机验证。</p>
+          </el-form-item>
+          <el-form-item label="自动重启">
+            <el-switch
+              v-model="form.auto_restart"
+              active-text="失败时自动重试"
+              inactive-text="失败即停止"
+            />
+            <span v-if="form.auto_restart" class="field-hint inline-hint">最多重试 {{ form.max_retries }} 次</span>
+          </el-form-item>
+          <el-form-item v-if="form.auto_restart" label="最大重试">
+            <el-input-number v-model="form.max_retries" :min="0" :max="5" />
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="submitting" @click="submit">创建任务</el-button>
@@ -84,6 +103,9 @@ const form = ref({
   target_leads: 100,
   async_mode: true,
   scheduled_at: null,
+  headless: true,
+  auto_restart: true,
+  max_retries: 2,
 });
 
 function onTemplateChange() {
@@ -115,6 +137,8 @@ async function submit() {
       name: form.value.task_name || undefined,
       async: form.value.async_mode,
       scheduled_at: form.value.scheduled_at || undefined,
+      auto_restart: form.value.auto_restart,
+      max_retries: form.value.max_retries,
       spec: {
         task_name: form.value.task_name,
         keyword: form.value.keyword.trim(),
@@ -124,6 +148,7 @@ async function submit() {
           comment_days: form.value.comment_days,
           target_leads: form.value.target_leads,
         },
+        headless: form.value.headless,
       },
     });
     ElMessage.success("任务已创建");
@@ -163,5 +188,15 @@ onMounted(loadTemplates);
   margin-left: 8px;
   color: #999;
   font-size: 12px;
+}
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #888;
+  line-height: 1.4;
+}
+.inline-hint {
+  margin: 0 0 0 10px;
+  display: inline;
 }
 </style>

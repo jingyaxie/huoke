@@ -12,6 +12,7 @@ TaskStatus = Literal[
     "scheduled",
     "queued",
     "running",
+    "retrying",
     "paused",
     "completed",
     "failed",
@@ -42,6 +43,10 @@ class LeadCrawlTaskSpec(BaseModel):
     crawl: TaskCrawlSpec = Field(default_factory=TaskCrawlSpec)
     provider: Literal["openai", "deepseek"] = "deepseek"
     timeout_seconds: int = Field(default=1200, ge=60, le=3600)
+    headless: bool | None = Field(
+        default=None,
+        description="浏览器模式：true=无头，false=可见；None 时跟随平台默认配置",
+    )
 
     @field_validator("platform")
     @classmethod
@@ -92,7 +97,8 @@ class TaskCreateRequest(BaseModel):
     webhook_headers: dict[str, str] = Field(default_factory=dict)
     async_mode: bool = Field(default=True, alias="async")
     priority: int = Field(default=5, ge=1, le=10)
-    max_retries: int = Field(default=1, ge=0, le=5)
+    max_retries: int = Field(default=2, ge=0, le=5)
+    auto_restart: bool = Field(default=True, description="失败时是否自动重试（最多 max_retries 次）")
     scheduled_at: datetime | None = None
     raw_payload: dict[str, Any] | None = None
     compile_plan: dict[str, Any] | None = None
@@ -124,6 +130,8 @@ class TaskInstanceOut(BaseModel):
     adapter_id: str | None = None
     source: str = "local"
     retry_count: int = 0
+    max_retries: int = 2
+    auto_restart: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
     started_at: datetime | None = None
@@ -154,3 +162,16 @@ class TaskPhaseRunOut(BaseModel):
 class TaskPhaseListResponse(BaseModel):
     items: list[TaskPhaseRunOut]
     total: int
+
+
+class TaskSpecPatchRequest(BaseModel):
+    headless: bool | None = Field(default=None, description="浏览器模式：true=无头，false=可见浏览器")
+    auto_restart: bool | None = Field(default=None, description="失败时是否自动重试")
+    max_retries: int | None = Field(default=None, ge=0, le=5, description="最大自动重试次数")
+
+
+class TaskRestartRequest(BaseModel):
+    fresh: bool = Field(
+        default=False,
+        description="false=继续执行（保留进度与已抓线索）；true=从头开始",
+    )

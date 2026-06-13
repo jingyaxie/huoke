@@ -61,6 +61,13 @@ class TaskInstanceRepository:
         self.session.add(row)
         return row
 
+    def delete(self, task_id: str) -> bool:
+        row = self.get(task_id)
+        if row is None:
+            return False
+        self.session.delete(row)
+        return True
+
     @staticmethod
     def list_due_scheduled(session: Session, *, limit: int = 50) -> list[TaskInstance]:
         now = _utc_now_naive()
@@ -70,6 +77,16 @@ class TaskInstanceRepository:
             .filter(TaskInstance.scheduled_at.isnot(None))
             .filter(TaskInstance.scheduled_at <= now)
             .order_by(TaskInstance.scheduled_at.asc())
+            .limit(max(1, min(limit, 200)))
+            .all()
+        )
+
+    @staticmethod
+    def list_pending_execution(session: Session, *, limit: int = 200) -> list[TaskInstance]:
+        return (
+            session.query(TaskInstance)
+            .filter(TaskInstance.status.in_(["queued", "retrying"]))
+            .order_by(TaskInstance.updated_at.asc())
             .limit(max(1, min(limit, 200)))
             .all()
         )
