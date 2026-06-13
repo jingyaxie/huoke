@@ -705,6 +705,18 @@ export async function cancelAgentJobTask(jobId) {
   return resp.json();
 }
 
+export async function executeAgentJob(jobId) {
+  const resp = await fetch(`${baseURL}/agent/jobs/${jobId}/execute`, {
+    method: "POST",
+    headers: agentHeaders(),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || "启动任务失败");
+  }
+  return resp.json();
+}
+
 export async function runAgentBenchmark(cases) {
   const resp = await fetch(`${baseURL}/agent/eval/benchmark`, {
     method: "POST",

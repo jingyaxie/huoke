@@ -85,7 +85,7 @@ from app.services.agent_rule_store import AgentRuleStore
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.agent_service import AgentService
 from app.services.agent_run_store import AgentRunStore
-from app.services.agent_async_job_service import AgentAsyncJobService
+from app.services.agent_async_job_service import AgentAsyncJob, AgentAsyncJobService
 from app.services.agent_eval_service import AgentEvalService
 from app.services.open_pipeline_service import OpenPipelineService
 from app.services.skill_effect_service import SkillEffectService
@@ -97,6 +97,33 @@ from app.services.skillhub_installer import SkillHubInstaller
 
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+def _async_job_out(job: AgentAsyncJob) -> AgentAsyncJobOut:
+    return AgentAsyncJobOut(
+        job_id=job.job_id,
+        status=job.status,
+        stage=job.stage,
+        retry_count=job.retry_count,
+        run_id=job.run_id,
+        session_id=job.session_id,
+        message=job.message,
+        provider=job.provider,
+        mode=job.mode,
+        run_mode=job.run_mode,
+        platform=job.platform,
+        account_id=job.account_id,
+        timeout_seconds=job.timeout_seconds,
+        max_retries=job.max_retries,
+        priority=job.priority,
+        auto_execute=job.auto_execute,
+        auto_restart=job.auto_restart,
+        result=job.result,
+        error=job.error,
+        dead_letter_reason=job.dead_letter_reason,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 def _agent_service(
@@ -377,20 +404,26 @@ async def submit_agent_job(
         priority=payload.priority,
         webhook_url=payload.webhook_url,
         webhook_headers=payload.webhook_headers,
+        auto_execute=payload.auto_execute,
+        auto_restart=payload.auto_restart,
     )
-    return AgentAsyncJobOut(
-        job_id=job.job_id,
-        status=job.status,
-        stage=job.stage,
-        retry_count=job.retry_count,
-        run_id=job.run_id,
-        session_id=job.session_id,
-        result=job.result,
-        error=job.error,
-        dead_letter_reason=job.dead_letter_reason,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
+    return _async_job_out(job)
+
+
+@router.post("/jobs/{job_id}/execute", response_model=AgentAsyncJobOut)
+async def execute_agent_job(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> AgentAsyncJobOut:
+    svc = AgentAsyncJobService.get(settings)
+    try:
+        job = svc.execute(tenant_id, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return _async_job_out(job)
 
 
 @router.get("/jobs/{job_id}", response_model=AgentAsyncJobOut)
@@ -403,19 +436,7 @@ async def get_agent_job(
     job = svc.get_job(tenant_id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return AgentAsyncJobOut(
-        job_id=job.job_id,
-        status=job.status,
-        stage=job.stage,
-        retry_count=job.retry_count,
-        run_id=job.run_id,
-        session_id=job.session_id,
-        result=job.result,
-        error=job.error,
-        dead_letter_reason=job.dead_letter_reason,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
+    return _async_job_out(job)
 
 
 @router.get("/jobs", response_model=list[AgentAsyncJobOut])
@@ -426,22 +447,7 @@ async def list_agent_jobs(
 ) -> list[AgentAsyncJobOut]:
     svc = AgentAsyncJobService.get(settings)
     items = svc.list_jobs(tenant_id, limit=limit)
-    return [
-        AgentAsyncJobOut(
-            job_id=j.job_id,
-            status=j.status,
-            stage=j.stage,
-            retry_count=j.retry_count,
-            run_id=j.run_id,
-            session_id=j.session_id,
-            result=j.result,
-            error=j.error,
-            dead_letter_reason=j.dead_letter_reason,
-            created_at=j.created_at,
-            updated_at=j.updated_at,
-        )
-        for j in items
-    ]
+    return [_async_job_out(j) for j in items]
 
 
 @router.post("/jobs/{job_id}/cancel")

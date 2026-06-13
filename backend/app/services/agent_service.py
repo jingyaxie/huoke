@@ -86,6 +86,7 @@ from app.services.stored_comment_tools import (
     STORED_COMMENT_TOOL_NAMES,
     STORED_COMMENT_WRITE_TOOLS,
 )
+from app.task_platform.tools.task_tools import TASK_TOOL_DEFINITIONS, TASK_TOOL_NAMES
 
 RUNTIME_KERNEL_PROMPT = """你是一个浏览器自动化智能体。
 
@@ -1019,6 +1020,10 @@ class AgentService:
         if stored_result is not None:
             return stored_result
 
+        task_result = await self._execute_task_tool(fn_name, fn_args)
+        if task_result is not None:
+            return task_result
+
         hub_result = await self._execute_skillhub_tool(fn_name, fn_args, skills_by_id=skills_by_id)
         if hub_result is not None:
             return hub_result
@@ -1210,6 +1215,118 @@ class AgentService:
             if not content_id:
                 return {"error": "缺少 content_id", "source": "database", "status": "failed"}
             return service.delete_content(platform=platform, content_id=content_id)
+
+        return None
+
+    async def _execute_task_tool(
+        self,
+        fn_name: str,
+        fn_args: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if fn_name not in TASK_TOOL_NAMES:
+            return None
+        if self.db_session is None:
+            return {"error": "数据库未连接，无法创建任务", "source": "task_platform"}
+
+        if fn_name == "list_task_templates":
+            from app.task_platform.stores.task_template_store import get_task_template_store
+
+            store = get_task_template_store()
+            items = store.list_templates(tenant_id=self.tenant_id)
+            return {
+                "templates": [
+                    {
+                        "template_id": t.template_id,
+                        "version": t.version,
+                        "name": t.name,
+                        "description": t.description,
+                        "platforms": t.platforms,
+                        "executor_id": t.executor_id,
+                        "default_spec": t.default_spec,
+                    }
+                    for t in items
+                ],
+                "total": len(items),
+            }
+
+        if fn_name == "create_structured_task":
+            from app.task_platform.services.compile_create_helper import build_create_request_from_compile
+            from app.task_platform.schemas.compile import TaskCompileRequest
+            from app.task_platform.services.task_compiler_service import TaskCompilerService
+            from app.task_platform.services.task_runtime_service import TaskRuntimeService
+            from app.task_platform.services.task_serializer import serialize_task_instance
+            from app.task_platform.stores.task_template_store import get_task_template_store
+
+            raw_payload = fn_args.get("raw_payload")
+            if not isinstance(raw_payload, dict) or not raw_payload:
+                return {"error": "缺少 raw_payload 对象", "source": "task_platform"}
+
+            adapter_id = str(fn_args.get("adapter_id") or "yingxiaoyi-lead-v1").strip()
+            account_id = str(fn_args.get("account_id") or self.account_id or "default").strip()
+            auto_submit = bool(fn_args.get("auto_submit", True))
+            force_llm = bool(fn_args.get("force_llm", False))
+            intent = fn_args.get("intent")
+            intent_str = str(intent).strip() if intent else None
+
+            compile_req = TaskCompileRequest(
+                raw_payload=raw_payload,
+                source="external",
+                adapter_id=adapter_id,
+                intent=intent_str,
+                account_id=account_id,
+                force_llm=force_llm,
+            )
+            compiler = TaskCompilerService(self.settings, tenant_id=self.tenant_id)
+            compiled = await compiler.compile(compile_req)
+            if not compiled.ok or compiled.create_request is None:
+                return {
+                    "source": "task_platform",
+                    "status": "compile_failed",
+                    "compile": compiled.plan.model_dump(mode="json"),
+                    "error": compiled.plan.validation_error or "编译失败",
+                }
+
+            create_payload = build_create_request_from_compile(
+                compile_req,
+                compiled,
+                overrides={"async_mode": auto_submit},
+            )
+            if create_payload is None:
+                return {
+                    "source": "task_platform",
+                    "status": "compile_failed",
+                    "compile": compiled.plan.model_dump(mode="json"),
+                    "error": "编译结果无法转为创建请求",
+                }
+            if create_payload.spec.get("account_id") in {None, ""}:
+                create_payload.spec["account_id"] = account_id
+
+            runtime = TaskRuntimeService(
+                self.settings,
+                self.db_session,
+                get_task_template_store(),
+            )
+            try:
+                row = await runtime.create_async(self.tenant_id, create_payload)
+                if auto_submit:
+                    runtime.submit(self.tenant_id, row.id)
+                self.db_session.commit()
+                self.db_session.refresh(row)
+                task_out = serialize_task_instance(row)
+                return {
+                    "source": "task_platform",
+                    "status": "created",
+                    "task": task_out.model_dump(mode="json"),
+                    "compile": compiled.plan.model_dump(mode="json"),
+                }
+            except ValueError as exc:
+                self.db_session.rollback()
+                return {
+                    "source": "task_platform",
+                    "status": "create_failed",
+                    "compile": compiled.plan.model_dump(mode="json"),
+                    "error": str(exc),
+                }
 
         return None
 
@@ -2327,6 +2444,7 @@ class AgentService:
                     TOOL_DEFINITIONS
                     + COMMENT_DATA_TOOL_DEFINITIONS
                     + STORED_COMMENT_TOOL_DEFINITIONS
+                    + TASK_TOOL_DEFINITIONS
                     + skill_tools
                     + hub_tools,
                     mode,
@@ -2492,6 +2610,7 @@ class AgentService:
                 TOOL_DEFINITIONS
                 + COMMENT_DATA_TOOL_DEFINITIONS
                 + STORED_COMMENT_TOOL_DEFINITIONS
+                + TASK_TOOL_DEFINITIONS
                 + build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
                 + hub_tools,
                 mode,
@@ -2632,6 +2751,7 @@ class AgentService:
                 TOOL_DEFINITIONS
                 + COMMENT_DATA_TOOL_DEFINITIONS
                 + STORED_COMMENT_TOOL_DEFINITIONS
+                + TASK_TOOL_DEFINITIONS
                 + build_skill_tool_definitions(skills, explicit_skill_ids=explicit_ids)
                 + hub_tools,
                 mode,

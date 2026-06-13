@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     sqlite_test_url: str = "sqlite+pysqlite:///:memory:"
 
     frontend_origin: str = "http://localhost:5173"
+    desktop_mode: bool = False
+    desktop_port: int = 8000
+    frontend_dist_dir: Path = Field(default_factory=lambda: ROOT_DIR / "frontend" / "dist")
 
     douyin_home_url: str = "https://www.douyin.com"
     douyin_hot_url: str = "https://www.douyin.com/hot"
@@ -111,6 +114,8 @@ class Settings(BaseSettings):
     admin_api_secret: Optional[str] = None
     tenant_bootstrap_api_keys: Optional[str] = None
     storage_state_encryption_key: Optional[str] = None
+    task_job_concurrency: int = 2
+    task_scheduler_poll_seconds: int = 30
 
 
 @lru_cache
@@ -128,4 +133,6 @@ def get_settings() -> Settings:
     settings.storage_root.mkdir(parents=True, exist_ok=True)
     settings.douyin_profile_dir.mkdir(parents=True, exist_ok=True)
     settings.report_output_dir.mkdir(parents=True, exist_ok=True)
+    dist = settings.frontend_dist_dir
+    settings.frontend_dist_dir = dist.resolve() if dist.is_absolute() else (ROOT_DIR / dist).resolve()
     return settings

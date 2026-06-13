@@ -59,6 +59,17 @@ class SocialRoamParams:
         return float(self.human_simulation.get("min_seconds_between_writes") or 8)
 
     @property
+    def interval_min_sec(self) -> int:
+        return int(self.human_simulation.get("interval_min_sec") or self.min_seconds_between_writes)
+
+    @property
+    def interval_max_sec(self) -> int:
+        return int(
+            self.human_simulation.get("interval_max_sec")
+            or max(self.interval_min_sec, int(self.min_seconds_between_writes * 2))
+        )
+
+    @property
     def persist_to_db(self) -> bool:
         return bool(self.collect.get("persist_to_db", True))
 

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shell Footer</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        background: #fff;
+      }
+
+      .bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        height: 100%;
+        padding: 0 16px;
+        border-top: 1px solid #cbd5e1;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.08);
+      }
+
+      .hint {
+        color: #64748b;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border-radius: 999px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      #portal-btn {
+        border: 1px solid #0f766e;
+        background: #0f766e;
+        color: #fff;
+      }
+
+      #portal-btn:hover {
+        background: #0d9488;
+        border-color: #0d9488;
+      }
+
+      #app-btn {
+        display: none;
+        border: 1px solid #99f6e4;
+        background: #f0fdfa;
+        color: #0f766e;
+      }
+
+      #app-btn:hover {
+        border-color: #0f766e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <div class="hint" id="hint">当前：盈小蚁网页 · 点击下方进入本地获客平台</div>
+      <div class="actions">
+        <button id="portal-btn" type="button">进入获客平台</button>
+        <button id="app-btn" type="button">← 返回盈小蚁</button>
+      </div>
+    </div>
+    <script>
+      (function () {
+        const internals = window.__TAURI_INTERNALS__;
+        const portalBtn = document.getElementById("portal-btn");
+        const appBtn = document.getElementById("app-btn");
+        const hint = document.getElementById("hint");
+
+        window.setShellMode = function setShellMode(mode) {
+          const inApp = mode === "app";
+          portalBtn.style.display = inApp ? "none" : "inline-flex";
+          appBtn.style.display = inApp ? "inline-flex" : "none";
+          hint.textContent = inApp
+            ? "当前：获客平台 · 测试入口 / 智能体助手 / 抓取数据"
+            : "当前：盈小蚁网页 · 点击下方进入本地获客平台";
+        };
+
+        function bindInvoke() {
+          if (!internals || typeof internals.invoke !== "function") {
+            hint.textContent = "底部栏加载异常，请重启应用";
+            return;
+          }
+
+          portalBtn.addEventListener("click", function () {
+            internals.invoke("shell_open_app");
+          });
+
+          appBtn.addEventListener("click", function () {
+            internals.invoke("shell_open_portal");
+          });
+
+          internals.invoke("shell_get_mode").then(window.setShellMode).catch(function () {
+            window.setShellMode("portal");
+          });
+        }
+
+        bindInvoke();
+      })();
+    </script>
+  </body>
+</html>

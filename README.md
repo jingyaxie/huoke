@@ -263,6 +263,50 @@ cd backend
 pytest
 ```
 
+## macOS 原生桌面应用
+
+使用 **Tauri 2** 将前后端打包为可安装的 `.app` / `.dmg`，启动后自动拉起 MySQL（Docker）与 Python 后端，在原生窗口中打开管理界面。
+
+### 前置依赖
+
+| 依赖 | 说明 |
+|------|------|
+| Docker Desktop | 运行内置 MySQL 容器 |
+| Google Chrome | Playwright 使用系统浏览器（可见窗口扫码登录） |
+| Node.js 20+ | 构建前端 |
+| Rust / Cargo | 构建 Tauri 壳 |
+| Python 3.11+ | 构建时打入 bundle（运行时自带 venv） |
+
+### 一键打包
+
+```bash
+chmod +x scripts/build_native_mac.sh
+./scripts/build_native_mac.sh
+```
+
+产物：
+
+- `desktop/src-tauri/target/release/bundle/macos/Huoke.app`
+- `desktop/src-tauri/target/release/bundle/dmg/Huoke_0.1.0_aarch64.dmg`
+
+### 开发调试（桌面模式）
+
+```bash
+# 终端 1：启动 MySQL + 后端（desktop 模式托管前端静态文件）
+./scripts/desktop-dev.sh
+
+# 终端 2：Tauri 开发窗口
+cd desktop && npm install && npm run dev
+```
+
+首次运行会在 `~/Library/Application Support/com.huoke.desktop/.env.desktop` 生成配置，按需填入 `DEEPSEEK_API_KEY` 等密钥后重启应用。
+
+### 架构说明
+
+1. 前端以 `VITE_API_BASE_URL=/api` 构建，由 FastAPI 同源托管（`DESKTOP_MODE=true`）
+2. Python 后端 + venv 打入 `desktop/bundle/`，随 `.app` Resources 分发
+3. 用户数据（storage、MySQL 数据）保存在 `~/Library/Application Support/com.huoke.desktop/`
+
 ## 注意事项
 
 1. 抖音页面结构可能变动，`backend/app/services/douyin_crawler.py` 中选择器可按需调整。

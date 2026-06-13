@@ -349,6 +349,7 @@ class CachedCrawlCoordinator:
         platforms: list[str],
         video_limit: int,
         days: int = 3,
+        video_publish_days: int | None = None,
         region: str | None = None,
         force_refresh: bool = False,
         cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
@@ -358,6 +359,7 @@ class CachedCrawlCoordinator:
             "platforms": platforms,
             "video_limit": video_limit,
             "days": days,
+            "video_publish_days": video_publish_days,
             "region": region,
         }
         cached = self.cache.lookup(
@@ -377,6 +379,7 @@ class CachedCrawlCoordinator:
         platforms: list[str],
         video_limit: int,
         days: int = 3,
+        video_publish_days: int | None = None,
         region: str | None = None,
         payload: dict[str, Any],
         cache_ttl_hours: float = DEFAULT_CACHE_TTL_HOURS,
@@ -386,6 +389,7 @@ class CachedCrawlCoordinator:
             "platforms": platforms,
             "video_limit": video_limit,
             "days": days,
+            "video_publish_days": video_publish_days,
             "region": region,
         }
         meta = self.cache.store(

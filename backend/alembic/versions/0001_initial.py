@@ -179,7 +179,7 @@ def upgrade() -> None:
         sa.Column("comment_id", sa.String(length=128), nullable=False),
         sa.Column("parent_comment_id", sa.String(length=128), nullable=True),
         sa.Column("nickname", sa.String(length=255), nullable=False, server_default=""),
-        sa.Column("comment_text", sa.Text(), nullable=False, server_default=""),
+        sa.Column("comment_text", sa.Text(), nullable=False),
         sa.Column("digg_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("create_time", sa.Integer(), nullable=True),
         sa.Column("content_url", sa.Text(), nullable=True),

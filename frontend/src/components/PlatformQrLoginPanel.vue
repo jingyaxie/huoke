@@ -113,7 +113,7 @@ async function pollOnce() {
       loginStatus.value = "confirmed";
       statusMessage.value = data.message || data.login_status?.message || "登录成功";
       stopPolling();
-      window.setTimeout(() => emit("success", data), 1200);
+      window.setTimeout(() => emit("success", data), 400);
       return;
     }
 
@@ -200,7 +200,7 @@ watch(
 
 onBeforeUnmount(() => {
   stopPolling();
-  if (sessionId.value) {
+  if (sessionId.value && loginStatus.value !== "confirmed") {
     cancelAccountPlatformQrLogin(props.accountId, props.platform, sessionId.value).catch(() => {});
   }
 });

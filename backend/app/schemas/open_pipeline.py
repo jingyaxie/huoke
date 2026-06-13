@@ -18,7 +18,13 @@ class KeywordVideoCommentsRequest(CrawlCacheOptions):
         default_factory=lambda: ["douyin", "xiaohongshu"]
     )
     video_limit: int = Field(default=5, ge=1, le=20)
-    days: int = Field(default=3, ge=1, le=30, description="最近天数筛选上下文")
+    days: int = Field(default=3, ge=1, le=30, description="评论采集天数（comment_days）")
+    video_publish_days: int | None = Field(
+        default=None,
+        ge=1,
+        le=365,
+        description="视频发布时间筛选；不传则与 days 相同",
+    )
     region: Optional[str] = Field(default=None, description="地域筛选，如 辽宁 / 沈阳；不传则不限制")
     account_id: str | None = None
     provider: Literal["openai", "deepseek"] = "deepseek"

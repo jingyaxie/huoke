@@ -48,6 +48,8 @@ class AgentAsyncSubmitRequest(BaseModel):
     provider: Literal["openai", "deepseek"] = "openai"
     mode: AgentMode = "agent"
     run_mode: RunMode = "auto"
+    auto_execute: bool = Field(default=True, description="创建后是否立即入队执行")
+    auto_restart: bool = Field(default=True, description="失败时是否自动重试（最多 max_retries 次）")
     timeout_seconds: int = Field(default=600, ge=10, le=3600)
     max_retries: int = Field(default=1, ge=0, le=5)
     priority: int = Field(default=5, ge=1, le=10)
@@ -62,6 +64,17 @@ class AgentAsyncJobOut(BaseModel):
     retry_count: int = 0
     run_id: str | None = None
     session_id: str | None = None
+    message: str = ""
+    provider: str = "openai"
+    mode: str = "agent"
+    run_mode: str = "auto"
+    auto_execute: bool = True
+    auto_restart: bool = True
+    platform: str = ""
+    account_id: str = ""
+    timeout_seconds: int = 600
+    max_retries: int = 1
+    priority: int = 5
     result: dict[str, Any] = Field(default_factory=dict)
     error: str = ""
     dead_letter_reason: str = ""

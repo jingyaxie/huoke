@@ -18,6 +18,7 @@ READ_ONLY_TOOLS = {
     "query_stored_comments",
     "get_stored_content_detail",
     "get_stored_comment",
+    "list_task_templates",
 }
 
 WRITE_TOOLS = {
@@ -115,6 +116,8 @@ def tool_needs_browser(fn_name: str, *, is_skill: bool = False) -> bool:
     if fn_name.startswith("skillhub_") or fn_name in {"read_skill_resource", "run_skill_script"}:
         return False
     if fn_name in {"list_local_comment_files", "read_local_comments", "analyze_local_comments"}:
+        return False
+    if fn_name in {"list_task_templates", "create_structured_task"}:
         return False
     return False
 

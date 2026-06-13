@@ -215,6 +215,7 @@ class SkillRunnerService:
         keyword: str,
         video_limit: int = 5,
         days: int = 3,
+        video_publish_days: int | None = None,
         region: str | None = None,
         headless: bool | None = None,
         agent_fallback: bool = True,
@@ -228,10 +229,12 @@ class SkillRunnerService:
             return {"status": "failed", "error": "缺少 keyword", "skill_id": "pipeline-keyword-video-comments"}
 
         keyword_skill_id = keyword_skill_for_platform(self.platform)
+        search_days = video_publish_days if video_publish_days is not None else days
         base_params: dict[str, Any] = {
             "keyword": keyword,
             "limit": video_limit,
-            "days": days,
+            "days": search_days,
+            "comment_days": days if video_publish_days is not None else None,
             "region": region,
             "show_browser": False,
             "guest_mode": guest_mode,
@@ -414,6 +417,7 @@ class SkillRunnerService:
             keyword=req.keyword,
             video_limit=req.video_limit,
             days=req.days,
+            video_publish_days=req.video_publish_days,
             region=req.region,
             headless=req.headless,
             agent_fallback=True,

@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings
+from app.services.agent_job_plan_service import build_orchestration_plan, sync_orchestration_status
 from app.services.agent_service import AgentService
 
 
@@ -29,6 +30,8 @@ class AgentAsyncJob(BaseModel):
     provider: str = "openai"
     mode: str = "agent"
     run_mode: str = "auto"
+    auto_execute: bool = True
+    auto_restart: bool = True
     timeout_seconds: int = 600
     max_retries: int = 1
     priority: int = 5
@@ -96,7 +99,25 @@ class AgentAsyncJobService:
         path = self._path(tenant_id, job_id)
         if not path.exists():
             return None
-        return AgentAsyncJob.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        job = AgentAsyncJob.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        self._ensure_orchestration(job)
+        return job
+
+    def _ensure_orchestration(self, job: AgentAsyncJob) -> None:
+        result = job.result if isinstance(job.result, dict) else {}
+        old_orch = result.get("orchestration") if isinstance(result.get("orchestration"), dict) else None
+        orch = build_orchestration_plan(job.message, settings=self.settings)
+        if job.stage or job.status not in ("pending",):
+            orch = sync_orchestration_status(orch, job_stage=job.stage, job_status=job.status)
+        stale = (
+            old_orch is None
+            or old_orch.get("source") == "inferred"
+            or old_orch.get("template_id") != orch.get("template_id")
+            or (orch.get("outreach_policy") and not old_orch.get("outreach_policy"))
+        )
+        if stale:
+            job.result = {**result, "orchestration": orch, "pipeline": orch.get("steps", [])}
+            self.save(job)
 
     def list_jobs(self, tenant_id: str, limit: int = 50) -> list[AgentAsyncJob]:
         d = self.root / tenant_id / "agent_jobs"
@@ -130,13 +151,74 @@ class AgentAsyncJobService:
             await client.post(job.webhook_url, json=payload, headers=job.webhook_headers)
 
     @staticmethod
-    def _plan_from_message(message: str) -> list[dict[str, str]]:
-        return [
-            {"stage": "plan", "action": "解析用户目标与约束"},
-            {"stage": "execute", "action": "执行浏览器/技能链路并收集证据"},
-            {"stage": "validate", "action": "校验结果置信度与问题列表"},
-            {"stage": "finalize", "action": "输出摘要与结构化结果"},
-        ]
+    def _append_progress(job: AgentAsyncJob, event_type: str, data: dict[str, Any]) -> None:
+        result = job.result if isinstance(job.result, dict) else {}
+        events = result.get("progress_events")
+        if not isinstance(events, list):
+            events = []
+        label = AgentAsyncJobService._progress_label(event_type, data)
+        events.append(
+            {
+                "at": _utc_now().isoformat(),
+                "type": event_type,
+                "label": label,
+                "data": data,
+            }
+        )
+        result["progress_events"] = events[-120:]
+        job.result = result
+
+    @staticmethod
+    def _progress_label(event_type: str, data: dict[str, Any]) -> str:
+        if event_type == "session":
+            return "Agent 会话已建立"
+        if event_type == "step":
+            return f"Agent 步骤 {data.get('step', '?')}/{data.get('max_steps', '?')}"
+        if event_type == "tool_start":
+            return f"调用工具 · {data.get('tool') or data.get('name') or 'unknown'}"
+        if event_type == "tool_result":
+            tool = data.get("tool") or data.get("name") or "tool"
+            ok = data.get("ok", True)
+            return f"工具完成 · {tool} ({'成功' if ok else '失败'})"
+        if event_type == "status":
+            return str(data.get("message") or data.get("status") or "状态更新")
+        if event_type == "plan":
+            return "生成执行计划"
+        if event_type == "done":
+            return f"执行结束 · {data.get('status') or 'done'}"
+        if event_type == "error":
+            return f"错误 · {data.get('message') or 'unknown'}"
+        return event_type
+
+    @staticmethod
+    def _apply_orchestration(job: AgentAsyncJob, settings: Settings) -> None:
+        orch = job.result.get("orchestration") if isinstance(job.result, dict) else None
+        if not isinstance(orch, dict):
+            orch = build_orchestration_plan(job.message, settings=settings)
+        orch = dict(orch)
+        orch["is_preview"] = job.status in {"pending", "queued"}
+        orch["execution_mode"] = "agent_async"
+        if job.status in {"pending", "queued"}:
+            orch["execution_note"] = (
+                "当前为编排预览，尚未执行。"
+                "5 步模板在任务中心才会逐步运行；"
+                "本页 Agent 任务仅后台对话执行，不会逐步跑 lead-acquisition executor。"
+            )
+        elif job.status == "running":
+            orch["execution_note"] = "Agent 正在后台执行，下方「处理过程」实时更新。"
+        job.result = {
+            **(job.result if isinstance(job.result, dict) else {}),
+            "orchestration": sync_orchestration_status(
+                orch,
+                job_stage=job.stage,
+                job_status=job.status,
+            ),
+            "pipeline": sync_orchestration_status(
+                orch,
+                job_stage=job.stage,
+                job_status=job.status,
+            ).get("steps", []),
+        }
 
     async def _run_job(self, job_key: _JobKey, settings: Settings) -> None:
         job = self.get_job(job_key.tenant_id, job_key.job_id)
@@ -146,10 +228,11 @@ class AgentAsyncJobService:
             try:
                 job.status = "running"
                 job.stage = "plan"
-                job.result["pipeline"] = self._plan_from_message(job.message)
+                self._apply_orchestration(job, settings)
                 self.save(job)
 
                 job.stage = "execute"
+                self._apply_orchestration(job, settings)
                 self.save(job)
                 agent = AgentService(
                     settings,
@@ -170,19 +253,33 @@ class AgentAsyncJobService:
                     if event.type == "session":
                         job.run_id = event.data.get("run_id") or job.run_id
                         job.session_id = event.data.get("session_id") or job.session_id
+                        self._append_progress(job, event.type, dict(event.data))
+                        self._apply_orchestration(job, settings)
+                        self.save(job)
+                    elif event.type in {"step", "tool_start", "tool_result", "status", "plan"}:
+                        self._append_progress(job, event.type, dict(event.data))
+                        self._apply_orchestration(job, settings)
+                        self.save(job)
                     elif event.type == "message":
                         content = str(event.data.get("content") or "").strip()
                         if content:
                             last_message = content
                     elif event.type == "done":
                         done_data = event.data
+                        self._append_progress(job, event.type, dict(event.data))
+                        self.save(job)
+                    elif event.type == "error":
+                        self._append_progress(job, event.type, dict(event.data))
+                        self.save(job)
 
                 job.stage = "validate"
+                self._apply_orchestration(job, settings)
                 run = agent.get_run(job.run_id or "")
                 validation_report = run.validation_report if run else {}
                 status = str((done_data or {}).get("status") or "failed")
                 summary = str((done_data or {}).get("summary") or last_message or "")
                 job.result = {
+                    **(job.result if isinstance(job.result, dict) else {}),
                     "status": status,
                     "summary": summary,
                     "done": done_data or {},
@@ -190,23 +287,47 @@ class AgentAsyncJobService:
                     "review_report": (run.review_report if run else {}),
                 }
                 job.stage = "finalize"
-                job.status = "completed" if status == "completed" else "failed"
-                job.error = ""
+                self._apply_orchestration(job, settings)
+                if status == "completed":
+                    job.status = "completed"
+                    job.error = ""
+                    self.save(job)
+                    await self._post_webhook(job)
+                    return
+                job.error = summary or status
+                if job.auto_restart and job.retry_count < job.max_retries:
+                    job.retry_count += 1
+                    job.status = "retrying"
+                    job.run_id = None
+                    self.save(job)
+                    await asyncio.sleep(2)
+                    continue
+                job.status = "failed" if not job.auto_restart else "dead_letter"
+                if job.status == "dead_letter":
+                    job.dead_letter_reason = job.error
                 self.save(job)
                 await self._post_webhook(job)
+                return
+            except asyncio.CancelledError:
+                job.status = "cancelled"
+                self._apply_orchestration(job, settings)
+                self.save(job)
                 return
             except Exception as exc:
                 job.retry_count += 1
                 job.error = str(exc)
-                if job.retry_count > job.max_retries:
-                    job.status = "dead_letter"
-                    job.dead_letter_reason = str(exc)
+                if job.auto_restart and job.retry_count <= job.max_retries:
+                    job.status = "retrying"
+                    job.run_id = None
                     self.save(job)
-                    await self._post_webhook(job)
-                    return
-                job.status = "retrying"
+                    await asyncio.sleep(2)
+                    continue
+                job.status = "failed" if not job.auto_restart else "dead_letter"
+                if job.status == "dead_letter":
+                    job.dead_letter_reason = str(exc)
                 self.save(job)
-                await asyncio.sleep(2)
+                await self._post_webhook(job)
+                return
 
     async def _worker_loop(self, worker_id: int) -> None:
         while True:
@@ -231,6 +352,8 @@ class AgentAsyncJobService:
         provider: str = "openai",
         mode: str = "agent",
         run_mode: str = "auto",
+        auto_execute: bool = True,
+        auto_restart: bool = True,
         timeout_seconds: int = 600,
         max_retries: int = 1,
         priority: int = 5,
@@ -238,6 +361,7 @@ class AgentAsyncJobService:
         webhook_headers: dict[str, str] | None = None,
     ) -> AgentAsyncJob:
         self._ensure_workers()
+        orch = build_orchestration_plan(message, settings=self.settings)
         job = AgentAsyncJob(
             job_id=str(uuid.uuid4()),
             tenant_id=tenant_id,
@@ -247,15 +371,36 @@ class AgentAsyncJobService:
             provider=provider,
             mode=mode,
             run_mode=run_mode,
+            auto_execute=bool(auto_execute),
+            auto_restart=bool(auto_restart),
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             priority=max(1, min(10, int(priority))),
             webhook_url=webhook_url,
             webhook_headers=webhook_headers or {},
-            status="queued",
+            status="queued" if auto_execute else "pending",
             created_at=_utc_now(),
             updated_at=_utc_now(),
+            result={
+                "orchestration": orch,
+                "pipeline": orch.get("steps", []),
+            },
         )
+        self.save(job)
+        if auto_execute:
+            self._queue.put_nowait((job.priority, time.time(), tenant_id, job.job_id))
+        return job
+
+    def execute(self, tenant_id: str, job_id: str) -> AgentAsyncJob | None:
+        """将 pending 任务入队执行。"""
+        job = self.get_job(tenant_id, job_id)
+        if job is None:
+            return None
+        if job.status != "pending":
+            raise ValueError("仅待执行状态的任务可启动")
+        self._ensure_workers()
+        job.status = "queued"
+        job.auto_execute = True
         self.save(job)
         self._queue.put_nowait((job.priority, time.time(), tenant_id, job.job_id))
         return job

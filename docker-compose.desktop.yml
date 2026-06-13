@@ -1,0 +1,21 @@
+# Desktop 模式：仅 MySQL，后端由原生应用内启动
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: huoke_desktop_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: douyin_hot
+      MYSQL_USER: douyin
+      MYSQL_PASSWORD: douyin
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:3306:3306"
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - ${HUOKE_MYSQL_DATA:-./mysql/data}:/var/lib/mysql
+      - ${HUOKE_INIT_SQL:-./backend/sql/init.sql}:/docker-entrypoint-initdb.d/init.sql:ro

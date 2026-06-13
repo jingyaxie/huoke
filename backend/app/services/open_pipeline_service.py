@@ -19,6 +19,8 @@ from app.services.skill_runner_service import SkillRunnerService
 
 def _pipeline_skill_args(req: KeywordVideoCommentsRequest) -> str:
     parts = [f"keyword={req.keyword}", f"video_limit={req.video_limit}", f"days={req.days}"]
+    if req.video_publish_days is not None:
+        parts.append(f"video_publish_days={req.video_publish_days}")
     if req.region:
         parts.append(f"region={req.region}")
     return " ".join(parts)
@@ -54,6 +56,7 @@ class OpenPipelineService:
                 platforms=list(req.platforms),
                 video_limit=req.video_limit,
                 days=req.days,
+                video_publish_days=req.video_publish_days,
                 region=req.region,
                 force_refresh=req.force_refresh,
                 cache_ttl_hours=req.cache_ttl_hours,
@@ -99,6 +102,7 @@ class OpenPipelineService:
                     platforms=list(req.platforms),
                     video_limit=req.video_limit,
                     days=req.days,
+                    video_publish_days=req.video_publish_days,
                     region=req.region,
                     payload=response.model_dump(mode="json"),
                     cache_ttl_hours=req.cache_ttl_hours,
@@ -121,6 +125,7 @@ class OpenPipelineService:
             "platforms": list(req.platforms),
             "video_limit": req.video_limit,
             "days": req.days,
+            "video_publish_days": req.video_publish_days,
             "region": req.region,
         }
         stale = coordinator.cache.lookup_stale("pipeline_keyword_comments", params)

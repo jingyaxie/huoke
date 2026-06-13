@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -24,6 +25,7 @@ from app.services.social_roam.matcher import (
 )
 from app.services.social_roam.normalizer import normalize_crawl_results
 from app.services.social_roam.types import SocialRoamParams, parse_social_roam_params, render_template
+from app.services.outreach_policy import random_interval_sec
 from app.core.config import Settings
 
 
@@ -104,6 +106,8 @@ class SocialRoamService:
         seen_users: set[str] = set()
         log_service = InteractionLogService(self.db_session, self.settings, tenant_id=self.tenant_id) if self.db_session else None
         template = reply_template(params.actions_on_match)
+        daily_reply_cap = int(params.limits.get("daily_max_replies") or params.limits.get("max_comment_replies") or params.max_replies)
+        daily_follow_cap = int(params.limits.get("daily_max_follows") or params.limits.get("max_follows") or params.max_follows)
 
         for lead in leads:
             comment_text = lead["comment"]["text"]
@@ -125,6 +129,17 @@ class SocialRoamService:
                 continue
 
             if reply_ok and action_enabled(params.actions_on_match, "reply") and stats["replies"] < params.max_replies:
+                if log_service:
+                    quota = log_service.query_stats(
+                        platform=params.platform,
+                        account_id=self.session.account_id,
+                        period="today",
+                        reply_limit=daily_reply_cap,
+                        follow_limit=daily_follow_cap,
+                    )
+                    if not quota["reply"]["quota_ok"]:
+                        stats["stop_reason"] = "daily_reply_quota_exhausted"
+                        break
                 comment_id = lead["comment"]["comment_id"]
                 if log_service and log_service.is_comment_replied(platform=params.platform, comment_id=comment_id):
                     stats["skipped"] += 1
@@ -174,12 +189,26 @@ class SocialRoamService:
                             stats["replies"] += 1
                             if user_key:
                                 seen_users.add(user_key)
+                            await asyncio.sleep(
+                                random_interval_sec(params.interval_min_sec, params.interval_max_sec)
+                            )
 
             if (
                 follow_ok
                 and action_enabled(params.actions_on_match, "follow")
                 and stats["follows"] < params.max_follows
             ):
+                if log_service:
+                    quota = log_service.query_stats(
+                        platform=params.platform,
+                        account_id=self.session.account_id,
+                        period="today",
+                        reply_limit=daily_reply_cap,
+                        follow_limit=daily_follow_cap,
+                    )
+                    if not quota["follow"]["quota_ok"]:
+                        stats["stop_reason"] = "daily_follow_quota_exhausted"
+                        break
                 sec_uid = lead["comment_user"].get("sec_uid") or ""
                 user_id = lead["comment_user"].get("user_id") or ""
                 if not sec_uid or not user_id:
@@ -227,6 +256,9 @@ class SocialRoamService:
                         stats["follows"] += 1
                         if user_key:
                             seen_users.add(user_key)
+                        await asyncio.sleep(
+                            random_interval_sec(params.interval_min_sec, params.interval_max_sec)
+                        )
 
         output_path = self.settings.report_output_dir / f"social_roam_{params.platform}_{task_id}.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)

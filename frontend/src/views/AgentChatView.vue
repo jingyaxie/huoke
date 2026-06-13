@@ -84,7 +84,7 @@
         <div v-if="!sidebarCollapsed" class="sidebar-foot">
           <button type="button" class="sidebar-link" @click="openAccountsDrawer">绑定</button>
           <button type="button" class="sidebar-link" @click="skillsDrawerVisible = true">技能</button>
-          <button type="button" class="sidebar-link" @click="orchestrationDrawerVisible = true">编排</button>
+          <button type="button" class="sidebar-link" @click="$router.push('/orchestration')">编排</button>
           <button type="button" class="sidebar-link" @click="experiencesDrawerVisible = true">经验</button>
           <button type="button" class="sidebar-link" @click="agentsDrawerVisible = true">Agent</button>
           <button type="button" class="sidebar-link" @click="rulesDrawerVisible = true">规则</button>
@@ -126,7 +126,7 @@
 
           <div v-if="bindingStatus && !bindingStatus.ready" class="binding-banner">
             <div class="binding-banner-text">
-              <strong>抖音未绑定</strong>
+              <strong>{{ bindingStatus.platform_label || currentPlatformLabel }}未绑定</strong>
               <span>{{ bindingStatus.message || "请先完成平台登录后再使用智能体" }}</span>
             </div>
             <el-button type="primary" size="small" @click="openAccountsDrawer">去绑定</el-button>
@@ -970,71 +970,6 @@
         </template>
       </el-dialog>
 
-      <el-drawer v-model="orchestrationDrawerVisible" title="任务编排与评测" size="760px" @open="loadAgentJobs">
-        <div class="skills-toolbar">
-          <el-button type="primary" size="small" :loading="jobSubmitting" @click="submitOrchestrationJob">提交异步任务</el-button>
-          <el-button size="small" @click="loadAgentJobs">刷新队列</el-button>
-        </div>
-        <el-form label-width="92px" class="orchestration-form">
-          <el-form-item label="任务内容">
-            <el-input v-model="jobForm.message" type="textarea" :rows="3" placeholder="输入要后台执行的任务" />
-          </el-form-item>
-          <el-form-item label="Provider">
-            <el-select v-model="jobForm.provider" style="width: 140px">
-              <el-option label="DeepSeek" value="deepseek" />
-              <el-option label="OpenAI" value="openai" />
-            </el-select>
-            <el-select v-model="jobForm.mode" style="width: 110px; margin-left: 8px">
-              <el-option label="Agent" value="agent" />
-              <el-option label="Plan" value="plan" />
-              <el-option label="Ask" value="ask" />
-            </el-select>
-            <el-select v-model="jobForm.run_mode" style="width: 110px; margin-left: 8px">
-              <el-option label="自动" value="auto" />
-              <el-option label="审批" value="confirm" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="调度参数">
-            <el-input-number v-model="jobForm.priority" :min="1" :max="10" size="small" />
-            <span class="field-hint">优先级</span>
-            <el-input-number v-model="jobForm.max_retries" :min="0" :max="5" size="small" style="margin-left: 10px" />
-            <span class="field-hint">重试次数</span>
-            <el-input-number v-model="jobForm.timeout_seconds" :min="10" :max="3600" size="small" style="margin-left: 10px" />
-            <span class="field-hint">超时(秒)</span>
-          </el-form-item>
-        </el-form>
-        <el-table :data="agentJobs" stripe size="small" style="width: 100%; margin-top: 8px">
-          <el-table-column prop="job_id" label="Job ID" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="status" label="状态" width="92" />
-          <el-table-column prop="stage" label="阶段" width="92" />
-          <el-table-column prop="retry_count" label="重试" width="70" />
-          <el-table-column prop="run_id" label="Run ID" min-width="150" show-overflow-tooltip />
-          <el-table-column label="操作" width="140">
-            <template #default="{ row }">
-              <el-button link type="primary" size="small" @click="refreshOneJob(row.job_id)">刷新</el-button>
-              <el-button
-                v-if="row.status === 'queued' || row.status === 'running'"
-                link
-                type="danger"
-                size="small"
-                @click="cancelOneJob(row.job_id)"
-              >取消</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-divider />
-        <div class="skills-toolbar">
-          <el-button type="primary" size="small" :loading="benchmarkRunning" @click="runBenchmarkNow">运行基准评测</el-button>
-        </div>
-        <el-input
-          v-model="benchmarkCasesText"
-          type="textarea"
-          :rows="6"
-          placeholder='[{"name":"case-1","message":"搜索淋浴房近3天热门并总结"}]'
-        />
-        <pre v-if="benchmarkResult" class="import-preview">{{ JSON.stringify(benchmarkResult, null, 2) }}</pre>
-      </el-drawer>
-
       <el-drawer v-model="agentsDrawerVisible" title="Agent 档案管理" size="620px" @open="loadAgentProfiles">
         <div class="skills-toolbar">
           <el-button type="primary" size="small" @click="openAgentProfileForm()">新建 Agent</el-button>
@@ -1201,7 +1136,6 @@ import {
 } from "../api/accounts";
 import { renderChatMarkdown } from "../utils/chatMarkdown";
 import {
-  cancelAgentJobTask,
   cancelAgentRun,
   consolidateDreams,
   createAgentProfile,
@@ -1219,8 +1153,6 @@ import {
   fetchAgentConfig,
   fetchAgentProfiles,
   fetchAgentBindingStatus,
-  fetchAgentJob,
-  fetchAgentJobs,
   fetchAgentRun,
   fetchAgentRuns,
   fetchExperiences,
@@ -1237,7 +1169,6 @@ import {
   installSkillHubZip,
   fetchSkillHubInstalled,
   uninstallSkillHub,
-  submitAgentJob,
   importSkillMarkdown,
   importSkillsJson,
   parseSkillMarkdown,
@@ -1246,7 +1177,6 @@ import {
   resumeApproval,
   resumePlan,
   resumeAgentRun,
-  runAgentBenchmark,
   sendAgentWsMessage,
   skillMarkdownDownloadUrl,
   streamAgentChat,
@@ -1402,7 +1332,6 @@ const pendingApproval = ref(null);
 const pendingPlan = ref(null);
 const rulesDrawerVisible = ref(false);
 const experiencesDrawerVisible = ref(false);
-const orchestrationDrawerVisible = ref(false);
 const accountsDrawerVisible = ref(false);
 const accounts = ref([]);
 const tenantId = ref(getTenantId());
@@ -1432,20 +1361,6 @@ const dreamConsolidating = ref(false);
 const dreamRunLoading = ref(false);
 const dreamAutoLoading = ref(false);
 const rules = ref([]);
-const agentJobs = ref([]);
-const jobSubmitting = ref(false);
-const benchmarkRunning = ref(false);
-const benchmarkResult = ref(null);
-const benchmarkCasesText = ref('[{"name":"douyin-comments","message":"关键词淋浴房，抓取前3个视频评论并汇总"}]');
-const jobForm = ref({
-  message: "",
-  provider: "deepseek",
-  mode: "agent",
-  run_mode: "auto",
-  timeout_seconds: 600,
-  max_retries: 1,
-  priority: 5,
-});
 const ruleFormVisible = ref(false);
 const ruleSaving = ref(false);
 const editingRule = ref(null);
@@ -1694,84 +1609,6 @@ watch(agentProfileId, (id) => {
   if (id) localStorage.setItem(AGENT_PROFILE_STORAGE_KEY, id);
 });
 
-async function loadAgentJobs() {
-  try {
-    const data = await fetchAgentJobs(50);
-    agentJobs.value = Array.isArray(data) ? data : [];
-  } catch (err) {
-    ElMessage.error(err.message || "加载任务队列失败");
-  }
-}
-
-async function submitOrchestrationJob() {
-  if (!jobForm.value.message.trim()) {
-    ElMessage.warning("请先填写任务内容");
-    return;
-  }
-  jobSubmitting.value = true;
-  try {
-    await submitAgentJob({
-      message: jobForm.value.message.trim(),
-      provider: jobForm.value.provider,
-      mode: jobForm.value.mode,
-      run_mode: jobForm.value.run_mode,
-      timeout_seconds: jobForm.value.timeout_seconds,
-      max_retries: jobForm.value.max_retries,
-      priority: jobForm.value.priority,
-    });
-    ElMessage.success("异步任务已提交");
-    await loadAgentJobs();
-  } catch (err) {
-    ElMessage.error(err.message || "提交失败");
-  } finally {
-    jobSubmitting.value = false;
-  }
-}
-
-async function refreshOneJob(jobId) {
-  try {
-    const data = await fetchAgentJob(jobId);
-    const idx = agentJobs.value.findIndex((item) => item.job_id === jobId);
-    if (idx >= 0) agentJobs.value[idx] = data;
-    else agentJobs.value.unshift(data);
-  } catch (err) {
-    ElMessage.error(err.message || "刷新任务失败");
-  }
-}
-
-async function cancelOneJob(jobId) {
-  try {
-    await cancelAgentJobTask(jobId);
-    ElMessage.success("已取消任务");
-    await refreshOneJob(jobId);
-  } catch (err) {
-    ElMessage.error(err.message || "取消任务失败");
-  }
-}
-
-async function runBenchmarkNow() {
-  let cases = [];
-  try {
-    cases = JSON.parse(benchmarkCasesText.value || "[]");
-  } catch {
-    ElMessage.error("评测 cases JSON 格式无效");
-    return;
-  }
-  if (!Array.isArray(cases) || !cases.length) {
-    ElMessage.warning("请至少提供一个评测用例");
-    return;
-  }
-  benchmarkRunning.value = true;
-  try {
-    benchmarkResult.value = await runAgentBenchmark(cases);
-    ElMessage.success("评测完成");
-  } catch (err) {
-    ElMessage.error(err.message || "评测失败");
-  } finally {
-    benchmarkRunning.value = false;
-  }
-}
-
 async function loadAccounts() {
   try {
     const data = await fetchAccounts();
@@ -1953,10 +1790,16 @@ async function clearPlatformLogin(row) {
   }
 }
 
-async function onQrLoginSuccess() {
+async function onQrLoginSuccess(data) {
+  const platform = data?.platform || qrLoginTarget.value?.platform;
   ElMessage.success("平台账号绑定成功");
+  if (platform) {
+    setPlatformId(platform);
+    platformId.value = platform;
+  }
   await loadAccountBindings();
   qrLoginTarget.value = null;
+  accountsDrawerVisible.value = false;
 }
 
 async function loadExperiences() {
@@ -3439,6 +3282,13 @@ watch(provider, (value) => {
 watch(accountsDrawerVisible, (open) => {
   if (!open) {
     qrLoginTarget.value = null;
+  }
+});
+
+watch(vncDialogVisible, (open, wasOpen) => {
+  if (wasOpen && !open) {
+    loadAccountBindings();
+    loadBindingStatus();
   }
 });
 

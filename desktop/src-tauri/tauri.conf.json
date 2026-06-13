@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Huoke",
+  "version": "0.1.0",
+  "identifier": "com.huoke.desktop",
+  "build": {
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://127.0.0.1:8000",
+    "beforeDevCommand": "cd .. && ./scripts/desktop-dev.sh",
+    "beforeBuildCommand": "cd .. && ./scripts/desktop-prebuild.sh"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "获客平台",
+        "url": "http://127.0.0.1:8000",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../bundle/": "desktop/bundle/",
+      "../../scripts/desktop-common.sh": "scripts/desktop-common.sh",
+      "../../scripts/desktop-run-mysql.sh": "scripts/desktop-run-mysql.sh",
+      "../../scripts/desktop-run-backend.sh": "scripts/desktop-run-backend.sh",
+      "../../docker-compose.desktop.yml": "docker-compose.desktop.yml",
+      "../../.env.desktop.example": ".env.desktop.example",
+      "../../backend/sql/init.sql": "backend/sql/init.sql"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

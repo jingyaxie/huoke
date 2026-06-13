@@ -14,9 +14,14 @@ backend/reports/
 # Frontend
 node_modules/
 frontend/dist/assets/*.map
+desktop/bundle/
+desktop/src-tauri/target/
 
 # Deploy state (local only)
 scripts/.deploy-state
 
 # Docker BuildKit 本地缓存（加速重复 build，勿提交）
 .docker-build-cache/
+
+# SSH keys (never commit)
+docker/ssh/*.pem

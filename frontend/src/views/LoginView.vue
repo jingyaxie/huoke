@@ -129,7 +129,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import MainLayout from "../components/MainLayout.vue";
 import PlatformQrLoginPanel from "../components/PlatformQrLoginPanel.vue";
@@ -142,7 +143,10 @@ import {
   fetchAccountBindings,
   fetchAccounts,
 } from "../api/accounts";
-import { getAccessToken, getTenantId } from "../api/http";
+import { getAccessToken, getTenantId, setPlatformId } from "../api/http";
+
+const route = useRoute();
+const router = useRouter();
 
 const username = ref("admin");
 const password = ref("");
@@ -227,10 +231,27 @@ function openVncLoginFromQr() {
   );
 }
 
-async function onQrLoginSuccess() {
+function redirectAfterAuth() {
+  const target = typeof route.query.redirect === "string" ? route.query.redirect.trim() : "";
+  if (target && target.startsWith("/") && !target.startsWith("//")) {
+    router.push(target);
+    return true;
+  }
+  return false;
+}
+
+async function onQrLoginSuccess(data) {
+  const platform = data?.platform || qrLoginTarget.value?.platform;
   ElMessage.success("平台登录成功");
   await loadPlatformBindings();
   qrLoginTarget.value = null;
+  if (platform) {
+    setPlatformId(platform);
+  }
+  if (redirectAfterAuth()) return;
+  if (route.query.from === "agent") {
+    router.push("/agent");
+  }
 }
 
 async function clearPlatformLogin(row) {
@@ -271,6 +292,7 @@ async function onAccountLogin() {
     ElMessage.success(`登录成功：${data.user?.username || username.value}`);
     meText.value = `当前用户：${data.user?.username || "-"}，租户：${tenantId.value}`;
     await loadPlatformBindings();
+    if (redirectAfterAuth()) return;
   } catch (err) {
     meText.value = "";
     isLoggedIn.value = false;
@@ -315,8 +337,15 @@ function onLogout() {
 onMounted(async () => {
   if (getAccessToken()) {
     await loadMe();
+    if (redirectAfterAuth()) return;
   } else {
     await loadPlatformBindings();
+  }
+});
+
+watch(vncDialogVisible, (open, wasOpen) => {
+  if (wasOpen && !open) {
+    loadPlatformBindings();
   }
 });
 </script>

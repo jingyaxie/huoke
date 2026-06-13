@@ -30,7 +30,7 @@ class ContentComment(Base):
     comment_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_comment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     nickname: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    comment_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment_text: Mapped[str] = mapped_column(Text, nullable=False)
     digg_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     create_time: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content_url: Mapped[str | None] = mapped_column(Text, nullable=True)

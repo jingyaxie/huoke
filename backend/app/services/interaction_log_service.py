@@ -159,6 +159,36 @@ class InteractionLogService:
             )
         return False
 
+    def is_user_dmed(
+        self,
+        *,
+        platform: str,
+        target_user_id: str | None = None,
+        target_sec_uid: str | None = None,
+        account_id: str | None = None,
+    ) -> bool:
+        platform = normalize_platform(platform)
+        user_id = (target_user_id or "").strip() or None
+        sec_uid = (target_sec_uid or "").strip() or None
+        if not user_id and not sec_uid:
+            return False
+        repo = self._repo(platform)
+        if user_id and repo.has_success(
+            platform=platform,
+            action="dm",
+            target_user_id=user_id,
+            account_id=account_id,
+        ):
+            return True
+        if sec_uid:
+            return repo.has_success(
+                platform=platform,
+                action="dm",
+                target_sec_uid=sec_uid,
+                account_id=account_id,
+            )
+        return False
+
     def query_stats(
         self,
         *,

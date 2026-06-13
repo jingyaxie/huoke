@@ -25,6 +25,8 @@
         <el-menu-item index="/test">测试入口</el-menu-item>
         <el-menu-item index="/login">登录</el-menu-item>
         <el-menu-item index="/crawl-data">抓取数据</el-menu-item>
+        <el-menu-item index="/tasks">任务编排</el-menu-item>
+        <el-menu-item index="/orchestration">Agent 编排</el-menu-item>
         <el-menu-item index="/external-api">API 文档</el-menu-item>
         <el-menu-item index="/agent" class="agent-nav-item">智能体助手</el-menu-item>
         <el-menu-item index="/antibot">AntiBot</el-menu-item>
@@ -44,6 +46,8 @@ import { getTenantId, setTenantId, getPlatformId, setPlatformId, getApiKey, setA
 const route = useRoute();
 const activePath = computed(() => {
   if (route.path.startsWith("/crawl-data")) return "/crawl-data";
+  if (route.path.startsWith("/tasks")) return "/tasks";
+  if (route.path.startsWith("/orchestration")) return "/orchestration";
   if (route.path.startsWith("/test")) return "/test";
   return route.path;
 });

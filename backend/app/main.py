@@ -16,6 +16,7 @@ from app.api.platform_routes import router as platform_router
 from app.api.tenant_routes import router as tenant_router
 from app.api.user_routes import router as user_router
 from app.api.v1_routes import router
+from app.task_platform.api.open_task_routes import router as open_task_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.base import Base
@@ -26,6 +27,10 @@ from app.services.playwright_pool import PlaywrightPool
 from app.services.bootstrap_service import ensure_bootstrap_admin
 from app.services.font_bootstrap import ensure_cjk_fonts
 from app.services.tenant_auth_service import TenantAuthService
+from app.desktop_static import mount_desktop_frontend
+from app.task_platform import bootstrap_task_platform
+from app.task_platform.services.task_runtime_service import TaskWorkerPool
+from app.task_platform.services.task_scheduler_service import TaskSchedulerService
 
 
 settings = get_settings()
@@ -34,7 +39,10 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    Base.metadata.create_all(bind=engine)
+    bootstrap_task_platform()
+    TaskWorkerPool.get(settings).start()
+    if not settings.desktop_mode:
+        Base.metadata.create_all(bind=engine)
     session = SessionLocal()
     try:
         if ensure_bootstrap_admin(session, settings):
@@ -54,15 +62,31 @@ async def lifespan(app: FastAPI):
     await PlaywrightPool.get().sync_browser_render_epoch()
     await ensure_cjk_fonts()
 
+    scheduler = TaskSchedulerService.get(settings)
+    scheduler.start()
+    await scheduler.dispatch_due_tasks()
+
     yield
+    await scheduler.stop()
     await AgentSessionManager.get_instance().shutdown_all()
     await PlaywrightPool.get().shutdown()
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+
+cors_origins = [settings.frontend_origin, "http://127.0.0.1:5173", "http://localhost:5173"]
+if settings.desktop_mode:
+    cors_origins.extend(
+        [
+            f"http://127.0.0.1:{settings.desktop_port}",
+            f"http://localhost:{settings.desktop_port}",
+            "tauri://localhost",
+        ]
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,3 +103,7 @@ app.include_router(antibot_router)
 app.include_router(account_router)
 app.include_router(agent_router)
 app.include_router(agent_ws_router)
+app.include_router(open_task_router)
+
+if settings.desktop_mode:
+    mount_desktop_frontend(app, settings.frontend_dist_dir)

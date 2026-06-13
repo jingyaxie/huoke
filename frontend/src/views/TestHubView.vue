@@ -157,6 +157,24 @@
             </div>
           </div>
         </el-tab-pane>
+
+        <el-tab-pane label="任务编排" name="tasks">
+          <div class="tab-section">
+            <h3 class="section-title">编排任务 · 列表 / 详情 / 联调</h3>
+            <p class="section-desc">
+              外部 JSON 经编译器映射为结构化任务，可在任务列表查看编排方式、运行阶段与进度；支持编译预览与提交执行测试。
+            </p>
+            <div class="task-test-actions">
+              <el-button type="primary" @click="$router.push('/tasks')">打开任务列表</el-button>
+              <el-button @click="$router.push('/tasks/compile')">编译联调</el-button>
+              <el-button @click="$router.push('/orchestration')">Agent 编排</el-button>
+              <el-button type="success" plain :loading="taskQuickLoading" @click="runTaskQuickTest">
+                快速创建测试任务
+              </el-button>
+            </div>
+            <pre v-if="taskQuickResult" class="code-block result-json">{{ formatJson(taskQuickResult) }}</pre>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </div>
   </MainLayout>
@@ -170,12 +188,17 @@ import MainLayout from "../components/MainLayout.vue";
 import { syncAgentChat } from "../api/agent";
 import { checkHealth, getSwaggerDocsUrl, runKeywordVideoComments } from "../api/openPipeline";
 import { executeSkill, listSkills } from "../api/skills";
+import { SAMPLE_YINGXIAOYI_PAYLOAD, compileAndCreateTask } from "../api/tasks";
 import { getPlatformId } from "../api/http";
 
 const route = useRoute();
 const router = useRouter();
 
-const activeTab = ref(route.query.tab === "agent" ? "agent" : "api");
+const activeTab = ref(
+  route.query.tab === "agent" ? "agent" : route.query.tab === "tasks" ? "tasks" : "api",
+);
+const taskQuickLoading = ref(false);
+const taskQuickResult = ref(null);
 const healthLoading = ref(false);
 const healthOk = ref(false);
 const healthStatus = ref("");
@@ -255,6 +278,34 @@ async function checkHealthStatus() {
 
 function openSwagger() {
   window.open(getSwaggerDocsUrl(), "_blank", "noopener,noreferrer");
+}
+
+async function runTaskQuickTest() {
+  taskQuickLoading.value = true;
+  taskQuickResult.value = null;
+  try {
+    const resp = await compileAndCreateTask({
+      raw_payload: {
+        ...SAMPLE_YINGXIAOYI_PAYLOAD,
+        task_name: "测试入口快速任务",
+        target_count: 20,
+      },
+      adapter_id: "yingxiaoyi-lead-v1",
+      source: "external",
+      auto_submit: false,
+    });
+    taskQuickResult.value = resp;
+    if (resp.task?.task_id) {
+      ElMessage.success("测试任务已创建");
+      router.push(`/tasks/${resp.task.task_id}`);
+    } else {
+      ElMessage.warning(resp.compile?.plan?.validation_error || "创建失败");
+    }
+  } catch (err) {
+    ElMessage.error(formatApiError(err, "快速测试失败"));
+  } finally {
+    taskQuickLoading.value = false;
+  }
 }
 
 async function runPipeline() {
@@ -421,6 +472,12 @@ onUnmounted(() => {
 
 .compact-form {
   max-width: 640px;
+}
+
+.task-test-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .code-block {
