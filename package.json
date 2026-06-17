@@ -7,6 +7,7 @@
     "dev": "bash scripts/dev.sh",
     "dev:backend": "bash scripts/dev-native.sh",
     "build:mac": "bash scripts/build_native_mac.sh",
+    "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_native_win.ps1",
     "verify": "bash scripts/verify-huoke-standalone.sh",
     "test:task-flow": "bash scripts/test_task_flow.sh"
   }
