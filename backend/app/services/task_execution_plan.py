@@ -19,6 +19,7 @@ from app.services.supervisor_crawl_helpers import (
     build_url_revisit_decision,
     effective_crawl_video_limit,
     prepare_plan_recrawl,
+    should_resume_crawl_on_no_match,
     infer_suspend_next_action as infer_skill_flow_suspend_next_action,
 )
 from app.services.supervisor_outreach import (
@@ -475,6 +476,34 @@ def advance_supervisor_plan(
     return plan
 
 
+def _maybe_recrawl_after_zero_qualified(
+    brief: TaskBrief,
+    state: dict[str, Any],
+    plan: dict[str, Any],
+    *,
+    stats: dict[str, Any] | None = None,
+) -> bool:
+    """评估后无精准线索且搜索列表仍有视频时，回退抓取步避免触达空转。"""
+    if not state.get("evaluation_done"):
+        return False
+    if "leads_qualified" not in state:
+        return False
+    if int(state.get("leads_qualified") or 0) > 0:
+        return False
+    if not should_resume_crawl_on_no_match(brief, state, stats):
+        return False
+    prepare_plan_recrawl(state, plan, brief=brief)
+    state.pop("evaluation_done", None)
+    state.pop("leads_qualified", None)
+    state["stale_cycles"] = 0
+    steps = plan.get("steps")
+    if isinstance(steps, list):
+        for row in steps:
+            if isinstance(row, dict) and str(row.get("action") or "") == "evaluate_leads":
+                row["status"] = "pending"
+    return True
+
+
 def plan_driven_supervisor_decision(
     plan: dict[str, Any],
     brief: TaskBrief,
@@ -559,11 +588,15 @@ def plan_driven_supervisor_decision(
             return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
 
     if action == "evaluate_leads" and state.get("evaluation_done"):
+        if _maybe_recrawl_after_zero_qualified(brief, state, plan, stats=stats):
+            return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
         step["status"] = "completed"
         plan["current_index"] = _resolve_current_index(steps)
         return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
 
     if action == "query_stats" and state.get("stats_synced"):
+        if _maybe_recrawl_after_zero_qualified(brief, state, plan, stats=stats):
+            return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
         step["status"] = "completed"
         plan["current_index"] = _resolve_current_index(steps)
         return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
@@ -601,6 +634,8 @@ def plan_driven_supervisor_decision(
         return decision
 
     if action in OUTREACH_LOOP_ACTIONS:
+        if _maybe_recrawl_after_zero_qualified(brief, state, plan, stats=stats):
+            return plan_driven_supervisor_decision(plan, brief, state, stats=stats)
         bucket = (stats or {}).get(action) if isinstance((stats or {}).get(action), dict) else {}
         if not outreach_bucket_can_do(bucket):
             step["status"] = "completed"

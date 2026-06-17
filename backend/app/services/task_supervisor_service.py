@@ -1600,6 +1600,18 @@ class TaskSupervisorService:
             elif comment_count:
                 skill_result["total_comments_captured"] = comment_count
 
+        if action in {"reply", "dm", "follow"} and not ok and not dry_run:
+            err_text = str(skill_result.get("error") or skill_result.get("summary") or "")
+            if "无匹配" in err_text and self._should_resume_crawl_on_no_match(brief, state):
+                plan = state.get("execution_plan")
+                if isinstance(plan, dict):
+                    from app.services.supervisor_crawl_helpers import prepare_plan_recrawl
+
+                    prepare_plan_recrawl(state, plan, brief=brief)
+                    state.pop("evaluation_done", None)
+                    state.pop("leads_qualified", None)
+                    state["stale_cycles"] = 0
+
         execution_plan = state.get("execution_plan")
         if isinstance(execution_plan, dict):
             state["execution_plan"] = advance_supervisor_plan(

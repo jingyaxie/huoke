@@ -174,12 +174,21 @@ export function isJobSuspended(job) {
 export function getJobSuspendReason(job) {
   if (!isJobSuspended(job)) return "";
   const state = job?.result?.supervisor_state || {};
-  return String(
+  const wake = String(
     state.wake_reason
     || job?.result?.summary
     || job?.result?.orchestration?.execution_note
     || "任务已挂起，等待恢复",
   ).trim();
+  if (wake.includes("连续") && wake.includes("无进展")) {
+    const stats = job?.result?.execution_stats || {};
+    const comments = stats.comments_captured || stats.comments_persisted || 0;
+    const qualified = stats.progress_precise || state.leads_qualified || 0;
+    if (comments > 0 && qualified === 0) {
+      return `${wake}。已抓取 ${comments} 条评论但暂无精准线索，请点击「继续执行」浏览更多视频，或放宽评估标准。`;
+    }
+  }
+  return wake;
 }
 
 export function getJobDisplayStatus(job) {

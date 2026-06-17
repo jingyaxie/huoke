@@ -102,6 +102,33 @@ def test_skill_flow_plan_driven_reply_after_stats():
     assert decision.get("plan_step_id") == "reply"
 
 
+def test_skill_flow_plan_recrawls_when_zero_qualified_leads():
+    brief = TaskBrief(
+        keyword="团餐",
+        goals={"target_leads": 5, "execution_mode": "skill_flow", "agent_strategy": "skill-flow-douyin"},
+        platform="douyin",
+    )
+    state = {
+        "crawl_done": True,
+        "evaluation_done": True,
+        "leads_qualified": 0,
+        "stats_synced": True,
+        "comments_captured": 26,
+        "watched_content_ids": ["v1"],
+    }
+    plan = build_supervisor_execution_plan(brief, state)
+    decision = plan_driven_supervisor_decision(
+        plan,
+        brief,
+        state,
+        stats={"reply": {"can_do": True}},
+    )
+    assert decision is not None
+    assert decision["action"] == "crawl_keyword"
+    assert state.get("crawl_done") is None
+    assert state.get("evaluation_done") is None
+
+
 def test_skill_flow_next_day_resume_restarts_with_crawl():
     from datetime import datetime, timedelta, timezone
 
