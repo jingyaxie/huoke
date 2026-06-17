@@ -19,7 +19,6 @@ class Settings(BaseSettings):
             BASE_DIR / ".env",
             ROOT_DIR / ".env",
             ROOT_DIR / ".env.local",
-            ROOT_DIR / ".env.sidecar",
         ),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -31,7 +30,7 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Shanghai"
 
     database_url: str = Field(
-        default="mysql+pymysql://douyin:douyin@mysql:3306/douyin_hot?charset=utf8mb4"
+        default="sqlite+pysqlite:///./storage/dev/huoke.db"
     )
     sqlite_test_url: str = "sqlite+pysqlite:///:memory:"
 
@@ -44,7 +43,7 @@ class Settings(BaseSettings):
     douyin_hot_url: str = "https://www.douyin.com/hot"
     default_tenant_id: str = "default"
     default_platform: str = "douyin"
-    # 默认使用仓库根目录 storage/；Docker 通过 STORAGE_ROOT 指向独立挂载点，避免 backend/storage 遮蔽
+    # 默认使用仓库根目录 storage/
     storage_root: Path = Field(default_factory=lambda: ROOT_DIR / "storage")
     douyin_profile_dir: Path | None = None
     douyin_headless: bool = False

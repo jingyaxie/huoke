@@ -53,7 +53,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 
 def bootstrap_llm_settings_from_env_file(settings: Settings) -> None:
-    """Sidecar 重启后从本机 .env.sidecar 恢复 LLM 配置（保存 API 仅写文件时内存会丢）。"""
+    """进程重启后从本机 .env.local / .env.desktop 恢复 LLM 配置。"""
     env_path = resolve_llm_env_file(settings)
     parsed = _parse_env_file(env_path)
     if not parsed:
@@ -71,21 +71,16 @@ def bootstrap_llm_settings_from_env_file(settings: Settings) -> None:
 
 
 def resolve_llm_env_file(settings: Settings) -> Path:
-    explicit = str(os.environ.get("HUOKE_ENV_SIDECAR_PATH") or "").strip()
+    explicit = str(
+        os.environ.get("HUOKE_ENV_PATH")
+        or os.environ.get("HUOKE_ENV_SIDECAR_PATH")
+        or ""
+    ).strip()
     if explicit:
         return Path(explicit).expanduser()
-    storage_candidate = settings.storage_root / ".env.sidecar"
-    if storage_candidate.is_file():
-        return storage_candidate
-    root_candidate = ROOT_DIR / ".env.sidecar"
-    if root_candidate.is_file():
-        return root_candidate
-    desktop_candidate = ROOT_DIR / ".env.desktop"
-    if desktop_candidate.is_file():
-        return desktop_candidate
     if settings.desktop_mode:
-        return storage_candidate
-    return root_candidate
+        return settings.storage_root.parent / ".env.desktop"
+    return ROOT_DIR / ".env.local"
 
 
 def _quote_env_value(value: str) -> str:

@@ -17,7 +17,7 @@ async def main() -> None:
     settings = get_settings()
     storage = os.environ.get(
         "STORAGE_ROOT",
-        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "sidecar-dev"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "storage", "dev"),
     )
     state_path = f"{storage}/xiaohongshu/tenants/default/accounts/default/storage_state.json"
     tool = XhsSearchTool(settings, "default", account_id="default")

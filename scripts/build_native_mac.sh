@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# macOS 原生桌面应用一键打包（Tauri beforeBuildCommand 会自动执行 prepare_desktop_bundle.sh）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,16 +11,12 @@ if [[ ! -x "$CHROME" ]]; then
   exit 1
 fi
 
-echo "==> 1/3 构建前端 + Python bundle"
-"$ROOT/scripts/desktop-prebuild.sh"
-
-echo "==> 2/3 安装 Tauri CLI 依赖"
 cd "$DESKTOP_DIR"
 if [[ ! -d node_modules ]]; then
   npm install
 fi
 
-echo "==> 3/3 打包 macOS 原生应用 (.app / .dmg)"
+echo "打包 macOS 原生应用 (.app / .dmg)..."
 npm run build
 
 echo ""

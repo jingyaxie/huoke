@@ -49,7 +49,7 @@ def _require_live() -> None:
 
 def _require_deepseek(settings) -> None:
     if not settings.deepseek_api_key:
-        print("失败：未找到 DEEPSEEK_API_KEY，请设置 HUOKE_ENV 或 .env.sidecar")
+        print("失败：未找到 DEEPSEEK_API_KEY，请设置 HUOKE_ENV 或 .env.local")
         sys.exit(1)
 
 
@@ -241,7 +241,7 @@ async def main() -> None:
     _require_live()
     huoke_env = os.environ.get("HUOKE_ENV", "/Users/macbook/project/ai/huoke/.env")
     _load_env_file(Path(huoke_env))
-    _load_env_file(Path(__file__).resolve().parents[2] / ".env.sidecar")
+    _load_env_file(Path(__file__).resolve().parents[2] / ".env.local")
 
     settings = _settings()
     _require_deepseek(settings)

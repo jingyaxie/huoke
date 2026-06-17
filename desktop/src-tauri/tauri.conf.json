@@ -7,7 +7,7 @@
     "frontendDist": "../../frontend/dist",
     "devUrl": "http://127.0.0.1:8000",
     "beforeDevCommand": "cd .. && ./scripts/desktop-dev.sh",
-    "beforeBuildCommand": "cd .. && ./scripts/desktop-prebuild.sh"
+    "beforeBuildCommand": "cd .. && ./scripts/prepare_desktop_bundle.sh"
   },
   "app": {
     "withGlobalTauri": false,

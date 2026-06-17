@@ -69,28 +69,26 @@ cp .env.local.example .env.local
 | `ANTIBOT_PLAYWRIGHT_FALLBACK=false` | 禁止回退 Playwright Chromium |
 | `AGENT_HEADLESS=false` | Agent 可见浏览器窗口 |
 
-需已安装 [Google Chrome](https://www.google.com/chrome/)。数据库由 `dev-native.sh` 自动使用 SQLite（`storage/sidecar-dev/huoke_sidecar.db`）。
+需已安装 [Google Chrome](https://www.google.com/chrome/)。数据库由 `dev-native.sh` 自动使用 SQLite（`storage/dev/huoke.db`）。
 
 ### 2) 一键启动
 
 ```bash
-# 后端（SQLite + 热更新）
+# 后端 + 前端
+bash scripts/dev.sh
+# 或
+npm run dev
+
+# 仅后端（SQLite + 热更新）
 bash scripts/dev-native.sh
+# 或
+npm run dev:backend
+```
 
-# 另开终端：前端
+另开终端启动前端（若未用 dev.sh）：
+
+```bash
 cd frontend && npm install && npm run dev
-```
-
-或同时启动后端 + 前端：
-
-```bash
-bash scripts/dev-autostart.sh
-```
-
-浏览器开发（后端 + 前端一体脚本）：
-
-```bash
-bash scripts/dev-browser.sh
 ```
 
 前端地址：`http://localhost:5173`  
@@ -100,6 +98,8 @@ API 文档：`http://localhost:8000/docs`
 ### 3) 验证
 
 ```bash
+npm run verify
+# 或
 bash scripts/verify-huoke-standalone.sh
 ```
 
@@ -161,9 +161,12 @@ bash scripts/test_orchestration.sh
 ### 一键打包
 
 ```bash
-chmod +x scripts/build_native_mac.sh
+npm run build:mac
+# 或
 ./scripts/build_native_mac.sh
 ```
+
+`npm run build` 前会自动执行 `scripts/prepare_desktop_bundle.sh`（构建前端 + 打入 Python bundle）。
 
 产物：
 

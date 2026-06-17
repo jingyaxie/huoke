@@ -17,7 +17,7 @@ TEST_URL = (
     "?from_tab_name=main&vid=7617663855346404617"
 )
 
-os.environ.setdefault("STORAGE_ROOT", str(ROOT / "storage" / "sidecar-dev"))
+os.environ.setdefault("STORAGE_ROOT", str(ROOT / "storage" / "dev"))
 os.environ.setdefault("DOUYIN_HEADLESS", "true")
 
 

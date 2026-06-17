@@ -2,5 +2,11 @@
   "name": "huoke",
   "version": "0.2.0",
   "private": true,
-  "description": "Huoke 独立获客平台（Tauri + Vue + FastAPI）"
+  "description": "Huoke 独立获客平台（Tauri + Vue + FastAPI）",
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:backend": "bash scripts/dev-native.sh",
+    "build:mac": "bash scripts/build_native_mac.sh",
+    "verify": "bash scripts/verify-huoke-standalone.sh"
+  }
 }

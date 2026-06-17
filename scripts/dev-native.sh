@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND_DIR="$ROOT/backend"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
-STORAGE_DIR="${STORAGE_DIR:-$ROOT/storage/sidecar-dev}"
+STORAGE_DIR="${STORAGE_DIR:-$ROOT/storage/dev}"
 
 if [[ ! -f "$ROOT/.env.local" ]]; then
   echo "请先复制配置: cp .env.local.example .env.local" >&2
@@ -94,7 +94,7 @@ set -a
 source "$ROOT/.env.local"
 set +a
 
-export DATABASE_URL="sqlite+pysqlite:///${STORAGE_DIR}/huoke_sidecar.db"
+export DATABASE_URL="sqlite+pysqlite:///${STORAGE_DIR}/huoke.db"
 export STORAGE_ROOT="$STORAGE_DIR"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 export PYTHONPATH="$BACKEND_DIR"

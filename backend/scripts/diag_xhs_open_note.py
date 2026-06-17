@@ -10,9 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HUOKE_ROOT = ROOT.parent
 if not os.environ.get("STORAGE_ROOT"):
-    os.environ["STORAGE_ROOT"] = "storage/sidecar-dev"
+    os.environ["STORAGE_ROOT"] = "storage/dev"
 if not os.environ.get("DATABASE_URL"):
-    os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{(HUOKE_ROOT / 'storage/sidecar-dev/huoke_sidecar.db').resolve()}"
+    os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{(HUOKE_ROOT / 'storage/dev/huoke.db').resolve()}"
 sys.path.insert(0, str(ROOT))
 
 NOTE_ID = "6a2a2fe4000000002003b077"
