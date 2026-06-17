@@ -137,6 +137,11 @@ bash scripts/verify-huoke-standalone.sh
 ```bash
 cd backend
 pytest
+
+# 任务创建 → 编排 → 执行 全流程
+npm run test:task-flow
+# 或
+bash scripts/test_task_flow.sh
 ```
 
 编排任务相关：

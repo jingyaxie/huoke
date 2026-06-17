@@ -6,24 +6,57 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings, get_settings
 from app.main import app
+from app.services.agent_async_job_service import AgentAsyncJobService
+from app.services.task_brief_service import TaskBrief
 from tests.helpers import API_HEADERS
 
-__all__ = ["API_HEADERS", "api_client", "capture_submit"]
+__all__ = ["API_HEADERS", "api_client", "capture_submit", "flow_client", "mock_task_brief"]
+
+
+def mock_task_brief_factory():
+    async def mock_brief(message, **kwargs):
+        from app.services.task_brief_service import _finalize_brief
+
+        return _finalize_brief(
+            TaskBrief(
+                title="深圳餐饮线索",
+                brief_md="# 深圳餐饮线索\n\n## 目标\n抓取关键词评论线索",
+                platform=str(kwargs.get("platform") or "douyin"),
+                keyword="团餐配送",
+                region="深圳",
+                goals={"target_leads": 50, "comment_days": 3, "video_publish_days": 7},
+                reasoning="mock brief for automated flow test",
+                confidence=0.9,
+                llm_available=True,
+                llm_fallback=False,
+            )
+        )
+
+    return mock_brief
 
 
 @pytest.fixture
-def api_client(monkeypatch, tmp_path):
-    from app.core import config as config_module
+def mock_task_brief(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.agent_job_plan_service.generate_task_brief",
+        mock_task_brief_factory(),
+    )
 
-    config_module.get_settings.cache_clear()
 
+def _build_test_settings(tmp_path) -> Settings:
     storage = tmp_path / "storage"
-    settings = Settings(
+    return Settings(
         storage_root=storage,
         deepseek_api_key="test-deepseek-key",
         tenant_auth_enabled=False,
         database_url=f"sqlite:///{tmp_path / 'test.db'}",
     )
+
+
+def _install_api_settings(monkeypatch, settings: Settings):
+    from app.core import config as config_module
+
+    config_module.get_settings.cache_clear()
 
     def _get_settings():
         return settings
@@ -34,6 +67,8 @@ def api_client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.api.agent_routes.get_settings", _get_settings)
     app.dependency_overrides[get_settings] = _get_settings
 
+
+def _install_fake_login_store(monkeypatch):
     class FakeStore:
         def login_status(self, tenant_id: str, account_id: str = "default"):
             return {"status": "ready", "nickname": "测试号", "cookie_ready": True}
@@ -43,10 +78,60 @@ def api_client(monkeypatch, tmp_path):
         lambda _settings, _platform: FakeStore(),
     )
 
+
+@pytest.fixture
+def api_client(monkeypatch, tmp_path):
+    settings = _build_test_settings(tmp_path)
+    _install_api_settings(monkeypatch, settings)
+    _install_fake_login_store(monkeypatch)
+
     with TestClient(app) as test_client:
         yield test_client
 
     app.dependency_overrides.pop(get_settings, None)
+    AgentAsyncJobService._instance = None
+
+
+@pytest.fixture
+def flow_client(monkeypatch, tmp_path, mock_task_brief):
+    """真实任务创建/编排/执行链路；mock LLM 简报与 Supervisor 执行。"""
+    AgentAsyncJobService._instance = None
+    settings = _build_test_settings(tmp_path)
+    _install_api_settings(monkeypatch, settings)
+    _install_fake_login_store(monkeypatch)
+
+    async def mock_supervisor_run(self, **kwargs):
+        job_result = dict(kwargs.get("job_result") or {})
+        cycles = list(job_result.get("supervisor_cycles") or [])
+        cycles.append(
+            {
+                "cycle": len(cycles) + 1,
+                "action": "crawl_keyword",
+                "reasoning": "自动化测试模拟抓取",
+                "ok": True,
+                "result_summary": "dry-run 抓取完成",
+            }
+        )
+        return {
+            **job_result,
+            "status": "completed",
+            "summary": "flow test completed",
+            "supervisor_cycles": cycles,
+        }
+
+    monkeypatch.setattr(
+        "app.services.agent_async_job_service.TaskSupervisorService.run",
+        mock_supervisor_run,
+    )
+
+    svc = AgentAsyncJobService.get(settings)
+    monkeypatch.setattr(svc, "_ensure_workers", lambda: None)
+
+    with TestClient(app) as test_client:
+        yield test_client, settings, svc
+
+    app.dependency_overrides.pop(get_settings, None)
+    AgentAsyncJobService._instance = None
 
 
 @pytest.fixture

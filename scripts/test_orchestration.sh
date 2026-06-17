@@ -48,10 +48,10 @@ if ! "$PY" -c "import pymysql, multipart" 2>/dev/null; then
   (cd "$BACKEND" && "$PY" -m pip install pymysql python-multipart pytest-asyncio -q)
 fi
 if (cd "$BACKEND" && "$PY" -m pytest \
+  tests/test_task_orchestration_flow.py \
   tests/test_agent_job_plan.py \
   tests/test_agent_orchestration_job.py \
   tests/test_task_supervisor_service.py \
-  tests/test_task_orchestration_flow.py \
   -q --tb=short); then
   ok "pytest 全部通过"
 else

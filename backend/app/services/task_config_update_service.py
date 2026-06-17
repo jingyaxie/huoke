@@ -330,9 +330,7 @@ async def update_task_config(
     updated = current.model_copy(deep=True)
 
     if config:
-        patch = config
-        if not any(key in config for key in ("goals", "constraints", "brief_md")):
-            patch = _deep_merge_dict(payload_to_brief_patch(config), config)
+        patch = _deep_merge_dict(payload_to_brief_patch(config), config)
         updated = apply_patch_to_brief(updated, patch)
         changes.append("structured_config_patch")
 
