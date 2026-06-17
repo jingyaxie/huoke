@@ -50,6 +50,7 @@
         </div>
         <div class="top-user">
           <span>你好，{{ displayName }}</span>
+          <button type="button" class="logout-btn" @click="handleLogout">[退出]</button>
         </div>
       </header>
 
@@ -63,6 +64,7 @@
 <script setup>
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import { ElMessage } from "element-plus";
 import { getTenantId } from "../api/http";
 
 const route = useRoute();
@@ -106,6 +108,10 @@ const breadcrumbTitle = computed(() => {
 
 function isActive(path) {
   return route.path === path || route.path.startsWith(`${path}/`);
+}
+
+function handleLogout() {
+  ElMessage.info("独立版为本地运行，无需退出登录");
 }
 </script>
 
@@ -186,8 +192,8 @@ function isActive(path) {
 }
 
 .nav-link.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #6ee7b7;
+  background: rgba(191, 219, 254, 0.18);
+  color: #fff;
 }
 
 .nav-indicator {
@@ -229,10 +235,10 @@ function isActive(path) {
   justify-content: space-between;
   height: 56px;
   flex-shrink: 0;
-  padding: 0 24px;
-  background: var(--sidebar-bg);
-  color: #fff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0 32px;
+  background: #fff;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
 }
 
 .breadcrumb {
@@ -241,20 +247,39 @@ function isActive(path) {
 
 .breadcrumb-section {
   font-weight: 500;
+  color: var(--muted);
 }
 
 .breadcrumb-sep {
   margin: 0 8px;
-  color: rgba(255, 255, 255, 0.4);
+  color: #cbd5e1;
 }
 
 .breadcrumb-title {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text);
 }
 
 .top-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+}
+
+.logout-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.logout-btn:hover {
+  color: var(--primary);
+  background: #f8fafc;
 }
 
 .content {

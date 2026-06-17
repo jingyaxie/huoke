@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# 编排任务自动化测试：pytest 单元/集成 + 可选 Sidecar 联调
+# 编排任务自动化测试：pytest 单元/集成 + 可选本地 API 联调
 # 用法：
-#   bash projects/huoke/scripts/test_orchestration.sh
-#   LIVE=1 bash projects/huoke/scripts/test_orchestration.sh   # Sidecar 已启动时额外打 API
+#   bash scripts/test_orchestration.sh
+#   LIVE=1 bash scripts/test_orchestration.sh   # 后端已启动时额外打 API
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND="${ROOT}/backend"
-SIDECAR_PORT="${SIDECAR_PORT:-18000}"
-BASE="http://127.0.0.1:${SIDECAR_PORT}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+BASE="http://127.0.0.1:${BACKEND_PORT}"
 TENANT="${HUOKE_TENANT_ID:-default}"
 PASS=0
 FAIL=0
@@ -75,7 +75,7 @@ else
 fi
 
 echo ""
-echo "[3/3] Sidecar 编排 API 快速检查（LIVE=1 时由上方脚本覆盖）"
+echo "[3/3] 编排 API 快速检查（LIVE=1 时由上方脚本覆盖）"
 if [[ "${LIVE:-0}" != "1" || "${ORCHESTRATION_LIVE:-0}" == "1" ]]; then
   if [[ "${ORCHESTRATION_LIVE:-0}" == "1" ]]; then
     echo "  ~ 已由 test_orchestration_live.py 覆盖 API dry_run"
@@ -84,9 +84,9 @@ if [[ "${LIVE:-0}" != "1" || "${ORCHESTRATION_LIVE:-0}" == "1" ]]; then
   fi
 else
   if ! curl -sS -m 5 "${BASE}/api/health" | grep -q '"status":"ok"'; then
-    bad "Sidecar 未运行 — 先执行: bash projects/huoke/scripts/dev-sidecar-macos.sh"
+    bad "后端未运行 — 先执行: bash scripts/dev-native.sh"
   else
-    ok "Sidecar health"
+    ok "后端 health"
     PAYLOAD="$(cat <<'EOF'
 {
   "message": "深圳餐饮线索：抖音关键词团餐配送，目标30条，分多天触达",

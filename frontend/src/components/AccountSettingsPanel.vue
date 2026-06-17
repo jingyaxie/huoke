@@ -6,7 +6,7 @@
       @resolve="resolveHealthIssue"
     />
 
-    <el-table v-loading="loading" :data="pageRows" stripe size="default" style="width: 100%">
+    <el-table v-loading="loading" :data="pageRows" size="default" class="account-table" style="width: 100%">
       <el-table-column label="账号名称" min-width="200">
         <template #default="{ row }">
           <div class="name-cell">
@@ -38,9 +38,7 @@
 
       <el-table-column label="渠道" width="110">
         <template #default="{ row }">
-          <el-tag size="small" :type="PLATFORM_TAG_TYPE[row.platform] || 'info'">
-            {{ PLATFORM_LABEL[row.platform] || row.platform }}
-          </el-tag>
+          <PlatformChannelTag :platform="row.platform" />
         </template>
       </el-table-column>
 
@@ -159,6 +157,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import AccountHealthAlerts from "./AccountHealthAlerts.vue";
 import AuthorizeAccountModal from "./AuthorizeAccountModal.vue";
+import PlatformChannelTag from "./PlatformChannelTag.vue";
 import {
   clearAccountPlatformLoginSession,
   enrichRowsWithAuthExpiry,
@@ -177,7 +176,6 @@ import {
   isPlatformMonitorEnabled,
   issueBadgeLabel,
   PLATFORM_LABEL,
-  PLATFORM_TAG_TYPE,
 } from "../utils/accountSettings";
 import { pullPlatformSession } from "../utils/platformBindFlow";
 
@@ -358,6 +356,17 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.account-table :deep(.el-table__header th) {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.account-table :deep(.el-table__row td) {
+  font-size: 13px;
 }
 
 .name-cell {

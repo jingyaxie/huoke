@@ -76,34 +76,6 @@ where
     }
 }
 
-fn start_mysql(root: &PathBuf) -> Result<(), String> {
-    let script = root.join("scripts").join("desktop-run-mysql.sh");
-    if !script.is_file() {
-        return Err(format!("缺少脚本: {}", script.display()));
-    }
-
-    let status = Command::new("/bin/bash")
-        .arg(script)
-        .current_dir(root)
-        .env("HUOKE_ROOT", root)
-        .env(
-            "PATH",
-            "/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin",
-        )
-        .status()
-        .map_err(|err| format!("启动 MySQL 失败: {err}"))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(
-            "MySQL 启动失败。请确认 Docker Desktop 已安装并正在运行。\n\
-             日志: ~/Library/Application Support/com.huoke.desktop/logs/desktop-mysql.log"
-                .into(),
-        )
-    }
-}
-
 fn start_backend(root: &PathBuf) -> Result<Child, String> {
     let script = root.join("scripts").join("desktop-run-backend.sh");
     if !script.is_file() {
@@ -125,7 +97,7 @@ fn start_backend(root: &PathBuf) -> Result<Child, String> {
         .env("HUOKE_BUNDLE_DIR", bundle_dir)
         .env(
             "PATH",
-            "/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin",
+            "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -161,7 +133,7 @@ fn wait_backend_ready(timeout: Duration, child: &mut Child) -> Result<(), String
     }
 
     Err(
-        "后端启动超时。请检查 Docker / Chrome 是否可用，并查看日志:\n\
+        "后端启动超时。请检查 Google Chrome 是否可用，并查看日志:\n\
          ~/Library/Application Support/com.huoke.desktop/logs/desktop-backend.log"
             .into(),
     )
@@ -181,7 +153,7 @@ fn show_startup_error(app: &AppHandle, message: &str) {
         <style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:32px;line-height:1.6;color:#222}}
         h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px}}</style></head>
         <body><h1>获客平台启动失败</h1><pre>{message}</pre>
-        <p>排查：1) 打开 Docker Desktop  2) 安装 Google Chrome  3) 查看日志目录</p></body></html>`);document.close();"#
+        <p>排查：1) 安装 Google Chrome  2) 查看日志目录</p></body></html>`);document.close();"#
     );
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval(&html);
@@ -204,7 +176,6 @@ fn bootstrap(app: &AppHandle) -> Result<(), String> {
     let root = repo_root(app)?;
     log::info!("Huoke root: {}", root.display());
 
-    start_mysql(&root)?;
     let mut backend = start_backend(&root)?;
     wait_backend_ready(Duration::from_secs(120), &mut backend)?;
 

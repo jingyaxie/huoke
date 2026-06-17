@@ -4,8 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 
-"$ROOT/scripts/desktop-run-mysql.sh"
-
 "$ROOT/scripts/desktop-run-backend.sh" &
 BACKEND_PID=$!
 

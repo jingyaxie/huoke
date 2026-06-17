@@ -4,11 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DESKTOP_DIR="$ROOT/desktop"
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "需要 Docker Desktop。" >&2
-  exit 1
-fi
-
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 if [[ ! -x "$CHROME" ]]; then
   echo "需要安装 Google Chrome。" >&2

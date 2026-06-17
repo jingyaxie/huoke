@@ -6,6 +6,7 @@
       clearable
       class="filter-keyword"
       @keyup.enter="submit"
+      @clear="submit"
     />
     <el-select v-model="local.platform" placeholder="全部平台" style="width: 140px" @change="submit">
       <el-option
@@ -23,11 +24,18 @@
         :value="item.value"
       />
     </el-select>
-    <el-select v-model="local.sort" placeholder="创建时间" style="width: 150px" @change="submit">
-      <el-option label="创建时间 ↓" value="desc" />
-      <el-option label="创建时间 ↑" value="asc" />
-    </el-select>
-    <el-button link type="primary" @click="reset">重置</el-button>
+    <el-date-picker
+      v-model="local.dateRange"
+      type="daterange"
+      range-separator="至"
+      start-placeholder="开始日期"
+      end-placeholder="结束日期"
+      placeholder="创建时间"
+      value-format="YYYY-MM-DD"
+      class="filter-date"
+      @change="submit"
+    />
+    <el-button link type="primary" class="reset-btn" @click="reset">重置</el-button>
   </div>
 </template>
 
@@ -79,7 +87,7 @@ function reset() {
   gap: 10px;
   align-items: center;
   padding: 12px 16px;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -88,5 +96,13 @@ function reset() {
 .filter-keyword {
   flex: 1 1 280px;
   min-width: 220px;
+}
+
+.filter-date {
+  width: 260px;
+}
+
+.reset-btn {
+  margin-left: auto;
 }
 </style>

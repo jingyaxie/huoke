@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Huoke 本地开发一键自启：Sidecar 后端 (18000) + Vite 前端 (5173)
+# Huoke 本地开发一键自启：Native 后端 (8000) + Vite 前端 (5173)
 # 用法：./scripts/dev-autostart.sh
 # 停止：./scripts/dev-autostart.sh --stop
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SIDECAR_PORT="${SIDECAR_PORT:-18000}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 LOG_DIR="${ROOT}/storage/dev-autostart"
 BACKEND_LOG="${LOG_DIR}/backend.log"
@@ -54,13 +54,13 @@ fi
 
 echo "=== Huoke dev 自动启动 ==="
 
-if port_listen "$SIDECAR_PORT"; then
-  echo "  · 后端已在端口 ${SIDECAR_PORT}"
+if port_listen "$BACKEND_PORT"; then
+  echo "  · 后端已在端口 ${BACKEND_PORT}"
 else
-  echo "  · 启动 Sidecar 后端..."
-  nohup bash "$ROOT/scripts/dev-sidecar-macos.sh" >>"$BACKEND_LOG" 2>&1 &
+  echo "  · 启动 Native 后端..."
+  nohup bash "$ROOT/scripts/dev-native.sh" >>"$BACKEND_LOG" 2>&1 &
   echo $! >"$BACKEND_PID"
-  wait_health "http://127.0.0.1:${SIDECAR_PORT}/api/health" "后端"
+  wait_health "http://127.0.0.1:${BACKEND_PORT}/api/health" "后端"
 fi
 
 if port_listen "$FRONTEND_PORT"; then
@@ -83,6 +83,6 @@ fi
 
 echo ""
 echo "前端: http://127.0.0.1:${FRONTEND_PORT}/"
-echo "API:  http://127.0.0.1:${SIDECAR_PORT}/api/health"
+echo "API:  http://127.0.0.1:${BACKEND_PORT}/api/health"
 echo "日志: ${LOG_DIR}/"
 echo "停止: ./scripts/dev-autostart.sh --stop"

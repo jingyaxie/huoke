@@ -158,71 +158,28 @@ def test_preflight_payload_shape_auto_execute_false():
 
 # --- HTTP 集成测试 ---
 
-import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-_API_HEADERS = {
-    "X-Tenant-Id": "default",
-    "X-Platform-Id": "douyin",
-    "X-Account-Id": "default",
-    "Content-Type": "application/json",
-}
-
-
-@pytest.fixture
-def api_client(monkeypatch, tmp_path):
-    from app.core.config import Settings
-
-    storage = tmp_path / "storage"
-    settings = Settings(
-        storage_root=storage,
-        deepseek_api_key="test-deepseek-key",
-        tenant_auth_enabled=False,
-        database_url=f"sqlite:///{tmp_path / 'test.db'}",
-    )
-
-    def _get_settings():
-        return settings
-
-    monkeypatch.setattr("app.core.config.get_settings", _get_settings)
-    monkeypatch.setattr("app.api.deps.get_settings", _get_settings)
-    monkeypatch.setattr("app.api.settings_routes.get_settings", _get_settings)
-    monkeypatch.setattr("app.api.agent_routes.get_settings", _get_settings)
-
-    class FakeStore:
-        def login_status(self, tenant_id: str, account_id: str = "default"):
-            return {"status": "ready", "nickname": "测试号"}
-
-    monkeypatch.setattr(
-        "app.services.external_task_preflight_service.get_session_store",
-        lambda _settings, _platform: FakeStore(),
-    )
-
-    with TestClient(app) as test_client:
-        yield test_client
+from tests.helpers import API_HEADERS
 
 
 def test_interaction_settings_api_roundtrip(api_client):
-    get_resp = api_client.get("/api/settings/interaction", headers=_API_HEADERS)
+    get_resp = api_client.get("/api/settings/interaction", headers=API_HEADERS)
     assert get_resp.status_code == 200
     assert get_resp.json()["comment_dm_percentage"] == 50
 
     put_resp = api_client.put(
         "/api/settings/interaction",
-        headers=_API_HEADERS,
+        headers=API_HEADERS,
         json={"comment_dm_percentage": 70, "dm_per_day": 20},
     )
     assert put_resp.status_code == 200
     assert put_resp.json()["comment_dm_percentage"] == 70
 
-    get_again = api_client.get("/api/settings/interaction", headers=_API_HEADERS)
+    get_again = api_client.get("/api/settings/interaction", headers=API_HEADERS)
     assert get_again.json()["comment_dm_percentage"] == 70
 
 
 def test_external_capabilities_api(api_client):
-    resp = api_client.get("/api/agent/external/capabilities", headers=_API_HEADERS)
+    resp = api_client.get("/api/agent/external/capabilities", headers=API_HEADERS)
     assert resp.status_code == 200
     body = resp.json()
     assert body["schema_version"] == "huoke.external_task.v1"
@@ -233,7 +190,7 @@ def test_external_capabilities_api(api_client):
 def test_preflight_auto_via_http(api_client):
     payload = build_auto_task_payload_like_frontend()
     payload["auto_execute"] = False
-    resp = api_client.post("/api/agent/external/preflight", headers=_API_HEADERS, json=payload)
+    resp = api_client.post("/api/agent/external/preflight", headers=API_HEADERS, json=payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ready"] is True
@@ -244,7 +201,7 @@ def test_preflight_auto_via_http(api_client):
 def test_preflight_manual_via_http(api_client):
     payload = build_manual_task_payload_like_frontend()
     payload["auto_execute"] = False
-    resp = api_client.post("/api/agent/external/preflight", headers=_API_HEADERS, json=payload)
+    resp = api_client.post("/api/agent/external/preflight", headers=API_HEADERS, json=payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ready"] is True
@@ -286,7 +243,7 @@ def test_create_external_job_via_http(api_client, monkeypatch):
     )
 
     payload = build_auto_task_payload_like_frontend()
-    resp = api_client.post("/api/agent/external/jobs", headers=_API_HEADERS, json=payload)
+    resp = api_client.post("/api/agent/external/jobs", headers=API_HEADERS, json=payload)
     assert resp.status_code == 200, resp.text
     assert resp.json()["job_id"] == "job-test-001"
 

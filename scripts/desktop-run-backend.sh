@@ -13,8 +13,9 @@ BACKEND_PORT="${BACKEND_PORT:-8000}"
 STORAGE_DIR="$DATA_DIR/storage"
 ENV_FILE="$DATA_DIR/.env.desktop"
 LOG_FILE="$DATA_DIR/logs/desktop-backend.log"
+DB_FILE="$STORAGE_DIR/huoke_desktop.db"
 
-mkdir -p "$DATA_DIR" "$STORAGE_DIR" "$DATA_DIR/logs"
+mkdir -p "$DATA_DIR" "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile" "$DATA_DIR/logs"
 exec > >(tee -a "$LOG_FILE") 2>&1
 echo "[$(date '+%F %T')] desktop-run-backend root=$ROOT bundle=$BUNDLE_DIR"
 
@@ -73,27 +74,25 @@ else
 fi
 export STORAGE_ROOT="$STORAGE_DIR"
 export FRONTEND_ORIGIN="http://127.0.0.1:${BACKEND_PORT}"
+export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
+export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
+export PYTHONPATH="$BACKEND_DIR"
 
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
 
-echo "执行数据库迁移..."
-run_alembic() {
-  "$PYTHON" -m alembic upgrade head
-}
+export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
+export STORAGE_ROOT="$STORAGE_DIR"
+export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 
-if ! run_alembic; then
-  echo "数据库迁移失败，桌面模式将重置本地库后重试..." >&2
-  if docker exec huoke_desktop_mysql mysql -uroot -proot -e \
-    "DROP DATABASE IF EXISTS douyin_hot; CREATE DATABASE douyin_hot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON douyin_hot.* TO 'douyin'@'%'; FLUSH PRIVILEGES;" 2>/dev/null; then
-    run_alembic
-  else
-    echo "数据库修复失败，请查看 $LOG_FILE" >&2
-    exit 1
-  fi
-fi
+echo "初始化数据库..."
+"$PYTHON" - <<'PY'
+from app.db.bootstrap import ensure_database_schema
+ensure_database_schema()
+print("数据库 schema 已就绪")
+PY
 
-echo "启动后端: $PYTHON (port ${BACKEND_PORT})"
+echo "启动后端: $PYTHON (port ${BACKEND_PORT}, SQLite)"
 exec "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}"

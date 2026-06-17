@@ -42,11 +42,8 @@
     "resources": {
       "../bundle/": "desktop/bundle/",
       "../../scripts/desktop-common.sh": "scripts/desktop-common.sh",
-      "../../scripts/desktop-run-mysql.sh": "scripts/desktop-run-mysql.sh",
       "../../scripts/desktop-run-backend.sh": "scripts/desktop-run-backend.sh",
-      "../../docker-compose.desktop.yml": "docker-compose.desktop.yml",
-      "../../.env.desktop.example": ".env.desktop.example",
-      "../../backend/sql/init.sql": "backend/sql/init.sql"
+      "../../.env.desktop.example": ".env.desktop.example"
     },
     "macOS": {
       "minimumSystemVersion": "12.0"

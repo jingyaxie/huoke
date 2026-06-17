@@ -1,14 +1,14 @@
 <template>
   <div class="acquisition-page">
-    <header class="page-header panel">
+    <header class="page-header">
       <div>
         <h1 class="page-title">评论/私信预设</h1>
         <p class="page-subtitle">管理评论回复与私信触达模板，创建任务时可按需勾选。</p>
       </div>
-      <el-button type="primary" @click="openCreate">+ 添加预设</el-button>
+      <el-button type="primary" class="create-btn" @click="openCreate">+ 添加预设</el-button>
     </header>
 
-    <section class="panel page-body">
+    <section class="table-card panel page-body">
       <el-table v-loading="loading" :data="rows" stripe empty-text="暂无预设">
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="kindLabel" label="类型" width="120" />
@@ -171,7 +171,7 @@ onMounted(() => {
 .acquisition-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
 }
 
 .page-header {
@@ -179,10 +179,14 @@ onMounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  padding: 20px 24px;
+}
+
+.create-btn {
+  flex-shrink: 0;
+  padding: 0 20px;
 }
 
 .page-body {
-  padding: 16px 20px 20px;
+  padding: 20px;
 }
 </style>

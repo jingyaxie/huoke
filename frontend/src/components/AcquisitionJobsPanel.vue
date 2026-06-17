@@ -38,8 +38,10 @@
         <el-table-column label="账号" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ row.account_label || "—" }}</template>
         </el-table-column>
-        <el-table-column label="渠道" width="88">
-          <template #default="{ row }">{{ platformLabel(row.platform) }}</template>
+        <el-table-column label="渠道" width="96">
+          <template #default="{ row }">
+            <PlatformChannelTag :platform="row.platform" />
+          </template>
         </el-table-column>
         <el-table-column label="产品关键词" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.keywords.join("、") || "—" }}</template>
@@ -63,7 +65,7 @@
         </el-table-column>
       </template>
 
-      <el-table-column label="抓取总线索" width="104" align="right">
+      <el-table-column label="实际抓取总线索" width="120" align="right">
         <template #default="{ row }">{{ row.metrics.produced_total || 0 }}</template>
       </el-table-column>
       <el-table-column label="精准线索" width="96" align="right">
@@ -88,15 +90,12 @@
             link
             type="danger"
             size="small"
+            class="status-btn"
             @click.stop="showFailure(row)"
           >
-            <el-tag :type="jobStatusTagType(row.status)" size="small" effect="light">
-              {{ jobStatusLabel(row.status) }}
-            </el-tag>
+            <TaskStatusBadge :status="row.status" />
           </el-button>
-          <el-tag v-else :type="jobStatusTagType(row.status)" size="small" effect="light">
-            {{ jobStatusLabel(row.status) }}
-          </el-tag>
+          <TaskStatusBadge v-else :status="row.status" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
@@ -143,6 +142,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import AcquisitionOutreachModal from "./AcquisitionOutreachModal.vue";
 import AcquisitionStatsCards from "./AcquisitionStatsCards.vue";
 import AcquisitionTaskFilters from "./AcquisitionTaskFilters.vue";
+import PlatformChannelTag from "./PlatformChannelTag.vue";
+import TaskStatusBadge from "./TaskStatusBadge.vue";
 import {
   cancelAgentJobTask,
   deleteAgentJob,
@@ -157,12 +158,9 @@ import {
   filterManualJobs,
   formatJobTime,
   getJobRowModel,
-  jobStatusLabel,
-  jobStatusTagType,
   manualAccountLabel,
   manualIntentLabel,
   matchesJobFilter,
-  platformLabel,
   sortJobsByCreated,
 } from "../utils/acquisitionJobs";
 
@@ -185,7 +183,7 @@ const loading = ref(false);
 const allJobs = ref([]);
 const filter = reactive({ ...DEFAULT_ACQUISITION_FILTER });
 const page = ref(1);
-const pageSize = 10;
+const pageSize = 5;
 const outreachOpen = ref(false);
 const outreachJob = ref(null);
 let pollTimer = null;
@@ -343,6 +341,22 @@ defineExpose({ loadJobs, jobs: filteredRows, dashboard });
 
 .jobs-table {
   width: 100%;
+}
+
+.jobs-table :deep(.el-table__header th) {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.jobs-table :deep(.el-table__row td) {
+  font-size: 13px;
+}
+
+.status-btn {
+  padding: 0;
+  height: auto;
 }
 
 .action-row {

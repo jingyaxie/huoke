@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ensure_desktop_path() {
-  export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:$PATH"
+  export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 }
 
 resolve_huoke_root() {

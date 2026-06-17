@@ -6,6 +6,7 @@ export const DEFAULT_ACQUISITION_FILTER = {
   platform: "",
   status: "",
   sort: "desc",
+  dateRange: null,
 };
 
 export const ACQUISITION_STATUS_OPTIONS = [
@@ -154,11 +155,12 @@ export function jobStatusLabel(status) {
 }
 
 export function jobStatusTagType(status) {
+  if (status === "running") return "primary";
+  if (status === "queued" || status === "pending") return "warning";
   if (status === "completed") return "success";
-  if (status === "running" || status === "queued" || status === "pending") return "warning";
-  if (status === "failed" || status === "dead_letter") return "danger";
   if (status === "cancelled") return "info";
-  return "";
+  if (status === "failed" || status === "dead_letter") return "danger";
+  return "info";
 }
 
 export function platformLabel(platform) {
@@ -234,6 +236,14 @@ export function matchesJobFilter(job, filter) {
       .join(" ")
       .toLowerCase();
     if (!haystack.includes(kw)) return false;
+  }
+  if (Array.isArray(filter.dateRange) && filter.dateRange.length === 2) {
+    const [start, end] = filter.dateRange;
+    const created = new Date(job.created_at || job.updated_at || 0).getTime();
+    if (!Number.isFinite(created)) return false;
+    const startMs = new Date(start).setHours(0, 0, 0, 0);
+    const endMs = new Date(end).setHours(23, 59, 59, 999);
+    if (created < startMs || created > endMs) return false;
   }
   return true;
 }

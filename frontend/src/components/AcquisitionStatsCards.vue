@@ -1,14 +1,14 @@
 <template>
   <div class="stats-grid">
-    <div v-for="item in items" :key="item.key" class="stats-card">
-      <span class="stats-label" :class="`tone-${item.key}`">{{ item.label }}</span>
+    <div v-for="item in items" :key="item.key" class="stats-card" :class="`stats-card--${item.key}`">
+      <span class="stats-label">{{ item.label }}</span>
       <div class="stats-value">{{ loading ? "—" : formatValue(data?.[item.key]) }}</div>
     </div>
   </div>
 </template>
 
 <script setup>
-const props = defineProps({
+defineProps({
   data: { type: Object, default: null },
   loading: { type: Boolean, default: false },
 });
@@ -32,38 +32,81 @@ function formatValue(value) {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .stats-card {
-  border: 1px solid var(--el-border-color-lighter);
   border-radius: 12px;
-  background: #fff;
-  padding: 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  padding: 16px 18px;
+  border: 1px solid transparent;
 }
 
 .stats-label {
-  display: inline-flex;
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 12px;
+  display: block;
+  font-size: 13px;
   font-weight: 500;
 }
 
 .stats-value {
-  margin-top: 10px;
-  font-size: 28px;
+  margin-top: 12px;
+  font-size: 30px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
+  line-height: 1.1;
 }
 
-.tone-running_tasks { background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
-.tone-queued_tasks { background: var(--el-color-warning-light-9); color: var(--el-color-warning); }
-.tone-precise_customers { background: var(--el-color-success-light-9); color: var(--el-color-success); }
-.tone-total_leads { background: #f3e8ff; color: #7c3aed; }
-.tone-dm_count { background: #e0f2fe; color: #0284c7; }
-.tone-follow_count { background: #ffe4e6; color: #e11d48; }
+.stats-card--running_tasks {
+  background: #eff6ff;
+  border-color: #dbeafe;
+}
+.stats-card--running_tasks .stats-label,
+.stats-card--running_tasks .stats-value {
+  color: #2563eb;
+}
+
+.stats-card--queued_tasks {
+  background: #fff7ed;
+  border-color: #ffedd5;
+}
+.stats-card--queued_tasks .stats-label,
+.stats-card--queued_tasks .stats-value {
+  color: #ea580c;
+}
+
+.stats-card--precise_customers {
+  background: #ecfdf5;
+  border-color: #d1fae5;
+}
+.stats-card--precise_customers .stats-label,
+.stats-card--precise_customers .stats-value {
+  color: #059669;
+}
+
+.stats-card--total_leads {
+  background: #f5f3ff;
+  border-color: #ede9fe;
+}
+.stats-card--total_leads .stats-label,
+.stats-card--total_leads .stats-value {
+  color: #7c3aed;
+}
+
+.stats-card--dm_count {
+  background: #fefce8;
+  border-color: #fef08a;
+}
+.stats-card--dm_count .stats-label,
+.stats-card--dm_count .stats-value {
+  color: #ca8a04;
+}
+
+.stats-card--follow_count {
+  background: #f0f9ff;
+  border-color: #e0f2fe;
+}
+.stats-card--follow_count .stats-label,
+.stats-card--follow_count .stats-value {
+  color: #0284c7;
+}
 
 @media (max-width: 1200px) {
   .stats-grid {
