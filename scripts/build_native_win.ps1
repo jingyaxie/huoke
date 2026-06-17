@@ -1,4 +1,4 @@
-# Windows 原生桌面应用一键打包（Tauri NSIS 安装包，内置 Python 后端，无需用户安装依赖）
+# Build Huoke Windows desktop installer (Tauri NSIS + bundled Python backend)
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/_python_win.ps1"
 
@@ -19,21 +19,19 @@ function Find-ChromePath {
 
 $Chrome = Find-ChromePath
 if (-not $Chrome) {
-  Write-Warning "未检测到 Google Chrome。打包可继续，但客户机器需安装 Chrome 才能使用浏览器自动化功能。"
+  Write-Warning "Google Chrome not found. Build can continue, but browser automation requires Chrome on target machines."
 } else {
-  Write-Host "检测到 Chrome: $Chrome"
+  Write-Host "Chrome: $Chrome"
 }
 
-# 检查 Python（bundle 准备需要）
 $Python = Find-HuokePython
 if (-not $Python) {
-  Write-Error "需要 Python 3.11+ 才能打包（用于创建内置运行时）。请从 https://www.python.org/downloads/ 安装。"
+  Write-Error "Python 3.11+ is required for bundling. Install from https://www.python.org/downloads/"
 }
-Write-Host "检测到 Python: $Python"
+Write-Host "Python: $Python"
 
-# 检查 Rust
 if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-  Write-Error "需要 Rust 工具链。请安装: https://rustup.rs/ 并确保已安装 MSVC 构建工具。"
+  Write-Error "Rust toolchain is required. Install from https://rustup.rs/ and ensure MSVC build tools are available."
 }
 
 Push-Location $DesktopDir
@@ -42,8 +40,8 @@ if (-not (Test-Path "node_modules")) {
 }
 
 Write-Host ""
-Write-Host "打包 Windows 安装程序 (NSIS .exe)..."
-Write-Host "首次构建可能需 10–20 分钟（下载依赖 + 编译 Rust + 安装 Python 包）..."
+Write-Host "Building Windows NSIS installer..."
+Write-Host "First build may take 10-20 minutes (deps + Rust compile + Python packages)..."
 Write-Host ""
 
 npm run build
@@ -52,10 +50,10 @@ Pop-Location
 
 $BundleDir = Join-Path $DesktopDir "src-tauri/target/release/bundle/nsis"
 Write-Host ""
-Write-Host "构建完成。产物目录:"
+Write-Host "Build finished. Output directory:"
 Write-Host "  $BundleDir"
 if (Test-Path $BundleDir) {
   Get-ChildItem $BundleDir -Filter "*.exe" | ForEach-Object {
-    Write-Host "  安装包: $($_.FullName)"
+    Write-Host "  Installer: $($_.FullName)"
   }
 }

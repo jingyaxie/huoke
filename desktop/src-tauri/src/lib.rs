@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 const DESKTOP_PORT: u16 = 18765;
 const HEALTH_URL: &str = "http://127.0.0.1:18765/api/health";
-const APP_HOME_URL: &str = "http://127.0.0.1:18765/auto-tasks";
+const APP_HOME_URL: &str = "http://127.0.0.1:18765/cloud/dashboard";
 
 struct ServiceState {
     backend: Mutex<Option<Child>>,

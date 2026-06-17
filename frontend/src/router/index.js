@@ -23,18 +23,28 @@ import SettingsRulesSection from "../views/settings/SettingsRulesSection.vue";
 import SettingsExperiencesSection from "../views/settings/SettingsExperiencesSection.vue";
 import SettingsAgentsSection from "../views/settings/SettingsAgentsSection.vue";
 import SettingsModelSection from "../views/settings/SettingsModelSection.vue";
+import PortalLoginView from "../views/PortalLoginView.vue";
+import { buildCloudRoutes } from "../config/cloudNav";
+import { isPortalAuthenticated, isPortalEnabled } from "../utils/portalShell";
 
 const routes = [
+  {
+    path: "/portal-login",
+    name: "portal-login",
+    component: PortalLoginView,
+    meta: { public: true },
+  },
   {
     path: "/",
     component: MainLayout,
     children: [
-      { path: "", redirect: "/auto-tasks" },
-      { path: "auto-tasks", name: "auto-tasks", component: AutoTasksView },
-      { path: "manual-tasks", name: "manual-tasks", component: ManualTasksView },
-      { path: "account-settings", name: "account-settings", component: AccountSettingsView },
-      { path: "llm-settings", name: "llm-settings", component: LlmSettingsView },
-      { path: "presets", name: "presets", component: PresetsView },
+      { path: "", redirect: () => (isPortalEnabled() ? "/cloud/dashboard" : "/auto-tasks") },
+      ...buildCloudRoutes(),
+      { path: "auto-tasks", name: "auto-tasks", component: AutoTasksView, meta: { title: "自动获客", section: "AI 获客（本机）" } },
+      { path: "manual-tasks", name: "manual-tasks", component: ManualTasksView, meta: { title: "手动获客", section: "AI 获客（本机）" } },
+      { path: "account-settings", name: "account-settings", component: AccountSettingsView, meta: { title: "账号设置", section: "AI 获客（本机）" } },
+      { path: "llm-settings", name: "llm-settings", component: LlmSettingsView, meta: { title: "大模型配置", section: "AI 获客（本机）" } },
+      { path: "presets", name: "presets", component: PresetsView, meta: { title: "评论/私信预设", section: "AI 获客（本机）" } },
       {
         path: "agent",
         name: "agent",
@@ -79,6 +89,18 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+});
+
+router.beforeEach((to) => {
+  if (!isPortalEnabled()) return true;
+  if (to.meta?.public) return true;
+  const needsPortal = Boolean(to.meta?.cloud) || to.path.startsWith("/cloud/");
+  if (!needsPortal) return true;
+  if (isPortalAuthenticated()) return true;
+  return {
+    name: "portal-login",
+    query: { redirect: to.fullPath },
+  };
 });
 
 export default router;
