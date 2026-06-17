@@ -225,17 +225,26 @@ def outreach_priority_from_brief(brief: TaskBrief) -> list[str]:
     return ["reply", "dm", "follow"]
 
 
+def _interval_bounds_from_mapping(mapping: dict[str, Any]) -> tuple[Any, Any]:
+    """兼容 interval_min / interval_min_sec 两套字段名（前端 constraints 常用前者）。"""
+    lo = mapping.get("interval_min_sec")
+    if lo is None:
+        lo = mapping.get("interval_min")
+    hi = mapping.get("interval_max_sec")
+    if hi is None:
+        hi = mapping.get("interval_max")
+    return lo, hi
+
+
 def outreach_interval_from_brief(brief: TaskBrief) -> tuple[int, int]:
     sim = brief.goals.get("ui_timing")
     if isinstance(sim, dict):
-        lo = sim.get("interval_min_sec")
-        hi = sim.get("interval_max_sec")
+        lo, hi = _interval_bounds_from_mapping(sim)
         if lo is not None or hi is not None:
             low = max(1, int(lo or 30))
             high = max(low, int(hi or low))
             return low, high
-    lo = brief.constraints.get("interval_min_sec")
-    hi = brief.constraints.get("interval_max_sec")
+    lo, hi = _interval_bounds_from_mapping(brief.constraints)
     low = max(1, int(lo or 30))
     high = max(low, int(hi or 120))
     return low, high

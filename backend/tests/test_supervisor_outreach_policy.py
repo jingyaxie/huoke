@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.services.supervisor_outreach import outreach_interval_from_brief
 from app.services.supervisor_outreach_helpers import (
     build_dm_text,
     build_reply_text,
@@ -30,6 +31,11 @@ def test_lead_evaluation_includes_min_digg():
     spec = comment_match_from_brief(brief)
     assert spec.get("min_comment_digg") == 3
     assert min_comment_digg_from_brief(brief) == 3
+
+
+def test_outreach_interval_reads_interval_min_alias():
+    brief = TaskBrief(constraints={"interval_min": 10, "interval_max": 30})
+    assert outreach_interval_from_brief(brief) == (10, 30)
 
 
 def test_outreach_priority_order():

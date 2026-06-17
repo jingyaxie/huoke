@@ -5,6 +5,7 @@ import pytest
 
 from app.core.config import Settings
 from app.services.agent_job_plan_service import _plan_from_brief, build_orchestration_plan, sync_orchestration_status
+from app.services.supervisor_outreach import outreach_interval_from_brief
 from app.services.task_brief_service import TaskBrief
 
 
@@ -125,6 +126,19 @@ def test_build_orchestration_plan_skill_flow_plan_driven(settings, monkeypatch):
     assert plan["tactical_plan"]["pipeline"] == "skill_flow"
     dream = next(s for s in plan["steps"] if s["id"] == "dream")
     assert dream["status"] == "skipped"
+
+
+def test_enrich_brief_normalizes_interval_aliases():
+    from app.services.task_brief_service import enrich_brief_from_task_payload
+
+    brief = TaskBrief(platform="douyin", keyword="淋浴房")
+    enriched, _ = enrich_brief_from_task_payload(
+        brief,
+        {"constraints": {"interval_min": 10, "interval_max": 30}},
+    )
+    assert enriched.constraints["interval_min_sec"] == 10
+    assert enriched.constraints["interval_max_sec"] == 30
+    assert outreach_interval_from_brief(enriched) == (10, 30)
 
 
 def test_enrich_brief_from_task_payload():

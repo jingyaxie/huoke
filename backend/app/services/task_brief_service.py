@@ -21,6 +21,18 @@ _CRAWL_VIDEO_LIMIT_KEYS = ("crawl_video_limit", "video_limit", "content_limit", 
 _DEFAULT_CRAWL_VIDEO_LIMIT = 5
 
 
+def normalize_outreach_interval_constraints(dest: dict[str, Any]) -> None:
+    """把 interval_min/max 同步为 interval_*_sec，供 Supervisor 与存储一致读取。"""
+    if dest.get("interval_min_sec") is None and dest.get("interval_min") is not None:
+        dest["interval_min_sec"] = dest["interval_min"]
+    if dest.get("interval_max_sec") is None and dest.get("interval_max") is not None:
+        dest["interval_max_sec"] = dest["interval_max"]
+    if dest.get("interval_min") is None and dest.get("interval_min_sec") is not None:
+        dest["interval_min"] = dest["interval_min_sec"]
+    if dest.get("interval_max") is None and dest.get("interval_max_sec") is not None:
+        dest["interval_max"] = dest["interval_max_sec"]
+
+
 class TaskBrief(BaseModel):
     """Supervisor 任务简报：MD 正文 + 结构化目标。"""
 
@@ -464,6 +476,10 @@ def enrich_brief_from_task_payload(brief: TaskBrief, payload: dict[str, Any] | N
                     continue
                 if n > 0:
                     brief.goals["crawl_video_limit"] = n
+
+    normalize_outreach_interval_constraints(brief.constraints)
+    if isinstance(brief.goals.get("ui_timing"), dict):
+        normalize_outreach_interval_constraints(brief.goals["ui_timing"])
 
     known_top = {
         "task_name",
