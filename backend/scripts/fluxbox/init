@@ -1,0 +1,5 @@
+# Minimal Fluxbox session for VNC + Playwright (no wallpaper / no xmessage popups).
+session.screen0.toolbar.visible: false
+session.screen0.slit.visible: false
+session.screen0.workspacewarping: false
+session.styleFile: /usr/share/fluxbox/styles/Minimal

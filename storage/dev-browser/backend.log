@@ -1,0 +1,210 @@
+Chrome: Google Chrome 149.0.7827.104 
+Python: Python 3.11.15
+等待数据库就绪...
+/Users/macbook/project/ai/aihuoke/huoke/scripts/dev-native.sh: line 102: python: command not found
+Chrome: Google Chrome 149.0.7827.104 
+Python: Python 3.11.15
+等待数据库就绪...
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+数据库 schema 已就绪
+
+启动后端 (无 Docker, SQLite, 端口 8000)
+前端: http://localhost:5173  (另开终端: cd frontend && npm run dev)
+API:  http://localhost:8000/docs
+
+INFO:     Will watch for changes in these directories: ['/Users/macbook/project/ai/aihuoke/huoke/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [3915] using WatchFiles
+INFO:     Started server process [3948]
+INFO:     Waiting for application startup.
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:02:34,652 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'app/schemas/interaction_settings.py'. Reloading...
+INFO:     Started server process [6300]
+INFO:     Waiting for application startup.
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:15:28,889 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'app/services/interaction_settings_service.py'. Reloading...
+INFO:     Started server process [6304]
+INFO:     Waiting for application startup.
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:15:31,986 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'app/api/settings_routes.py'. Reloading...
+INFO:     Started server process [6314]
+INFO:     Waiting for application startup.
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:15:34,834 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'app/api/settings_routes.py'. Reloading...
+INFO:     Started server process [6319]
+INFO:     Waiting for application startup.
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:15:37,707 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_interaction_settings_service.py'. Reloading...
+INFO:     Started server process [11621]
+INFO:     Waiting for application startup.
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:25:40,198 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_frontend_payload_alignment.py'. Reloading...
+INFO:     Started server process [11725]
+INFO:     Waiting for application startup.
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:25:51,421 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_frontend_payload_alignment.py'. Reloading...
+INFO:     Started server process [11789]
+INFO:     Waiting for application startup.
+2026-06-17 18:25:58,634 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:25:58,635 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:25:58,635 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:25:58,635 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:25:58,635 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:25:58,635 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+INFO:     Started server process [12042]
+INFO:     Waiting for application startup.
+2026-06-17 18:26:25,124 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:26:25,125 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:26:25,125 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:26:25,125 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:26:25,125 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:26:25,125 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+INFO:     Started server process [12098]
+INFO:     Waiting for application startup.
+2026-06-17 18:26:31,939 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:26:31,939 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:26:31,939 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:26:31,939 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:26:31,940 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:26:31,940 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+INFO:     Started server process [12149]
+INFO:     Waiting for application startup.
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:26:37,110 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+INFO:     Started server process [12189]
+INFO:     Waiting for application startup.
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:26:40,472 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+INFO:     Started server process [12397]
+INFO:     Waiting for application startup.
+2026-06-17 18:27:04,107 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:27:04,108 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:27:04,108 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:27:04,108 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:27:04,108 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:27:04,108 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_api_task_create_integration.py'. Reloading...
+WARNING:  WatchFiles detected changes in 'tests/test_frontend_payload_alignment.py'. Reloading...
+INFO:     Started server process [12547]
+INFO:     Waiting for application startup.
+2026-06-17 18:27:20,892 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:27:20,893 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:27:20,893 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:27:20,893 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:27:20,893 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:27:20,893 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+INFO:     Started server process [12555]
+INFO:     Waiting for application startup.
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:27:22,378 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema
+WARNING:  WatchFiles detected changes in 'tests/test_frontend_payload_alignment.py'. Reloading...
+INFO:     Started server process [12945]
+INFO:     Waiting for application startup.
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.schemas
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.tables
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.types
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.constraints
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.defaults
+2026-06-17 18:28:07,310 INFO alembic.runtime.plugins setup plugin alembic.autogenerate.comments
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, initial schema

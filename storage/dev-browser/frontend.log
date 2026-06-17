@@ -1,0 +1,86 @@
+
+> douyin-hot-monitor-admin@0.1.0 dev
+> vite --host 127.0.0.1 --port 5173
+
+Re-optimizing dependencies because vite config has changed
+
+  VITE v5.4.21  ready in 661 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+18:17:10 [vite] hmr update /src/components/CreateManualTaskDialog.vue, /src/components/CreateAutoTaskDialog.vue
+18:17:14 [vite] hmr update /src/views/acquisition/PresetsView.vue, /src/components/CreateManualTaskDialog.vue, /src/components/CreateAutoTaskDialog.vue
+18:17:51 [vite] hmr update /src/components/CreateAutoTaskDialog.vue, /src/components/CreateAutoTaskDialog.vue?vue&type=style&index=0&scoped=70b2ef7a&lang.css
+18:18:07 [vite] hmr update /src/components/TaskInteractionFields.vue
+18:18:33 [vite] hmr update /src/components/CreateManualTaskDialog.vue
+18:19:33 [vite] hmr update /src/views/acquisition/PresetsView.vue
+18:32:15 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+[1m[33m[@vue/compiler-sfc][0m[33m `v-model` cannot update a `const` reactive binding `filter`. The compiler has transformed it to `let` to make the update work.[0m
+
+18:33:59 [vite] hmr update /src/components/AcquisitionJobsPanel.vue, /src/components/AcquisitionJobsPanel.vue?vue&type=style&index=0&scoped=adcfc896&lang.css
+18:34:08 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:34:10 [vite] hmr update /src/views/acquisition/AutoTasksView.vue
+18:34:13 [vite] hmr update /src/views/acquisition/ManualTasksView.vue
+18:39:36 [vite] hmr update /src/views/LoginView.vue, /src/views/AgentChatView.vue, /src/views/settings/SettingsAccountSection.vue, /src/views/settings/SettingsRuntimeSection.vue, /src/components/PlatformQrLoginPanel.vue, /src/components/CreateAutoTaskDialog.vue
+18:41:39 [vite] hmr update /src/views/acquisition/AccountSettingsView.vue, /src/views/acquisition/AccountSettingsView.vue?vue&type=style&index=0&scoped=b55f227c&lang.css
+18:41:39 [vite] hmr update /src/views/settings/SettingsAccountSection.vue
+18:41:59 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:41:59 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:42:01 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:42:06 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:42:07 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:42:09 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:42:10 [vite] hmr update /src/components/AccountSettingsPanel.vue
+18:43:50 [vite] hmr update /src/styles.css
+18:44:05 [vite] hmr update /src/components/MainLayout.vue, /src/components/MainLayout.vue?vue&type=style&index=0&scoped=3a823e2d&lang.css
+18:44:09 [vite] hmr update /src/views/acquisition/AutoTasksView.vue, /src/views/acquisition/AutoTasksView.vue?vue&type=style&index=0&scoped=72617c63&lang.css
+18:44:13 [vite] hmr update /src/views/acquisition/ManualTasksView.vue, /src/views/acquisition/ManualTasksView.vue?vue&type=style&index=0&scoped=16abc8d6&lang.css
+18:44:17 [vite] hmr update /src/views/acquisition/AccountSettingsView.vue?vue&type=style&index=0&scoped=b55f227c&lang.css, /src/views/acquisition/AccountSettingsView.vue
+18:44:23 [vite] hmr update /src/components/AcquisitionTaskFilters.vue
+18:44:25 [vite] hmr update /src/components/AcquisitionStatsCards.vue?vue&type=style&index=0&scoped=c661afc7&lang.css
+18:44:33 [vite] hmr update /src/components/AcquisitionTaskFilters.vue
+18:44:34 [vite] hmr update /src/components/AcquisitionTaskFilters.vue
+18:44:36 [vite] hmr update /src/components/AcquisitionTaskFilters.vue
+18:44:37 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:44:44 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:44:48 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:44:48 [vite] Internal server error: Invalid end tag.
+  Plugin: vite:vue
+  File: /Users/macbook/project/ai/aihuoke/huoke/frontend/src/components/AcquisitionJobsPanel.vue:118:5
+  116|          </template>
+  117|        </el-table-column>
+  118|      </el-table>
+     |       ^
+  119|  
+  120|      <div v-if="filteredRows.length" class="pager-row">
+      at createCompilerError (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1378:17)
+      at emitError (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3014:5)
+      at Object.onclosetag (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:2391:9)
+      at Tokenizer.stateInClosingTagName (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:799:16)
+      at Tokenizer.parse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1157:16)
+      at Object.baseParse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3053:13)
+      at Object.parse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-dom/dist/compiler-dom.cjs.js:910:23)
+      at Object.parse$1 [as parse] (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1824:24)
+      at createDescriptor (file:///Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:71:43)
+      at handleHotUpdate (file:///Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2198:26)
+18:44:55 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:44:55 [vite] Internal server error: Element is missing end tag.
+  Plugin: vite:vue
+  File: /Users/macbook/project/ai/aihuoke/huoke/frontend/src/components/AcquisitionJobsPanel.vue:2:3
+  1  |  <template>
+  2  |    <div class="acquisition-jobs-panel">
+     |     ^
+  3  |      <AcquisitionStatsCards :data="dashboard" :loading="loading" class="panel-block" />
+  4  |  
+      at createCompilerError (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1378:17)
+      at emitError (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3014:5)
+      at Object.onclosetag (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:2381:13)
+      at Tokenizer.stateInClosingTagName (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:799:16)
+      at Tokenizer.parse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:1157:16)
+      at Object.baseParse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-core/dist/compiler-core.cjs.js:3053:13)
+      at Object.parse (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-dom/dist/compiler-dom.cjs.js:910:23)
+      at Object.parse$1 [as parse] (/Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1824:24)
+      at createDescriptor (file:///Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:71:43)
+      at handleHotUpdate (file:///Users/macbook/project/ai/aihuoke/huoke/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2198:26)
+18:44:56 [vite] hmr update /src/components/AcquisitionJobsPanel.vue
+18:44:59 [vite] hmr update /src/components/AcquisitionJobsPanel.vue?vue&type=style&index=0&scoped=adcfc896&lang.css
+18:45:03 [vite] hmr update /src/components/AcquisitionTaskFilters.vue?vue&type=style&index=0&scoped=7980e147&lang.css

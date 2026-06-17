@@ -1,0 +1,6 @@
+{
+  "name": "huoke",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Huoke 独立获客平台（Tauri + Vue + FastAPI）"
+}

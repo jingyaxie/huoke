@@ -1,0 +1,394 @@
+{
+  "run_id": "e743bd6e-7cab-4aeb-af44-ada048c7a2ff",
+  "browser_session_id": "e743bd6e-7cab-4aeb-af44-ada048c7a2ff",
+  "tenant_id": "default",
+  "platform": "douyin",
+  "provider": "deepseek",
+  "status": "active",
+  "mode": "agent",
+  "run_mode": "auto",
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是一个浏览器自动化智能体，可以通过 Playwright 工具操作真实网页来完成用户任务。\n\n你还可以调用已注册的技能：\n- 用 list_skills 查看技能摘要（仅名称与描述）\n- 用 invoke_skill(skill_id, params) 调用技能；instruction 技能会注入完整指南\n- 标记为「自动」的技能也可直接通过 skill_* 工具调用\n- 用户消息中的 /skill-id 表示明确要求使用该技能\n\n工作方式：\n1. 结合对话历史理解用户目标，必要时先 list_skills\n2. 用 browser_get_page_info 了解页面；SPA/抖音等站点优先看 api_captures 与 embedded_data，必要时 browser_get_network_data(url_contains=...)\n3. 仅在接口/DOM 不足时用 browser_get_text；需要视觉布局时用 browser_screenshot\n4. 复杂子任务可用 spawn_task 委派子智能体（返回摘要）\n5. 任务成功 task_complete；无法完成 task_failed\n\n注意：\n- 不要编造未观察到的页面内容；抖音视频/评论/搜索数据优先从拦截到的 JSON 接口获取\n- 若需登录或验证码，说明情况并 task_failed\n- 回复用户使用中文\n\n\n## 租户规则\n### 抖音平台规则 (操作 douyin.com 时的额外约束)\n- 优先使用 douyin.com 域名页面\n- 搜索时使用搜索框 `[data-e2e=\"searchbar-input\"]` 而非直接构造未知 API\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 url_contains=comment/list，搜索用 url_contains=search 或 aweme\n- 全量评论抓取请用内置技能 crawl-video-comments，不要手工翻页 DOM\n- 搜索视频列表请用 /search-videos 或 skill_search_videos，不要手工解析搜索页 DOM\n\n### 抖音社交互动安全 (回复评论、关注、私信等写入操作的约束)\n- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对回复/私信内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete\n\n### 浏览器操作安全 (所有平台通用的浏览器自动化安全约束)\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点\n\n可用技能摘要（完整内容在 invoke_skill 时加载）：\n- crawl-keyword-comments (手动): 按关键词搜索视频并批量抓取前 N 个视频的全部评论\n- search-videos (自动): 按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）\n- crawl-video-comments (自动): 抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等\n- douyin-hot-list (自动): 导航到抖音热榜页面并读取热点标题列表\n- crawl-hot (自动): 调用后端爬虫抓取当前平台热榜数据并写入数据库\n- douyin-follow-user (手动): 进入抖音用户主页并点击关注（支持从评论点头像或直达主页链接）\n- douyin-search-keyword (自动): 在抖音网页版搜索指定关键词并查看搜索结果\n- douyin-send-dm (手动): 进入抖音用户主页并发送私信（需已登录，可能受互关/隐私限制）\n- douyin-reply-comment (手动): 在抖音视频页定位指定评论并发表回复（需已登录）\n- check-login (自动): 检查当前平台是否已登录"
+    },
+    {
+      "role": "user",
+      "content": "/crawl-keyword-comments 关键词批量抓取评论。黄金"
+    },
+    {
+      "role": "assistant",
+      "content": "好的，我来使用 `/crawl-keyword-comments` 技能，按关键词\"黄金\"批量抓取视频评论。",
+      "tool_calls": [
+        {
+          "id": "call_00_57sH068mBpQkgVIDU9fk8871",
+          "type": "function",
+          "function": {
+            "name": "skill_crawl_keyword_comments",
+            "arguments": "{\"keyword\": \"黄金\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_57sH068mBpQkgVIDU9fk8871",
+      "content": "{\"error\": \"搜索页未识别到视频卡片，可能是关键词结果受限或页面结构变化。\"}"
+    },
+    {
+      "role": "assistant",
+      "content": "看起来直接搜索没有成功获取到视频卡片，让我先检查一下当前页面状态，再尝试用搜索技能先找到视频。",
+      "tool_calls": [
+        {
+          "id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+          "type": "function",
+          "function": {
+            "name": "browser_get_page_info",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+      "content": "{\"url\": \"about:blank\", \"title\": \"\", \"interactive_elements\": [], \"api_captures\": [], \"api_capture_count\": 0, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": null}"
+    },
+    {
+      "role": "assistant",
+      "content": "当前是空白页面，让我先导航到抖音，然后用搜索功能找到\"黄金\"相关的视频。",
+      "tool_calls": [
+        {
+          "id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+          "type": "function",
+          "function": {
+            "name": "browser_goto",
+            "arguments": "{\"url\": \"https://www.douyin.com\", \"wait_until\": \"domcontentloaded\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+      "content": "{\"url\": \"https://www.douyin.com/\", \"title\": \"抖音-记录美好生活\", \"status\": 200, \"wait_until\": \"domcontentloaded\"}"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+          "type": "function",
+          "function": {
+            "name": "skill_search_videos",
+            "arguments": "{\"keyword\": \"黄金\", \"limit\": 30, \"show_browser\": false}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+      "content": "{\"error\": \"搜索页未识别到视频结果，可能是关键词受限或页面结构变化。\", \"keyword\": \"黄金\", \"capture_method\": \"url_fallback\", \"output_file\": \"/app/reports/search_videos_douyin_default_黄金_20260601_074914.json\"}"
+    },
+    {
+      "role": "assistant",
+      "content": "搜索也遇到了问题，让我先检查一下登录状态，同时查看一下抖音页面情况。",
+      "tool_calls": [
+        {
+          "id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+          "type": "function",
+          "function": {
+            "name": "skill_check_login",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+      "content": "{\"skill_id\": \"check-login\", \"skill_name\": \"检查登录状态\", \"type\": \"builtin\", \"handler\": \"login_status\", \"status\": \"ready\", \"message\": \"登录态可用\"}"
+    },
+    {
+      "role": "assistant",
+      "content": "登录状态正常。让我看看当前页面具体是什么情况，以及搜索时拦截到了什么数据。",
+      "tool_calls": [
+        {
+          "id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+          "type": "function",
+          "function": {
+            "name": "browser_get_page_info",
+            "arguments": "{}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+      "content": "{\"url\": \"https://www.douyin.com/jingxuan\", \"title\": \"抖音精选电脑版 - 抖音旗下优质视频平台\", \"interactive_elements\": [{\"tag\": \"button\", \"text\": \"开启读屏标签\", \"selector_hint\": \"button#a11y-open-btn\"}, {\"tag\": \"a\", \"text\": \"精选\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"推荐\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"搜索\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"关注\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"朋友\\n23\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"我的\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"直播\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"放映厅\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"短剧\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"京ICP备16016397号-3\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"京公网安备 11000002002046号\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网络谣言曝光台\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网上有害信息举报\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"广告投放\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"用户服务协议\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"隐私政策\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"账号找回\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"联系我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"加入我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"营业执照\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"友情链接\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"站点地图\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"下载抖音\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"抖音电商\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"input\", \"text\": \"搜索你感兴趣的内容\", \"selector_hint\": \"input.U0YnT15k.QYUMTY8e\"}, {\"tag\": \"button\", \"text\": \"搜索\", \"selector_hint\": \"button.t_VddJAQ.OoToDTM7\"}, {\"tag\": \"a\", \"text\": \"客户端\", \"selector_hint\": \"a\"}, {\"tag\": \"a\", \"text\": \"发布视频/图文\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"视频管理\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"作品数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"开直播\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"直播数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者学习中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"剪映专业版\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}], \"api_captures\": [{\"capture_id\": \"574462f3\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"de7ba553\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"3a6cb0b6\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"740f044e\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"62a2ea22\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"447e5c77\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"0fc17641\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"f4f60a58\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}], \"api_capture_count\": 8, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": \"SPA 页面数据优先看 api_captures 与 embedded_data；需要更多接口详情时调用 browser_get_network_data(url_contains=...)。\"}"
+    }
+  ],
+  "pending_plan": null,
+  "pending_approval": null,
+  "loop_state": {
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是一个浏览器自动化智能体，可以通过 Playwright 工具操作真实网页来完成用户任务。\n\n你还可以调用已注册的技能：\n- 用 list_skills 查看技能摘要（仅名称与描述）\n- 用 invoke_skill(skill_id, params) 调用技能；instruction 技能会注入完整指南\n- 标记为「自动」的技能也可直接通过 skill_* 工具调用\n- 用户消息中的 /skill-id 表示明确要求使用该技能\n\n工作方式：\n1. 结合对话历史理解用户目标，必要时先 list_skills\n2. 用 browser_get_page_info 了解页面；SPA/抖音等站点优先看 api_captures 与 embedded_data，必要时 browser_get_network_data(url_contains=...)\n3. 仅在接口/DOM 不足时用 browser_get_text；需要视觉布局时用 browser_screenshot\n4. 复杂子任务可用 spawn_task 委派子智能体（返回摘要）\n5. 任务成功 task_complete；无法完成 task_failed\n\n注意：\n- 不要编造未观察到的页面内容；抖音视频/评论/搜索数据优先从拦截到的 JSON 接口获取\n- 若需登录或验证码，说明情况并 task_failed\n- 回复用户使用中文\n\n\n## 租户规则\n### 抖音平台规则 (操作 douyin.com 时的额外约束)\n- 优先使用 douyin.com 域名页面\n- 搜索时使用搜索框 `[data-e2e=\"searchbar-input\"]` 而非直接构造未知 API\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 url_contains=comment/list，搜索用 url_contains=search 或 aweme\n- 全量评论抓取请用内置技能 crawl-video-comments，不要手工翻页 DOM\n- 搜索视频列表请用 /search-videos 或 skill_search_videos，不要手工解析搜索页 DOM\n\n### 抖音社交互动安全 (回复评论、关注、私信等写入操作的约束)\n- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对回复/私信内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete\n\n### 浏览器操作安全 (所有平台通用的浏览器自动化安全约束)\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点\n\n可用技能摘要（完整内容在 invoke_skill 时加载）：\n- crawl-keyword-comments (手动): 按关键词搜索视频并批量抓取前 N 个视频的全部评论\n- search-videos (自动): 按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）\n- crawl-video-comments (自动): 抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等\n- douyin-hot-list (自动): 导航到抖音热榜页面并读取热点标题列表\n- crawl-hot (自动): 调用后端爬虫抓取当前平台热榜数据并写入数据库\n- douyin-follow-user (手动): 进入抖音用户主页并点击关注（支持从评论点头像或直达主页链接）\n- douyin-search-keyword (自动): 在抖音网页版搜索指定关键词并查看搜索结果\n- douyin-send-dm (手动): 进入抖音用户主页并发送私信（需已登录，可能受互关/隐私限制）\n- douyin-reply-comment (手动): 在抖音视频页定位指定评论并发表回复（需已登录）\n- check-login (自动): 检查当前平台是否已登录"
+      },
+      {
+        "role": "user",
+        "content": "/crawl-keyword-comments 关键词批量抓取评论。黄金"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，我来使用 `/crawl-keyword-comments` 技能，按关键词\"黄金\"批量抓取视频评论。",
+        "tool_calls": [
+          {
+            "id": "call_00_57sH068mBpQkgVIDU9fk8871",
+            "type": "function",
+            "function": {
+              "name": "skill_crawl_keyword_comments",
+              "arguments": "{\"keyword\": \"黄金\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_57sH068mBpQkgVIDU9fk8871",
+        "content": "{\"error\": \"搜索页未识别到视频卡片，可能是关键词结果受限或页面结构变化。\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "看起来直接搜索没有成功获取到视频卡片，让我先检查一下当前页面状态，再尝试用搜索技能先找到视频。",
+        "tool_calls": [
+          {
+            "id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+            "type": "function",
+            "function": {
+              "name": "browser_get_page_info",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+        "content": "{\"url\": \"about:blank\", \"title\": \"\", \"interactive_elements\": [], \"api_captures\": [], \"api_capture_count\": 0, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": null}"
+      },
+      {
+        "role": "assistant",
+        "content": "当前是空白页面，让我先导航到抖音，然后用搜索功能找到\"黄金\"相关的视频。",
+        "tool_calls": [
+          {
+            "id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+            "type": "function",
+            "function": {
+              "name": "browser_goto",
+              "arguments": "{\"url\": \"https://www.douyin.com\", \"wait_until\": \"domcontentloaded\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+        "content": "{\"url\": \"https://www.douyin.com/\", \"title\": \"抖音-记录美好生活\", \"status\": 200, \"wait_until\": \"domcontentloaded\"}"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+            "type": "function",
+            "function": {
+              "name": "skill_search_videos",
+              "arguments": "{\"keyword\": \"黄金\", \"limit\": 30, \"show_browser\": false}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+        "content": "{\"error\": \"搜索页未识别到视频结果，可能是关键词受限或页面结构变化。\", \"keyword\": \"黄金\", \"capture_method\": \"url_fallback\", \"output_file\": \"/app/reports/search_videos_douyin_default_黄金_20260601_074914.json\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "搜索也遇到了问题，让我先检查一下登录状态，同时查看一下抖音页面情况。",
+        "tool_calls": [
+          {
+            "id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+            "type": "function",
+            "function": {
+              "name": "skill_check_login",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+        "content": "{\"skill_id\": \"check-login\", \"skill_name\": \"检查登录状态\", \"type\": \"builtin\", \"handler\": \"login_status\", \"status\": \"ready\", \"message\": \"登录态可用\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "登录状态正常。让我看看当前页面具体是什么情况，以及搜索时拦截到了什么数据。",
+        "tool_calls": [
+          {
+            "id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+            "type": "function",
+            "function": {
+              "name": "browser_get_page_info",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+        "content": "{\"url\": \"https://www.douyin.com/jingxuan\", \"title\": \"抖音精选电脑版 - 抖音旗下优质视频平台\", \"interactive_elements\": [{\"tag\": \"button\", \"text\": \"开启读屏标签\", \"selector_hint\": \"button#a11y-open-btn\"}, {\"tag\": \"a\", \"text\": \"精选\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"推荐\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"搜索\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"关注\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"朋友\\n23\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"我的\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"直播\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"放映厅\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"短剧\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"京ICP备16016397号-3\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"京公网安备 11000002002046号\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网络谣言曝光台\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网上有害信息举报\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"广告投放\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"用户服务协议\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"隐私政策\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"账号找回\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"联系我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"加入我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"营业执照\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"友情链接\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"站点地图\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"下载抖音\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"抖音电商\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"input\", \"text\": \"搜索你感兴趣的内容\", \"selector_hint\": \"input.U0YnT15k.QYUMTY8e\"}, {\"tag\": \"button\", \"text\": \"搜索\", \"selector_hint\": \"button.t_VddJAQ.OoToDTM7\"}, {\"tag\": \"a\", \"text\": \"客户端\", \"selector_hint\": \"a\"}, {\"tag\": \"a\", \"text\": \"发布视频/图文\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"视频管理\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"作品数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"开直播\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"直播数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者学习中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"剪映专业版\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}], \"api_captures\": [{\"capture_id\": \"574462f3\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"de7ba553\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"3a6cb0b6\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"740f044e\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"62a2ea22\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"447e5c77\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"0fc17641\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"f4f60a58\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}], \"api_capture_count\": 8, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": \"SPA 页面数据优先看 api_captures 与 embedded_data；需要更多接口详情时调用 browser_get_network_data(url_contains=...)。\"}"
+      }
+    ],
+    "history": [
+      {
+        "role": "system",
+        "content": "你是一个浏览器自动化智能体，可以通过 Playwright 工具操作真实网页来完成用户任务。\n\n你还可以调用已注册的技能：\n- 用 list_skills 查看技能摘要（仅名称与描述）\n- 用 invoke_skill(skill_id, params) 调用技能；instruction 技能会注入完整指南\n- 标记为「自动」的技能也可直接通过 skill_* 工具调用\n- 用户消息中的 /skill-id 表示明确要求使用该技能\n\n工作方式：\n1. 结合对话历史理解用户目标，必要时先 list_skills\n2. 用 browser_get_page_info 了解页面；SPA/抖音等站点优先看 api_captures 与 embedded_data，必要时 browser_get_network_data(url_contains=...)\n3. 仅在接口/DOM 不足时用 browser_get_text；需要视觉布局时用 browser_screenshot\n4. 复杂子任务可用 spawn_task 委派子智能体（返回摘要）\n5. 任务成功 task_complete；无法完成 task_failed\n\n注意：\n- 不要编造未观察到的页面内容；抖音视频/评论/搜索数据优先从拦截到的 JSON 接口获取\n- 若需登录或验证码，说明情况并 task_failed\n- 回复用户使用中文\n\n\n## 租户规则\n### 抖音平台规则 (操作 douyin.com 时的额外约束)\n- 优先使用 douyin.com 域名页面\n- 搜索时使用搜索框 `[data-e2e=\"searchbar-input\"]` 而非直接构造未知 API\n- 热榜页面 URL: https://www.douyin.com/hot\n- 用户主页 URL 格式: https://www.douyin.com/user/{sec_uid}\n- 评论相关 selector: `[data-e2e=\"feed-comment-icon\"]`、`[data-e2e=\"comment-input\"]`、`[data-e2e=\"comment-post\"]`\n- 用户互动 selector: `[data-e2e=\"user-follow-btn\"]`、`[data-e2e=\"user-info-message-btn\"]`\n- 数据获取：优先 browser_get_page_info 的 api_captures / embedded_data；评论用 url_contains=comment/list，搜索用 url_contains=search 或 aweme\n- 全量评论抓取请用内置技能 crawl-video-comments，不要手工翻页 DOM\n- 搜索视频列表请用 /search-videos 或 skill_search_videos，不要手工解析搜索页 DOM\n\n### 抖音社交互动安全 (回复评论、关注、私信等写入操作的约束)\n- 回复/关注/私信类技能仅通过 /skill-id 或 invoke_skill 显式调用，不要擅自批量操作\n- 执行前确认已登录；未登录时 task_failed，提示用户先完成登录\n- 每次任务只操作一个用户或一条评论；发送前核对回复/私信内容\n- 遇到验证码、频率限制、私信权限不足时 task_failed 并说明，不要重复点击\n- 操作完成后用 browser_get_text 或 browser_get_page_info 验证结果再 task_complete\n\n### 浏览器操作安全 (所有平台通用的浏览器自动化安全约束)\n- 不要提交密码、验证码等敏感信息到非目标站点\n- 遇到登录墙或验证码时调用 task_failed 并说明需要人工介入\n- 每次写入操作前确认 selector 正确，避免误点\n\n可用技能摘要（完整内容在 invoke_skill 时加载）：\n- crawl-keyword-comments (手动): 按关键词搜索视频并批量抓取前 N 个视频的全部评论\n- search-videos (自动): 按关键词搜索抖音/火山视频，拦截搜索接口返回结构化列表（标题、作者、点赞、链接）\n- crawl-video-comments (自动): 抓取单个视频/笔记的全部评论，支持火山分享链接、item_id、douyin.com/video 等\n- douyin-hot-list (自动): 导航到抖音热榜页面并读取热点标题列表\n- crawl-hot (自动): 调用后端爬虫抓取当前平台热榜数据并写入数据库\n- douyin-follow-user (手动): 进入抖音用户主页并点击关注（支持从评论点头像或直达主页链接）\n- douyin-search-keyword (自动): 在抖音网页版搜索指定关键词并查看搜索结果\n- douyin-send-dm (手动): 进入抖音用户主页并发送私信（需已登录，可能受互关/隐私限制）\n- douyin-reply-comment (手动): 在抖音视频页定位指定评论并发表回复（需已登录）\n- check-login (自动): 检查当前平台是否已登录"
+      },
+      {
+        "role": "user",
+        "content": "/crawl-keyword-comments 关键词批量抓取评论。黄金"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，我来使用 `/crawl-keyword-comments` 技能，按关键词\"黄金\"批量抓取视频评论。",
+        "tool_calls": [
+          {
+            "id": "call_00_57sH068mBpQkgVIDU9fk8871",
+            "type": "function",
+            "function": {
+              "name": "skill_crawl_keyword_comments",
+              "arguments": "{\"keyword\": \"黄金\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_57sH068mBpQkgVIDU9fk8871",
+        "content": "{\"error\": \"搜索页未识别到视频卡片，可能是关键词结果受限或页面结构变化。\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "看起来直接搜索没有成功获取到视频卡片，让我先检查一下当前页面状态，再尝试用搜索技能先找到视频。",
+        "tool_calls": [
+          {
+            "id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+            "type": "function",
+            "function": {
+              "name": "browser_get_page_info",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_BPO7Eh4Jwz51Q1XbeV476456",
+        "content": "{\"url\": \"about:blank\", \"title\": \"\", \"interactive_elements\": [], \"api_captures\": [], \"api_capture_count\": 0, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": null}"
+      },
+      {
+        "role": "assistant",
+        "content": "当前是空白页面，让我先导航到抖音，然后用搜索功能找到\"黄金\"相关的视频。",
+        "tool_calls": [
+          {
+            "id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+            "type": "function",
+            "function": {
+              "name": "browser_goto",
+              "arguments": "{\"url\": \"https://www.douyin.com\", \"wait_until\": \"domcontentloaded\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_Vlj9Y8gHh27LldHfn3lO8432",
+        "content": "{\"url\": \"https://www.douyin.com/\", \"title\": \"抖音-记录美好生活\", \"status\": 200, \"wait_until\": \"domcontentloaded\"}"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+            "type": "function",
+            "function": {
+              "name": "skill_search_videos",
+              "arguments": "{\"keyword\": \"黄金\", \"limit\": 30, \"show_browser\": false}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_pkHdO8ZWxfaVPTsJxKIg8228",
+        "content": "{\"error\": \"搜索页未识别到视频结果，可能是关键词受限或页面结构变化。\", \"keyword\": \"黄金\", \"capture_method\": \"url_fallback\", \"output_file\": \"/app/reports/search_videos_douyin_default_黄金_20260601_074914.json\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "搜索也遇到了问题，让我先检查一下登录状态，同时查看一下抖音页面情况。",
+        "tool_calls": [
+          {
+            "id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+            "type": "function",
+            "function": {
+              "name": "skill_check_login",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_JmNB4pQ5rdbWs7To3KOI8696",
+        "content": "{\"skill_id\": \"check-login\", \"skill_name\": \"检查登录状态\", \"type\": \"builtin\", \"handler\": \"login_status\", \"status\": \"ready\", \"message\": \"登录态可用\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "登录状态正常。让我看看当前页面具体是什么情况，以及搜索时拦截到了什么数据。",
+        "tool_calls": [
+          {
+            "id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+            "type": "function",
+            "function": {
+              "name": "browser_get_page_info",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_00_NteTBHlCf6QeH1a4HPi12752",
+        "content": "{\"url\": \"https://www.douyin.com/jingxuan\", \"title\": \"抖音精选电脑版 - 抖音旗下优质视频平台\", \"interactive_elements\": [{\"tag\": \"button\", \"text\": \"开启读屏标签\", \"selector_hint\": \"button#a11y-open-btn\"}, {\"tag\": \"a\", \"text\": \"精选\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"推荐\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"搜索\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"关注\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"朋友\\n23\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"我的\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"直播\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"放映厅\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"短剧\", \"selector_hint\": \"a.Z3VQe4ky.UQ48eBJl\"}, {\"tag\": \"a\", \"text\": \"京ICP备16016397号-3\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"京公网安备 11000002002046号\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网络谣言曝光台\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"网上有害信息举报\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"广告投放\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"用户服务协议\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"隐私政策\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"账号找回\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"联系我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"加入我们\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"营业执照\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"友情链接\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"站点地图\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"下载抖音\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"a\", \"text\": \"抖音电商\", \"selector_hint\": \"a.Z3VQe4ky\"}, {\"tag\": \"input\", \"text\": \"搜索你感兴趣的内容\", \"selector_hint\": \"input.U0YnT15k.QYUMTY8e\"}, {\"tag\": \"button\", \"text\": \"搜索\", \"selector_hint\": \"button.t_VddJAQ.OoToDTM7\"}, {\"tag\": \"a\", \"text\": \"客户端\", \"selector_hint\": \"a\"}, {\"tag\": \"a\", \"text\": \"发布视频/图文\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"视频管理\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"作品数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"开直播\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"直播数据\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者学习中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"创作者中心\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}, {\"tag\": \"a\", \"text\": \"剪映专业版\", \"selector_hint\": \"a.Z3VQe4ky.KJstewAr\"}], \"api_captures\": [{\"capture_id\": \"574462f3\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"de7ba553\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"3a6cb0b6\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"740f044e\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"62a2ea22\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"447e5c77\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"0fc17641\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}, {\"capture_id\": \"f4f60a58\", \"path\": \"/aweme/v1/web/im/user/info/\", \"summary\": \"JSON 对象，字段: data, extra, log_pb, next_req_count, owner_sec_uid, status_code\", \"status\": 200}], \"api_capture_count\": 8, \"embedded_data\": {\"embedded_sources\": [], \"aweme_ids\": [], \"video_urls\": []}, \"hint\": \"SPA 页面数据优先看 api_captures 与 embedded_data；需要更多接口详情时调用 browser_get_network_data(url_contains=...)。\"}"
+      }
+    ],
+    "step": 7,
+    "provider": "deepseek",
+    "explicit_skill_ids": [],
+    "mode": "agent",
+    "run_mode": "auto",
+    "deferred_tool_calls": []
+  },
+  "created_at": "2026-06-01T07:48:19.137857Z",
+  "updated_at": "2026-06-01T07:49:17.065219Z"
+}

@@ -1,0 +1,50 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.local
+.env.sidecar
+*.local
+.venv/
+backend/.venv/
+
+# 保留模板（勿忽略 example）
+!.env.example
+!.env.local.example
+!.env.sidecar.example
+!.env.deploy.example
+
+# Sidecar dev 种子（rules/skills/db）需入库
+*.db
+!backend/storage/sidecar-dev/huoke_sidecar.db
+# Sidecar 本地运行时数据（Chrome profile、租户态等）
+storage/sidecar-dev/
+mysql/
+
+# Playwright / crawl artifacts
+storage/**/storage_state.json
+storage/**/tenants/**/storage_state.json
+backend/storage/douyin/
+backend/storage/xiaohongshu/
+backend/storage/**/storage_state.json
+reports/
+backend/reports/
+
+# Frontend
+node_modules/
+frontend/dist/assets/*.map
+desktop/bundle/
+desktop/src-tauri/target/
+
+# Electron sidecar build output（打包脚本生成，勿提交）
+dist-sidecar/*
+!dist-sidecar/README.md
+
+# Deploy state (local only)
+scripts/.deploy-state
+
+# Docker BuildKit 本地缓存（加速重复 build，勿提交）
+.docker-build-cache/
+
+# SSH keys (never commit)
+docker/ssh/*.pem

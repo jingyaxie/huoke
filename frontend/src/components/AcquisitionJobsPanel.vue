@@ -1,0 +1,374 @@
+<template>
+  <div class="acquisition-jobs-panel">
+    <AcquisitionStatsCards :data="dashboard" :loading="loading" class="panel-block" />
+
+    <AcquisitionTaskFilters
+      v-model="filter"
+      class="panel-block"
+      @submit="onFilterSubmit"
+    />
+
+    <el-alert
+      v-if="hasQueuedJobs"
+      type="info"
+      :closable="false"
+      show-icon
+      title="存在排队中的任务，请确认平台账号已绑定登录，任务将自动执行。"
+    />
+
+    <el-alert
+      v-if="hasFailedJobs"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="部分任务失败，常见原因：Cookie 失效、平台限流、抓取无结果或执行超时。"
+    />
+
+    <div class="table-card panel">
+      <el-table
+        v-loading="loading"
+        :data="pageRows"
+        class="jobs-table"
+        :empty-text="emptyText"
+      >
+      <template v-if="mode === 'auto'">
+        <el-table-column label="任务名称" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.name }}</template>
+        </el-table-column>
+        <el-table-column label="账号" width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.account_label || "—" }}</template>
+        </el-table-column>
+        <el-table-column label="渠道" width="88">
+          <template #default="{ row }">{{ platformLabel(row.platform) }}</template>
+        </el-table-column>
+        <el-table-column label="产品关键词" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.keywords.join("、") || "—" }}</template>
+        </el-table-column>
+        <el-table-column label="预设抓取数量" width="112" align="right">
+          <template #default="{ row }">{{ row.metrics.requested_target || 0 }}</template>
+        </el-table-column>
+      </template>
+
+      <template v-else>
+        <el-table-column label="账号名称" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ manualAccountLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="头像" width="72" align="center">
+          <template #default="{ row }">
+            <el-avatar :size="28">{{ avatarInitial(manualAccountLabel(row)) }}</el-avatar>
+          </template>
+        </el-table-column>
+        <el-table-column label="获客方式" width="120">
+          <template #default="{ row }">{{ manualIntentLabel(row.intent) }}</template>
+        </el-table-column>
+      </template>
+
+      <el-table-column label="抓取总线索" width="104" align="right">
+        <template #default="{ row }">{{ row.metrics.produced_total || 0 }}</template>
+      </el-table-column>
+      <el-table-column label="精准线索" width="96" align="right">
+        <template #default="{ row }">{{ row.metrics.progress_precise || 0 }}</template>
+      </el-table-column>
+      <el-table-column label="评论数" width="80" align="right">
+        <template #default="{ row }">{{ row.metrics.comment_count || 0 }}</template>
+      </el-table-column>
+      <el-table-column label="私信数" width="80" align="right">
+        <template #default="{ row }">{{ row.metrics.dm_count || 0 }}</template>
+      </el-table-column>
+      <el-table-column label="关注数" width="80" align="right">
+        <template #default="{ row }">{{ row.metrics.follow_count || 0 }}</template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="128">
+        <template #default="{ row }">{{ formatJobTime(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="状态" width="100">
+        <template #default="{ row }">
+          <el-button
+            v-if="row.error && ['failed', 'dead_letter'].includes(row.status)"
+            link
+            type="danger"
+            size="small"
+            @click.stop="showFailure(row)"
+          >
+            <el-tag :type="jobStatusTagType(row.status)" size="small" effect="light">
+              {{ jobStatusLabel(row.status) }}
+            </el-tag>
+          </el-button>
+          <el-tag v-else :type="jobStatusTagType(row.status)" size="small" effect="light">
+            {{ jobStatusLabel(row.status) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="260" fixed="right">
+        <template #default="{ row }">
+          <div class="action-row">
+            <template v-if="row.status === 'running'">
+              <el-button link type="primary" size="small" @click.stop="cancelOneJob(row.job.job_id)">关闭</el-button>
+              <span class="action-sep">|</span>
+            </template>
+            <el-button link type="primary" size="small" @click.stop="executeOneJob(row.job.job_id)">更新线索</el-button>
+            <span class="action-sep">|</span>
+            <el-button link type="primary" size="small" @click.stop="openOutreach(row.job)">查看数据</el-button>
+            <template v-if="canDeleteJob(row.status)">
+              <span class="action-sep">|</span>
+              <el-button link type="danger" size="small" @click.stop="deleteOneJob(row)">删除</el-button>
+            </template>
+          </div>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div v-if="filteredRows.length" class="pager-row">
+      <span class="pager-text">
+        共 {{ filteredRows.length }} 个{{ mode === 'manual' ? '手动获客' : '' }}任务，当前显示 {{ pageStart }}-{{ pageEnd }}
+      </span>
+      <el-pagination
+        v-model:current-page="page"
+        :page-size="pageSize"
+        layout="prev, pager, next"
+        :total="filteredRows.length"
+        background
+        small
+      />
+    </div>
+    </div>
+
+    <AcquisitionOutreachModal v-model="outreachOpen" :job="outreachJob" />
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import AcquisitionOutreachModal from "./AcquisitionOutreachModal.vue";
+import AcquisitionStatsCards from "./AcquisitionStatsCards.vue";
+import AcquisitionTaskFilters from "./AcquisitionTaskFilters.vue";
+import {
+  cancelAgentJobTask,
+  deleteAgentJob,
+  executeAgentJob,
+  fetchAgentJobs,
+} from "../api/agent";
+import {
+  avatarInitial,
+  computeDashboardFromJobs,
+  DEFAULT_ACQUISITION_FILTER,
+  filterAutoJobs,
+  filterManualJobs,
+  formatJobTime,
+  getJobRowModel,
+  jobStatusLabel,
+  jobStatusTagType,
+  manualAccountLabel,
+  manualIntentLabel,
+  matchesJobFilter,
+  platformLabel,
+  sortJobsByCreated,
+} from "../utils/acquisitionJobs";
+
+const props = defineProps({
+  mode: {
+    type: String,
+    default: "auto",
+    validator: (value) => ["auto", "manual", "all"].includes(value),
+  },
+  active: { type: Boolean, default: true },
+  emptyText: {
+    type: String,
+    default: "暂无任务，点击右上角创建任务开始获客",
+  },
+});
+
+const emit = defineEmits(["jobs-updated"]);
+
+const loading = ref(false);
+const allJobs = ref([]);
+const filter = reactive({ ...DEFAULT_ACQUISITION_FILTER });
+const page = ref(1);
+const pageSize = 10;
+const outreachOpen = ref(false);
+const outreachJob = ref(null);
+let pollTimer = null;
+
+const modeJobs = computed(() => {
+  if (props.mode === "manual") return filterManualJobs(allJobs.value);
+  if (props.mode === "auto") return filterAutoJobs(allJobs.value);
+  return allJobs.value;
+});
+
+const filteredRows = computed(() => {
+  const rows = modeJobs.value
+    .filter((job) => matchesJobFilter(job, filter))
+    .map((job) => ({ ...getJobRowModel(job), job }));
+  return sortJobsByCreated(rows, filter.sort);
+});
+
+const pageRows = computed(() => {
+  const start = (page.value - 1) * pageSize;
+  return filteredRows.value.slice(start, start + pageSize);
+});
+
+const pageStart = computed(() => (filteredRows.value.length ? (page.value - 1) * pageSize + 1 : 0));
+const pageEnd = computed(() => Math.min(page.value * pageSize, filteredRows.value.length));
+
+const dashboard = computed(() => computeDashboardFromJobs(modeJobs.value));
+const hasQueuedJobs = computed(() => modeJobs.value.some((job) => ["queued", "pending"].includes(job.status)));
+const hasFailedJobs = computed(() => modeJobs.value.some((job) => ["failed", "dead_letter"].includes(job.status)));
+
+function canDeleteJob(status) {
+  return ["completed", "cancelled", "failed", "dead_letter"].includes(status);
+}
+
+function onFilterSubmit() {
+  page.value = 1;
+}
+
+async function loadJobs({ silent = false } = {}) {
+  if (!silent) loading.value = true;
+  try {
+    const list = await fetchAgentJobs(200);
+    allJobs.value = Array.isArray(list) ? list : [];
+    emit("jobs-updated", filteredRows.value);
+  } catch (err) {
+    if (!silent) ElMessage.error(err.message || "加载任务失败");
+  } finally {
+    if (!silent) loading.value = false;
+  }
+}
+
+async function executeOneJob(jobId) {
+  try {
+    await executeAgentJob(jobId);
+    ElMessage.success("任务已更新");
+    await loadJobs();
+  } catch (err) {
+    ElMessage.error(err.message || "更新失败");
+  }
+}
+
+async function cancelOneJob(jobId) {
+  try {
+    await cancelAgentJobTask(jobId);
+    ElMessage.success("任务已关闭");
+    await loadJobs();
+  } catch (err) {
+    ElMessage.error(err.message || "关闭失败");
+  }
+}
+
+async function deleteOneJob(row) {
+  try {
+    await ElMessageBox.confirm(`确认删除任务「${row.name}」？`, "删除任务", { type: "warning" });
+    await deleteAgentJob(row.job.job_id);
+    ElMessage.success("已删除");
+    await loadJobs();
+  } catch (err) {
+    if (err !== "cancel") {
+      ElMessage.error(err?.message || "删除失败");
+    }
+  }
+}
+
+function openOutreach(job) {
+  outreachJob.value = job;
+  outreachOpen.value = true;
+}
+
+function showFailure(row) {
+  ElMessageBox.alert(row.error || "任务执行失败", "失败详情", { type: "error" });
+}
+
+function hasActiveJobs() {
+  return modeJobs.value.some((job) => ["queued", "pending", "running"].includes(job.status));
+}
+
+function startPolling() {
+  stopPolling();
+  const interval = hasActiveJobs() ? 4000 : 15000;
+  pollTimer = window.setInterval(() => {
+    if (props.active) void loadJobs({ silent: true });
+  }, interval);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+watch(
+  () => props.active,
+  (active) => {
+    if (active) {
+      void loadJobs();
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  },
+  { immediate: true },
+);
+
+watch(filteredRows, () => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / pageSize));
+  if (page.value > maxPage) page.value = maxPage;
+  startPolling();
+});
+
+onMounted(() => {
+  if (props.active) startPolling();
+});
+
+onUnmounted(stopPolling);
+
+defineExpose({ loadJobs, jobs: filteredRows, dashboard });
+</script>
+
+<style scoped>
+.acquisition-jobs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-block {
+  width: 100%;
+}
+
+.table-card {
+  padding: 20px;
+  overflow: hidden;
+}
+
+.jobs-table {
+  width: 100%;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-sep {
+  color: #e2e8f0;
+  font-size: 12px;
+  user-select: none;
+}
+
+.pager-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.pager-text {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+</style>

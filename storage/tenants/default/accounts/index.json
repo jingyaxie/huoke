@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "id": "default",
+      "label": "默认账号",
+      "created_at": "2026-06-01T23:10:35.570180+00:00",
+      "updated_at": "2026-06-01T23:10:35.570180+00:00"
+    }
+  ],
+  "active_account_id": "default"
+}
