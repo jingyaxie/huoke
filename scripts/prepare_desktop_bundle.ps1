@@ -10,19 +10,43 @@ $RuntimeDir = Join-Path $BundleDir "runtime"
 $VenvDir = Join-Path $RuntimeDir ".venv"
 $TargetBackend = Join-Path $BundleDir "backend"
 
+function Invoke-Checked {
+  param(
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][scriptblock]$Command
+  )
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Label failed with exit code $LASTEXITCODE"
+  }
+}
+
+Write-Host "==> Preparing desktop bundle"
 Write-Host "Building frontend (same-origin /api)..."
 Push-Location $FrontendDir
-if (-not (Test-Path "node_modules")) {
-  npm install
+try {
+  if (-not (Test-Path "node_modules")) {
+    if (Test-Path "package-lock.json") {
+      npm ci
+    } else {
+      npm install
+    }
+    if ($LASTEXITCODE -ne 0) { throw "frontend npm install failed" }
+  }
+  $env:VITE_API_BASE_URL = "/api"
+  npm run build
+  if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
+} finally {
+  Pop-Location
 }
-$env:VITE_API_BASE_URL = "/api"
-npm run build
-Pop-Location
 
 $Python = Find-HuokePython
 if (-not $Python) {
-  Write-Error "Python 3.11+ not found. Install Python 3.11 or 3.12 to prepare the desktop bundle."
+  Write-HuokePythonDiagnostics
+  throw "Python 3.11+ not found. Install Python 3.11 or 3.12 to prepare the desktop bundle."
 }
+$PythonExe = Set-HuokePythonEnv $Python
+Write-Host "Python: $PythonExe"
 
 Write-Host "Cleaning old bundle..."
 if (Test-Path $BundleDir) {
@@ -37,21 +61,27 @@ robocopy $BackendSrc $TargetBackend /E /NFL /NDL /NJH /NJS /nc /ns /np `
 if ($LASTEXITCODE -ge 8) { throw "Backend copy failed (robocopy exit $LASTEXITCODE)" }
 
 $FrontendDist = Join-Path $FrontendDir "dist"
-if (Test-Path $FrontendDist) {
-  Write-Host "Copying frontend dist..."
-  $TargetFrontend = Join-Path $BundleDir "frontend-dist"
-  robocopy $FrontendDist $TargetFrontend /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
-  if ($LASTEXITCODE -ge 8) { throw "Frontend dist copy failed" }
+if (-not (Test-Path $FrontendDist)) {
+  throw "Frontend dist not found: $FrontendDist"
 }
+Write-Host "Copying frontend dist..."
+$TargetFrontend = Join-Path $BundleDir "frontend-dist"
+robocopy $FrontendDist $TargetFrontend /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "Frontend dist copy failed" }
 
-Write-Host "Creating virtualenv ($Python)..."
-Invoke-HuokePython $Python -m venv $VenvDir
-if ($LASTEXITCODE -ne 0) { throw "venv creation failed" }
+Write-Host "Creating virtualenv..."
+Invoke-Checked "venv creation" { Invoke-HuokePython $PythonExe -m venv $VenvDir }
 
 $PipPython = Join-Path $VenvDir "Scripts/python.exe"
-& $PipPython -m pip install -U pip setuptools wheel
-if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-& $PipPython -m pip install -r (Join-Path $TargetBackend "requirements.txt")
-if ($LASTEXITCODE -ne 0) { throw "Python dependency install failed" }
+if (-not (Test-Path $PipPython)) {
+  throw "Bundled venv python not found: $PipPython"
+}
+
+Invoke-Checked "pip upgrade" {
+  & $PipPython -m pip install --disable-pip-version-check -U pip setuptools wheel
+}
+Invoke-Checked "pip install requirements" {
+  & $PipPython -m pip install --disable-pip-version-check -r (Join-Path $TargetBackend "requirements.txt")
+}
 
 Write-Host "Bundle ready: $BundleDir"

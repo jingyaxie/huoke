@@ -28,7 +28,10 @@ jobs:
           python-version: "3.12"
 
       - name: Verify Python
-        run: python --version
+        shell: pwsh
+        run: |
+          python --version
+          Write-Host "pythonLocation=$env:pythonLocation"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,6 +48,9 @@ jobs:
 
       - name: Build Windows NSIS installer
         shell: pwsh
+        env:
+          PYTHON: python
+          HUOKE_PYTHON: python
         run: ./scripts/build_native_win.ps1
 
       - name: Upload installer artifact
