@@ -33,6 +33,17 @@ jobs:
           python --version
           Write-Host "pythonLocation=$env:pythonLocation"
 
+      - name: Pin Python for bundling
+        shell: pwsh
+        run: |
+          $py = (Get-Command python -ErrorAction Stop).Source
+          if ($py -match 'WindowsApps\\python(\.exe)?$') {
+            throw "Resolved Windows Store python stub instead of setup-python: $py"
+          }
+          "PYTHON=$py" >> $env:GITHUB_ENV
+          "HUOKE_PYTHON=$py" >> $env:GITHUB_ENV
+          Write-Host "Pinned PYTHON=$py"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -48,9 +59,6 @@ jobs:
 
       - name: Build Windows NSIS installer
         shell: pwsh
-        env:
-          PYTHON: python
-          HUOKE_PYTHON: python
         run: ./scripts/build_native_win.ps1
 
       - name: Upload installer artifact
