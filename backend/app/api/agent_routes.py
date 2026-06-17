@@ -604,6 +604,22 @@ async def cancel_agent_job(
     return {"job_id": job_id, "cancelled": True}
 
 
+@router.post("/jobs/{job_id}/pause")
+async def pause_agent_job(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    svc = AgentAsyncJobService.get(settings)
+    try:
+        paused = svc.pause(tenant_id, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not paused:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"job_id": job_id, "paused": True}
+
+
 @router.delete("/jobs/{job_id}")
 @router.post("/jobs/{job_id}/delete")
 async def delete_agent_job(

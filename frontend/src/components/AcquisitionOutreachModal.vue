@@ -56,7 +56,7 @@
         <el-table-column prop="nickname" label="用户昵称" width="120" show-overflow-tooltip />
         <el-table-column label="头像" width="72">
           <template #default="{ row }">
-            <el-avatar :size="28">{{ avatarInitial(row.nickname) }}</el-avatar>
+            <UserAvatar :src="row.avatar" :fallback="avatarInitial(row.nickname)" :size="28" />
           </template>
         </el-table-column>
         <el-table-column prop="comment_at" label="评论时间" width="140">
@@ -125,6 +125,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import UserAvatar from "./UserAvatar.vue";
 import {
   avatarInitial,
   filterOutreachRows,

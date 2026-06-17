@@ -116,14 +116,24 @@
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-button
-            v-if="row.error && (['failed', 'dead_letter'].includes(row.status) || row.display_status === 'suspended')"
+            v-if="row.display_status === 'suspended'"
             link
-            :type="row.display_status === 'suspended' ? 'warning' : 'danger'"
+            type="warning"
+            size="small"
+            class="status-btn"
+            @click.stop="showSuspendDetail(row)"
+          >
+            <TaskStatusBadge :status="row.display_status" clickable />
+          </el-button>
+          <el-button
+            v-else-if="row.error && ['failed', 'dead_letter'].includes(row.status)"
+            link
+            type="danger"
             size="small"
             class="status-btn"
             @click.stop="showFailure(row)"
           >
-            <TaskStatusBadge :status="row.display_status || row.status" />
+            <TaskStatusBadge :status="row.display_status || row.status" clickable />
           </el-button>
           <TaskStatusBadge v-else :status="row.display_status || row.status" />
         </template>
@@ -131,6 +141,10 @@
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <div class="action-row">
+            <template v-if="canPauseJob(row)">
+              <el-button link type="warning" size="small" @click.stop="pauseOneJob(row)">暂停</el-button>
+              <span class="action-sep">|</span>
+            </template>
             <template v-if="row.status === 'running'">
               <el-button link type="primary" size="small" @click.stop="cancelOneJob(row.job.job_id)">关闭</el-button>
               <span class="action-sep">|</span>
@@ -169,6 +183,12 @@
       :job="outreachJob"
       :initial-view="outreachView"
     />
+
+    <TaskSuspendModal
+      v-model="suspendOpen"
+      :brief="suspendBrief"
+      @resume="resumeSuspendedJob"
+    />
   </div>
 </template>
 
@@ -181,11 +201,13 @@ import AcquisitionTaskFilters from "./AcquisitionTaskFilters.vue";
 import MetricLink from "./MetricLink.vue";
 import PlatformChannelTag from "./PlatformChannelTag.vue";
 import TaskStatusBadge from "./TaskStatusBadge.vue";
+import TaskSuspendModal from "./TaskSuspendModal.vue";
 import {
   cancelAgentJobTask,
   deleteAgentJob,
   executeAgentJob,
   fetchAgentJobs,
+  pauseAgentJobTask,
 } from "../api/agent";
 import {
   avatarInitial,
@@ -196,6 +218,7 @@ import {
   formatJobTime,
   getJobDisplayStatus,
   getJobRowModel,
+  getJobSuspendBrief,
   getMetricViewCounts,
   manualAccountLabel,
   manualIntentLabel,
@@ -226,6 +249,9 @@ const pageSize = 5;
 const outreachOpen = ref(false);
 const outreachJob = ref(null);
 const outreachView = ref("all");
+const suspendOpen = ref(false);
+const suspendBrief = ref(null);
+const suspendJobId = ref("");
 let pollTimer = null;
 
 const modeJobs = computed(() => {
@@ -260,6 +286,10 @@ const hasFailedJobs = computed(() => modeJobs.value.some((job) => ["failed", "de
 
 function canDeleteJob(status) {
   return ["completed", "cancelled", "failed", "dead_letter"].includes(status);
+}
+
+function canPauseJob(row) {
+  return ["running", "queued", "retrying"].includes(row.status);
 }
 
 function metricViewCount(job, view) {
@@ -304,6 +334,23 @@ async function cancelOneJob(jobId) {
   }
 }
 
+async function pauseOneJob(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认暂停任务「${row.name}」？暂停后可点击「继续执行」恢复。`,
+      "暂停任务",
+      { type: "warning", confirmButtonText: "暂停", cancelButtonText: "取消" },
+    );
+    await pauseAgentJobTask(row.job.job_id);
+    ElMessage.success("任务已暂停");
+    await loadJobs();
+  } catch (err) {
+    if (err !== "cancel") {
+      ElMessage.error(err?.message || "暂停失败");
+    }
+  }
+}
+
 async function deleteOneJob(row) {
   try {
     await ElMessageBox.confirm(`确认删除任务「${row.name}」？`, "删除任务", { type: "warning" });
@@ -323,10 +370,22 @@ function openOutreach(job, view = "all") {
   outreachOpen.value = true;
 }
 
+function showSuspendDetail(row) {
+  const brief = getJobSuspendBrief(row.job);
+  if (!brief) return;
+  suspendBrief.value = brief;
+  suspendJobId.value = row.job?.job_id || "";
+  suspendOpen.value = true;
+}
+
 function showFailure(row) {
-  const title = row.display_status === "suspended" ? "挂起原因" : "失败详情";
-  const message = row.suspend_reason || row.error || "任务执行失败";
-  ElMessageBox.alert(message, title, { type: row.display_status === "suspended" ? "warning" : "error" });
+  const message = row.error || row.suspend_reason || "任务执行失败";
+  ElMessageBox.alert(message, "失败详情", { type: "error" });
+}
+
+async function resumeSuspendedJob() {
+  if (!suspendJobId.value) return;
+  await executeOneJob(suspendJobId.value);
 }
 
 function hasActiveJobs() {

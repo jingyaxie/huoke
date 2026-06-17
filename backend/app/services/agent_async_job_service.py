@@ -71,6 +71,7 @@ class AgentAsyncJobService:
         self.root = settings.storage_root / "tenants"
         self.root.mkdir(parents=True, exist_ok=True)
         self._running_jobs: dict[str, asyncio.Task[None]] = {}
+        self._pause_jobs: set[str] = set()
         self._account_active: dict[str, str] = {}
         self._queue: asyncio.PriorityQueue[tuple[int, float, str, str]] = asyncio.PriorityQueue()
         self._workers_started = False
@@ -197,6 +198,8 @@ class AgentAsyncJobService:
         result = job.result if isinstance(job.result, dict) else {}
         state = result.get("supervisor_state") if isinstance(result.get("supervisor_state"), dict) else {}
         if job.status != "pending" or not state.get("suspended"):
+            return False
+        if state.get("manual_pause"):
             return False
         return AgentAsyncJobService._resume_not_due(job) is None
 
@@ -367,6 +370,18 @@ class AgentAsyncJobService:
         try:
             while True:
                 try:
+                    job = self.get_job(job_key.tenant_id, job_key.job_id)
+                    if job is None:
+                        return
+
+                    result = job.result if isinstance(job.result, dict) else {}
+                    state = result.get("supervisor_state") if isinstance(result.get("supervisor_state"), dict) else {}
+                    if job.status == "pending" and state.get("suspended") and state.get("manual_pause"):
+                        job.stage = "act"
+                        self._apply_orchestration(job, settings)
+                        self.save(job)
+                        return
+
                     resume_at = self._resume_not_due(job)
                     if resume_at:
                         job.status = "pending"
@@ -492,6 +507,19 @@ class AgentAsyncJobService:
                     return
 
                 except asyncio.CancelledError:
+                    if job.job_id in self._pause_jobs:
+                        self._pause_jobs.discard(job.job_id)
+                        job = self.get_job(job_key.tenant_id, job_key.job_id)
+                        if job is not None:
+                            self._apply_manual_pause(job)
+                            self._append_progress(job, "status", {
+                                "message": "用户手动暂停任务",
+                                "wake_reason": self._manual_pause_reason(job),
+                                "next_action": self._manual_pause_next_action(),
+                            })
+                            self.save(job)
+                            await self._post_webhook(job)
+                        return
                     job.status = "cancelled"
                     self._apply_orchestration(job, settings)
                     self.save(job)
@@ -659,6 +687,7 @@ class AgentAsyncJobService:
             plan = state.get("execution_plan")
 
         reset_supervisor_state_for_manual_retry(state, plan, brief=brief)
+        state.pop("manual_pause", None)
         state["manual_resume_at"] = _utc_now().isoformat()
         if wake_reason:
             state["last_wake_reason"] = wake_reason
@@ -785,10 +814,75 @@ class AgentAsyncJobService:
         self._enqueue_job(job)
         return job
 
+    @staticmethod
+    def _manual_pause_reason(job: AgentAsyncJob | None = None) -> str:
+        if job is not None:
+            result = job.result if isinstance(job.result, dict) else {}
+            state = result.get("supervisor_state") if isinstance(result.get("supervisor_state"), dict) else {}
+            reason = str(state.get("wake_reason") or "").strip()
+            if reason:
+                return reason
+        return "用户手动暂停任务"
+
+    @staticmethod
+    def _manual_pause_next_action() -> str:
+        return "点击「继续执行」从当前进度恢复运行"
+
+    def _apply_manual_pause(self, job: AgentAsyncJob, reason: str = "") -> None:
+        from app.services.task_execution_plan import apply_suspend_state
+
+        result = job.result if isinstance(job.result, dict) else {}
+        state = result.get("supervisor_state")
+        if not isinstance(state, dict):
+            state = {}
+
+        brief = self._load_brief(job)
+        pause_reason = (reason or self._manual_pause_reason()).strip() or "用户手动暂停任务"
+        apply_suspend_state(state, brief, pause_reason, resume_at="")
+        state["manual_pause"] = True
+        state.pop("resume_at", None)
+        state["next_action"] = self._manual_pause_next_action()
+
+        result["supervisor_state"] = state
+        result["summary"] = pause_reason
+        job.result = result
+        job.status = "pending"
+        job.stage = "act"
+        job.error = ""
+        self._apply_orchestration(job, self.settings)
+
+    def pause(self, tenant_id: str, job_id: str, *, reason: str = "") -> bool:
+        job = self.get_job(tenant_id, job_id)
+        if job is None:
+            return False
+        if job.status not in {"running", "queued", "retrying"}:
+            raise ValueError(f"任务当前为 {job.status}，仅运行中或排队中的任务可暂停")
+
+        running = self._running_jobs.get(job_id)
+        if running is not None and not running.done():
+            self._pause_jobs.add(job_id)
+            running.cancel()
+            return True
+
+        self._apply_manual_pause(job, reason)
+        self._append_progress(job, "status", {
+            "message": "用户手动暂停任务",
+            "wake_reason": self._manual_pause_reason(job),
+            "next_action": self._manual_pause_next_action(),
+        })
+        self.save(job)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._post_webhook(job))
+        except RuntimeError:
+            pass
+        return True
+
     def cancel(self, tenant_id: str, job_id: str) -> bool:
         job = self.get_job(tenant_id, job_id)
         if job is None:
             return False
+        self._pause_jobs.discard(job_id)
         t = self._running_jobs.get(job_id)
         if t and not t.done():
             t.cancel()

@@ -118,6 +118,7 @@ def test_sync_payload_includes_captured_comments(tmp_path, db_session):
             digg_count=0,
             create_time=1_700_000_000,
             content_url="https://example.test/video/1",
+            raw_data={"avatar": "https://example.test/avatar.jpg"},
             first_seen_at=now,
             last_seen_at=now,
         )
@@ -157,6 +158,7 @@ def test_sync_payload_includes_captured_comments(tmp_path, db_session):
     assert len(payload["captured_comments"]) == 1
     row = payload["captured_comments"][0]
     assert row["nickname"] == "测试用户"
+    assert row["avatar_url"] == "https://example.test/avatar.jpg"
     assert "ai获客" in row["comment_content"]
     assert row["is_precise"] is True
 
@@ -281,6 +283,35 @@ def test_captured_comments_exclude_unevaluated_video_comments(tmp_path, db_sessi
 
     assert len(payload["captured_comments"]) == 2
     assert {row["comment_id"] for row in payload["captured_comments"]} == {"cmt-0", "cmt-1"}
+
+
+def test_sync_payload_includes_suspend_brief(tmp_path):
+    settings = Settings(storage_root=tmp_path / "storage")
+    job = AgentAsyncJob(
+        job_id="sync-suspend",
+        tenant_id="default",
+        platform="douyin",
+        account_id="default",
+        message="ai获客",
+        status="pending",
+        result={
+            "summary": "今日配额已用尽",
+            "supervisor_state": {
+                "suspended": True,
+                "wake_reason": "今日配额已用尽，按策略挂起等待下次唤醒",
+                "resume_at": "2026-06-18T00:00:00+00:00",
+                "next_action": "自动恢复后：同步今日 reply/follow/dm 配额 → 从已入库评论继续独立触达",
+                "completion_outcome": "quota_exhausted",
+            },
+        },
+    )
+
+    payload = AgentJobSyncService(settings).build_payload(job, event="job.snapshot")
+
+    assert isinstance(payload.get("suspend_brief"), dict)
+    assert "配额" in payload["suspend_brief"]["reason"]
+    assert payload["suspend_brief"]["next_action"]
+    assert payload["suspend_brief"]["resume_at_display"]
 
 
 def test_sync_signature_roundtrip(tmp_path):

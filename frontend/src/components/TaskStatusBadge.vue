@@ -1,5 +1,5 @@
 <template>
-  <span class="status-badge" :class="`status-badge--${tone}`">{{ label }}</span>
+  <span class="status-badge" :class="[`status-badge--${tone}`, { 'status-badge--clickable': clickable }]">{{ label }}</span>
 </template>
 
 <script setup>
@@ -8,6 +8,7 @@ import { jobStatusLabel } from "../utils/acquisitionJobs";
 
 const props = defineProps({
   status: { type: String, default: "" },
+  clickable: { type: Boolean, default: false },
 });
 
 const label = computed(() => jobStatusLabel(props.status));
@@ -74,5 +75,11 @@ const tone = computed(() => {
 .status-badge--default {
   background: #f8fafc;
   color: #64748b;
+}
+
+.status-badge--clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 </style>

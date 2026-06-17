@@ -221,24 +221,89 @@ export function isJobSuspended(job) {
   return job?.status === "pending" && state?.suspended === true;
 }
 
+export function formatResumeAt(iso) {
+  if (!iso) return null;
+  try {
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return String(iso).slice(0, 16);
+    return `${dt.toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })}（北京时间）`;
+  } catch {
+    return String(iso).slice(0, 16);
+  }
+}
+
 export function getJobSuspendReason(job) {
   if (!isJobSuspended(job)) return "";
+  const brief = getJobSuspendBrief(job);
+  return brief?.reason || "";
+}
+
+export function getJobSuspendBrief(job) {
+  if (!isJobSuspended(job)) return null;
+
+  const syncBrief = job?.sync?.suspend_brief;
+  if (syncBrief && typeof syncBrief === "object" && syncBrief.reason) {
+    return {
+      reason: String(syncBrief.reason || "").trim(),
+      resume_at: syncBrief.resume_at || null,
+      resume_at_display: syncBrief.resume_at_display || formatResumeAt(syncBrief.resume_at),
+      next_action: String(syncBrief.next_action || "").trim(),
+      manual_resume: syncBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+    };
+  }
+
+  const orchestration =
+    (job?.result?.orchestration && typeof job.result.orchestration === "object" ? job.result.orchestration : null)
+    || (job?.sync?.summary?.orchestration && typeof job.sync.summary.orchestration === "object"
+      ? job.sync.summary.orchestration
+      : null);
+  const orchBrief = orchestration?.suspend_brief;
+  if (orchBrief && typeof orchBrief === "object" && orchBrief.reason) {
+    return {
+      reason: String(orchBrief.reason || "").trim(),
+      resume_at: orchBrief.resume_at || null,
+      resume_at_display: orchBrief.resume_at_display || formatResumeAt(orchBrief.resume_at),
+      next_action: String(orchBrief.next_action || "").trim(),
+      manual_resume: orchBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+    };
+  }
+
   const state = job?.result?.supervisor_state || {};
+  const progress = job?.sync?.progress && typeof job.sync.progress === "object" ? job.sync.progress : {};
   const wake = String(
     state.wake_reason
+    || progress.wake_reason
     || job?.result?.summary
     || job?.result?.orchestration?.execution_note
     || "任务已挂起，等待恢复",
   ).trim();
+  let reason = wake;
   if (wake.includes("连续") && wake.includes("无进展")) {
     const stats = job?.result?.execution_stats || {};
     const comments = stats.comments_captured || stats.comments_persisted || 0;
-    const qualified = stats.progress_precise || state.leads_qualified || 0;
+    const qualified = stats.progress_precise || state.leads_qualified || progress.leads_qualified || 0;
     if (comments > 0 && qualified === 0) {
-      return `${wake}。已抓取 ${comments} 条评论但暂无精准线索，请点击「继续执行」浏览更多视频，或放宽评估标准。`;
+      reason = `${wake}。已抓取 ${comments} 条评论但暂无精准线索，请点击「继续执行」浏览更多视频，或放宽评估标准。`;
     }
   }
-  return wake;
+  const resumeAt = state.resume_at || progress.resume_at || null;
+  const nextAction = String(state.next_action || progress.next_action || "").trim()
+    || "点击「继续执行」从当前进度继续";
+  return {
+    reason,
+    resume_at: resumeAt,
+    resume_at_display: formatResumeAt(resumeAt),
+    next_action: nextAction,
+    manual_resume: "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+  };
 }
 
 export function getJobDisplayStatus(job) {
@@ -366,8 +431,10 @@ export function manualAccountLabel(row) {
 }
 
 export function avatarInitial(text) {
-  const value = String(text || "?").trim();
-  return value ? value.slice(0, 1) : "?";
+  const value = String(text || "").trim();
+  if (!value || value === "—") return "?";
+  const match = value.match(/[\u4e00-\u9fffA-Za-z0-9]/);
+  return match ? match[0] : value.slice(0, 1);
 }
 
 export function formatJobTime(value) {
@@ -452,7 +519,7 @@ export function getOutreachRows(job) {
       id: row.id || row.comment_id || Math.random().toString(36).slice(2),
       comment_id: row.comment_id || row.id || "",
       nickname: row.nickname || row.user_nickname || row.author_nickname || "—",
-      avatar: row.avatar_url || row.author_avatar || "",
+      avatar: row.avatar_url || row.avatar || row.author_avatar || "",
       comment_at: row.comment_at || row.source_comment_at || "",
       video_title: row.video_title || "",
       comment_content: row.comment_content || row.source_comment || row.comment_text || "",
@@ -491,7 +558,7 @@ export function getOutreachRows(job) {
       return {
         id: lead.id || lead.lead_id || lead.comment_id || Math.random().toString(36).slice(2),
         nickname: lead.nickname || lead.user_nickname || lead.author_nickname || "—",
-        avatar: lead.avatar_url || lead.author_avatar || "",
+        avatar: lead.avatar_url || lead.avatar || lead.author_avatar || "",
         comment_at: lead.comment_at || lead.created_at || "",
         video_title: lead.video_title || "",
         comment_content: lead.comment_content || lead.comment_text || lead.comment || "",
@@ -521,7 +588,7 @@ export function getOutreachRows(job) {
     return displayableEvents.map((event) => ({
       id: event.id || `${event.lead_id || ""}-${event.executed_at || ""}`,
       nickname: event.nickname || event.user_nickname || event.author_nickname || "—",
-      avatar: event.avatar_url || event.author_avatar || "",
+      avatar: event.avatar_url || event.avatar || event.author_avatar || "",
       comment_at: event.comment_at || event.source_comment_at || "",
       video_title: event.video_title || "",
       comment_content: event.comment_content || event.source_comment || "",
@@ -561,7 +628,7 @@ function mapOutreachEventRow(event) {
     id: `event-${event.id || event.created_at || Math.random().toString(36).slice(2)}`,
     comment_id: String(event?.comment_id || ""),
     nickname: event.nickname || event.user_nickname || event.author_nickname || event.target_user_id || "—",
-    avatar: event.avatar_url || event.author_avatar || "",
+    avatar: event.avatar_url || event.avatar || event.author_avatar || "",
     comment_at: event.comment_at || event.source_comment_at || "",
     video_title: event.video_title || "",
     comment_content: event.comment_content || event.source_comment || "",

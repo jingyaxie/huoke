@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.services.agent_async_job_service import AgentAsyncJob
 from app.services.lead_evaluation_service import accept_evaluation_result
+from app.services.task_execution_plan import build_suspend_brief
 from app.services.task_sandbox_service import TaskSandboxService
 
 SYNC_SCHEMA_VERSION = "huoke.agent_job_sync.v1"
@@ -140,6 +141,11 @@ class AgentJobSyncService:
         lead_evaluation = lead_evaluation_from_job_result(result)
         if lead_evaluation:
             payload["lead_evaluation"] = lead_evaluation
+        orchestration = result.get("orchestration") if isinstance(result.get("orchestration"), dict) else {}
+        task_brief = orchestration.get("task_brief") if isinstance(orchestration.get("task_brief"), dict) else {}
+        suspend_brief = build_suspend_brief(supervisor_state, result, task_brief)
+        if suspend_brief:
+            payload["suspend_brief"] = suspend_brief
         return payload
 
     def headers_for(self, payload: dict[str, Any]) -> dict[str, str]:
@@ -219,6 +225,28 @@ class AgentJobSyncService:
         return outreach_by_comment
 
     @staticmethod
+    def _comment_avatar_url(record: Any | None) -> str:
+        if record is None:
+            return ""
+        raw = record.raw_data if isinstance(record.raw_data, dict) else {}
+        for key in ("avatar", "avatar_url", "author_avatar", "author_avatar_url"):
+            value = str(raw.get(key) or "").strip()
+            if value:
+                return value
+        user = raw.get("user")
+        if isinstance(user, dict):
+            for key in ("avatar", "avatar_url"):
+                value = str(user.get(key) or "").strip()
+                if value:
+                    return value
+            avatar = user.get("avatar_larger") or user.get("avatar_medium") or user.get("avatar_thumb")
+            if isinstance(avatar, dict):
+                url_list = avatar.get("url_list") or []
+                if url_list:
+                    return str(url_list[0] or "").strip()
+        return ""
+
+    @staticmethod
     def _serialize_captured_comment_row(
         comment_id: str,
         evaluation: dict[str, Any],
@@ -236,10 +264,13 @@ class AgentJobSyncService:
                 comment_at = ""
         elif record is not None and record.last_seen_at:
             comment_at = record.last_seen_at.isoformat()
+        avatar_url = AgentJobSyncService._comment_avatar_url(record)
         return {
             "id": str(comment_id),
             "comment_id": str(comment_id),
             "nickname": (record.nickname if record is not None else None) or "—",
+            "avatar": avatar_url,
+            "avatar_url": avatar_url,
             "comment_content": (record.comment_text if record is not None else None)
             or str(evaluation.get("reason") or ""),
             "comment_at": comment_at,
