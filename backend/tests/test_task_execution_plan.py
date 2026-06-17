@@ -69,6 +69,86 @@ def test_reset_manual_retry_after_crawl_profile_failed_skill_flow_brief():
     assert decision.get("action") == "crawl_profile"
 
 
+def test_manual_resume_after_crawl_profile_failed_resets_evaluate_step():
+    brief = TaskBrief(
+        title="博主-test",
+        goals={
+            "target_leads": 50,
+            "comment_days": 3,
+            "execution_mode": "skill_flow",
+            "acquisition_mode": "account_home",
+            "profile_url": "https://www.douyin.com/user/test",
+            "crawl_video_limit": 10,
+            "supervisor_plan_only": True,
+        },
+        agent_strategy="skill-flow-douyin",
+        platform="douyin",
+    )
+    plan = build_supervisor_execution_plan(brief, {"evaluation_done": True})
+    for step in plan["steps"]:
+        if step.get("action") == "evaluate_leads":
+            assert step["status"] == "completed"
+    state = {
+        "suspended": True,
+        "wake_reason": "0 条评论",
+        "execution_plan": plan,
+        "crawl_done": True,
+        "evaluation_done": True,
+        "leads_qualified": 0,
+        "stats_synced": True,
+    }
+
+    reset_supervisor_state_for_manual_retry(state, plan, brief=brief)
+    assert state.get("evaluation_done") is None
+    eval_step = next(s for s in plan["steps"] if s.get("action") == "evaluate_leads")
+    assert eval_step["status"] == "pending"
+
+    decision = plan_driven_supervisor_decision(plan, brief, state)
+    assert decision is not None
+    assert decision.get("action") == "crawl_profile"
+
+
+def test_manual_source_exhausted_suspend_next_action():
+    brief = TaskBrief(
+        title="博主-test",
+        goals={
+            "target_leads": 50,
+            "acquisition_mode": "account_home",
+            "profile_url": "https://www.douyin.com/user/test",
+        },
+        platform="douyin",
+    )
+    state = {
+        "completion_outcome": "source_exhausted",
+        "crawl_search_exhausted": True,
+        "crawl_done": True,
+    }
+    next_action = infer_suspend_next_action("主页 0 条评论", state, brief)
+    assert "关键词" not in next_action
+    assert "评论时间窗" in next_action or "采集几天内评论" in next_action
+
+
+def test_manual_source_exhausted_execution_note():
+    brief = {
+        "title": "博主-test",
+        "goals": {"acquisition_mode": "account_home", "target_leads": 50},
+        "platform": "douyin",
+    }
+    note = build_execution_note(
+        job_status="suspended",
+        job_stage="track",
+        job_result={
+            "completion_outcome": "source_exhausted",
+            "supervisor_state": {"suspended": True, "leads_collected": 0},
+            "data_snapshot": {"progress": {"leads_collected": 0, "target_leads": 50}},
+            "orchestration": {"task_brief": brief},
+        },
+    )
+    assert note is not None
+    assert "关键词" not in note
+    assert "评论时间窗" in note
+
+
 def test_plan_driven_decide_starts_with_crawl():
     brief = TaskBrief(keyword="团餐", goals={"target_leads": 5}, platform="douyin")
     plan = build_supervisor_execution_plan(brief, {})

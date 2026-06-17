@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.task_brief_service import TaskBrief, is_skill_flow_brief
-from app.services.manual_acquisition_service import build_manual_acquisition_plan
+from app.services.manual_acquisition_service import build_manual_acquisition_plan, manual_acquisition_mode
 from app.services.task_round_service import (
     effective_leads_collected,
     effective_target_leads,
@@ -20,6 +20,7 @@ from app.services.supervisor_crawl_helpers import (
     effective_crawl_video_limit,
     prepare_plan_recrawl,
     reset_crawl_evaluate_gate_state,
+    reset_plan_evaluation_state,
     should_resume_crawl_on_no_match,
     infer_suspend_next_action as infer_skill_flow_suspend_next_action,
 )
@@ -350,12 +351,18 @@ def reset_supervisor_state_for_manual_retry(
             retry_from = idx
             break
 
+    reset_eval = False
     for idx, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
         action = str(step.get("action") or "")
         if idx >= retry_from and action not in {"complete"}:
             step["status"] = "pending"
+            if action in CRAWL_SUPERVISOR_ACTIONS or action == "evaluate_leads":
+                reset_eval = True
+
+    if reset_eval:
+        reset_plan_evaluation_state(state, plan)
 
     plan["current_index"] = _resolve_current_index(steps)
     state["execution_plan"] = plan
@@ -767,6 +774,7 @@ def infer_suspend_next_action(reason: str, state: dict[str, Any], brief: TaskBri
     outcome = str(state.get("completion_outcome") or "")
     resume_next = brief.constraints.get("termination_resume_next_day", True)
     crawl_done = bool(state.get("crawl_done"))
+    manual_mode = manual_acquisition_mode(brief)
 
     if outcome == "quota_exhausted" or "配额" in reason_text:
         if resume_next:
@@ -774,6 +782,13 @@ def infer_suspend_next_action(reason: str, state: dict[str, Any], brief: TaskBri
         return "手动「继续执行」：同步配额后继续 reply / dm / follow"
 
     if outcome == "source_exhausted":
+        if manual_mode == "account_home":
+            return (
+                "主页视频已扫完仍无可用评论：请加大「采集几天内评论」、放宽评估标准、"
+                "提高扫描视频数或更换博主后「继续执行」"
+            )
+        if manual_mode == "single_video":
+            return "该视频无符合时间窗的评论：请加大评论时间窗或放宽评估标准后「继续执行」"
         return "已扫完搜索列表仍无匹配：请调整线索评估标准、更换关键词或降低目标数后继续"
 
     if "抓取" in reason_text and any(token in reason_text for token in ("失败", "风控", "验证码")):
@@ -781,9 +796,17 @@ def infer_suspend_next_action(reason: str, state: dict[str, Any], brief: TaskBri
 
     if any(token in reason_text for token in ("无匹配", "已入库评论", "待触达线索", "扫完")):
         if state.get("crawl_search_exhausted"):
+            if manual_mode:
+                return (
+                    "链接内容已扫完仍无匹配线索：请加大评论时间窗、放宽评估标准或降低目标数后「继续执行」"
+                )
             return "已扫完搜索列表仍无匹配：请调整线索评估标准或更换搜索词后「继续执行」"
         if resume_next:
+            if manual_mode:
+                return "自动恢复后会重新抓取；也可现在「继续执行」立即重试"
             return "自动恢复后会继续浏览更多视频并匹配；也可现在「继续执行」立即重试"
+        if manual_mode:
+            return "点击「继续执行」重新抓取并评估评论"
         return "点击「继续执行」继续浏览更多视频并匹配评论"
 
     if "无进展" in reason_text or "死循环" in reason_text or "连续" in reason_text:
@@ -803,6 +826,8 @@ def infer_suspend_next_action(reason: str, state: dict[str, Any], brief: TaskBri
         )
 
     if "crawl" in reason_l or not crawl_done:
+        if manual_mode:
+            return "点击「继续执行」重新抓取主页/视频评论"
         return "点击「继续执行」继续抓取关键词相关视频评论"
 
     return "点击「继续执行」从当前进度继续 Supervisor 循环"
@@ -882,6 +907,20 @@ def build_execution_note(
         return f"Supervisor 已结束（{progress_text}）。"
     if job_status == "suspended" or (job_status == "pending" and supervisor_state.get("suspended")):
         if outcome == "source_exhausted":
+            task_brief_raw = None
+            orch = result.get("orchestration")
+            if isinstance(orch, dict):
+                task_brief_raw = orch.get("task_brief")
+            brief_for_note = (
+                TaskBrief.model_validate(task_brief_raw)
+                if isinstance(task_brief_raw, dict)
+                else TaskBrief(brief_md="")
+            )
+            if manual_acquisition_mode(brief_for_note):
+                return (
+                    f"Supervisor 已挂起：内容已扫完且未达成目标（{progress_text}），"
+                    "请加大评论时间窗、放宽评估标准或更换链接后继续。"
+                )
             return f"Supervisor 已挂起：搜索源已耗尽且未达成目标（{progress_text}），请调整关键词或匹配条件。"
         task_brief = None
         orch = result.get("orchestration")

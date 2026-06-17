@@ -315,6 +315,24 @@ def prepare_crawl_retry(state: dict[str, Any]) -> None:
         state.pop(key, None)
 
 
+def reset_plan_evaluation_state(state: dict[str, Any], plan: dict[str, Any] | None) -> None:
+    """重抓或手动继续时清除评估标记，避免 evaluate 步被计划驱动逻辑跳过。"""
+    state.pop("evaluation_done", None)
+    state.pop("leads_qualified", None)
+    state.pop("comments_evaluated", None)
+    state.pop("crawl_evaluate_gate_reason", None)
+    if not isinstance(plan, dict):
+        return
+    steps = plan.get("steps")
+    if not isinstance(steps, list):
+        return
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("action") or "") == "evaluate_leads":
+            step["status"] = "pending"
+
+
 def prepare_plan_recrawl(
     state: dict[str, Any],
     plan: dict[str, Any] | None,
@@ -342,6 +360,9 @@ def prepare_plan_recrawl(
             step["status"] = "pending"
         elif action == "complete":
             step["status"] = "pending"
+        elif action == "evaluate_leads":
+            step["status"] = "pending"
+    reset_plan_evaluation_state(state, plan)
     plan["current_index"] = 0
     state["execution_plan"] = plan
 
