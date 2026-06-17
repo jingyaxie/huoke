@@ -50,7 +50,7 @@ if (-not $Chrome) {
 $Python = Find-HuokePython
 if (-not $Python) {
   Write-HuokePythonDiagnostics
-  throw "Python 3.11+ is required for bundling. Install from https://www.python.org/downloads/ or ensure actions/setup-python ran."
+  throw "Python 3.11+ is required for bundling."
 }
 $PythonExe = Set-HuokePythonEnv $Python
 Write-Host "Python: $PythonExe"

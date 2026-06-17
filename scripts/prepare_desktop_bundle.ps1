@@ -70,7 +70,8 @@ robocopy $FrontendDist $TargetFrontend /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-
 if ($LASTEXITCODE -ge 8) { throw "Frontend dist copy failed" }
 
 Write-Host "Creating virtualenv..."
-Invoke-Checked "venv creation" { Invoke-HuokePython $PythonExe -m venv $VenvDir }
+& $PythonExe -m venv $VenvDir
+if ($LASTEXITCODE -ne 0) { throw "venv creation failed with exit code $LASTEXITCODE" }
 
 $PipPython = Join-Path $VenvDir "Scripts/python.exe"
 if (-not (Test-Path $PipPython)) {

@@ -20,26 +20,31 @@ function Test-WindowsPythonStub {
   return $Path -match "(\\|/)WindowsApps(\\|/)python(\.exe)?$"
 }
 
-function Get-HuokePythonVersionText {
+function Test-HuokePythonVersion {
   param([Parameter(Mandatory = $true)][string]$Candidate)
-  $output = Invoke-HuokePython $Candidate -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-  if ($LASTEXITCODE -ne 0) { return $null }
-  $text = ($output | Out-String).Trim()
-  if (-not $text) { return $null }
-  return $text
+  $check = "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+  if ($Candidate -match "^py\s+-(\d+\.\d+)$") {
+    & py "-$($Matches[1])" -c $check
+  } elseif ($Candidate -match "^py\s+(-\S+)$") {
+    & py $Matches[1] -c $check
+  } else {
+    & $Candidate -c $check
+  }
+  return ($LASTEXITCODE -eq 0)
 }
 
 function Test-HuokePythonCandidate {
   param([Parameter(Mandatory = $true)][string]$Candidate)
   if (Test-WindowsPythonStub $Candidate) { return $null }
+  if ($Candidate -notmatch "^py\s") {
+    if ($Candidate -match "^[A-Za-z]:\\") {
+      if (-not (Test-Path -LiteralPath $Candidate)) { return $null }
+    } elseif ($Candidate -ne "python" -and $Candidate -notmatch "^python3") {
+      return $null
+    }
+  }
   try {
-    $ver = Get-HuokePythonVersionText $Candidate
-    if (-not $ver) { return $null }
-    $parts = $ver -split "\."
-    if ($parts.Count -lt 2) { return $null }
-    $major = [int]$parts[0]
-    $minor = [int]$parts[1]
-    if ($major -ge 3 -and $minor -ge 11) {
+    if (Test-HuokePythonVersion $Candidate) {
       return $Candidate
     }
   } catch {}
@@ -78,18 +83,29 @@ function Find-HuokePython {
 function Resolve-HuokePythonExe {
   param([Parameter(Mandatory = $true)][string]$Candidate)
   if ($Candidate -match "^py\s") {
-    $exe = Invoke-HuokePython $Candidate -c "import sys; print(sys.executable)"
+    $exe = $null
+    if ($Candidate -match "^py\s+-(\d+\.\d+)$") {
+      $exe = & py "-$($Matches[1])" -c "import sys; print(sys.executable)"
+    } elseif ($Candidate -match "^py\s+(-\S+)$") {
+      $exe = & py $Matches[1] -c "import sys; print(sys.executable)"
+    }
     if ($LASTEXITCODE -ne 0) { return $null }
     return ($exe | Out-String).Trim()
   }
+  if (Test-Path -LiteralPath $Candidate) { return $Candidate }
+  $cmd = Get-Command $Candidate -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source) { return $cmd.Source }
   return $Candidate
 }
 
 function Set-HuokePythonEnv {
   param([Parameter(Mandatory = $true)][string]$Candidate)
   $exe = Resolve-HuokePythonExe $Candidate
-  if (-not $exe -or -not (Test-Path $exe)) {
+  if (-not $exe -or -not (Test-Path -LiteralPath $exe)) {
     throw "Failed to resolve Python executable from candidate: $Candidate"
+  }
+  if (-not (Test-HuokePythonVersion $exe)) {
+    throw "Python 3.11+ required, but resolved executable failed version check: $exe"
   }
   $env:HUOKE_PYTHON = $exe
   $env:PYTHON = $exe
@@ -106,5 +122,11 @@ function Write-HuokePythonDiagnostics {
     Write-Host "  Get-Command python -> $($cmd.Source)"
   } else {
     Write-Host "  Get-Command python -> (not found)"
+  }
+  foreach ($probe in @($env:HUOKE_PYTHON, $env:PYTHON, $(if ($cmd) { $cmd.Source }))) {
+    if (-not $probe) { continue }
+    $ok = $false
+    try { $ok = Test-HuokePythonVersion $probe } catch {}
+    Write-Host "  version-check $probe -> $ok"
   }
 }
