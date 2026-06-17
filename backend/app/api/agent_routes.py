@@ -105,8 +105,17 @@ from app.services.skillhub_installer import SkillHubInstaller
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
-def _async_job_out(job: AgentAsyncJob, settings: Settings | None = None) -> AgentAsyncJobOut:
-    sync = AgentJobSyncService(settings).build_payload(job, event="job.snapshot") if settings is not None else {}
+def _async_job_out(
+    job: AgentAsyncJob,
+    settings: Settings | None = None,
+    *,
+    db_session: Session | None = None,
+) -> AgentAsyncJobOut:
+    sync = (
+        AgentJobSyncService(settings).build_payload(job, event="job.snapshot", db_session=db_session)
+        if settings is not None
+        else {}
+    )
     return AgentAsyncJobOut(
         job_id=job.job_id,
         status=job.status,
@@ -561,23 +570,25 @@ async def get_agent_job(
     job_id: str,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
 ) -> AgentAsyncJobOut:
     svc = AgentAsyncJobService.get(settings)
     job = svc.get_job(tenant_id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return _async_job_out(job, settings)
+    return _async_job_out(job, settings, db_session=session)
 
 
 @router.get("/jobs", response_model=list[AgentAsyncJobOut])
 async def list_agent_jobs(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[AgentAsyncJobOut]:
     svc = AgentAsyncJobService.get(settings)
     items = svc.list_jobs(tenant_id, limit=limit)
-    return [_async_job_out(j, settings) for j in items]
+    return [_async_job_out(j, settings, db_session=session) for j in items]
 
 
 @router.post("/jobs/{job_id}/cancel")

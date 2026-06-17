@@ -176,7 +176,9 @@ def _row_in_outreach_scope(row: dict[str, Any], *, job_id: str, scope: str) -> b
     if not job_id:
         return True
     stored = _comment_row_job_id(row)
-    return not stored or stored == job_id
+    if stored:
+        return stored == job_id
+    return False
 
 
 def _agent_meta_for_persist(
@@ -497,6 +499,12 @@ async def run_evaluate_leads_phase(
     scope = outreach_scope_from_brief(brief)
     job_id = str(state.get("job_id") or "").strip()
     evaluation_cache = _evaluation_cache_from_state(state)
+    allowed_content = {
+        str(x).strip()
+        for key in ("job_content_ids", "watched_content_ids")
+        for x in (state.get(key) or [])
+        if str(x).strip()
+    }
 
     stored = StoredCommentService(db_session, settings, tenant_id=tenant_id)
     candidates: list[dict[str, Any]] = []
@@ -524,6 +532,10 @@ async def run_evaluate_leads_phase(
                 continue
             if not _row_in_outreach_scope(row, job_id=job_id, scope=scope):
                 continue
+            if allowed_content:
+                row_content_id = str(row.get("content_id") or "").strip()
+                if row_content_id and row_content_id not in allowed_content:
+                    continue
             candidates.append(row)
         if len(comments) < batch_size:
             break
@@ -541,18 +553,39 @@ async def run_evaluate_leads_phase(
         )
         evaluation_cache.update(classified)
         evaluated = len(classified)
+        job_comment_ids = {
+            str(x).strip() for x in (state.get("job_evaluation_comment_ids") or []) if str(x).strip()
+        }
+        job_content_ids = {
+            str(x).strip() for x in (state.get("job_content_ids") or []) if str(x).strip()
+        }
+        for row in candidates:
+            comment_id = str(row.get("comment_id") or "").strip()
+            if comment_id:
+                job_comment_ids.add(comment_id)
+            content_id = str(row.get("content_id") or "").strip()
+            if content_id:
+                job_content_ids.add(content_id)
+        state["job_evaluation_comment_ids"] = sorted(job_comment_ids)[-3000:]
+        if job_content_ids:
+            state["job_content_ids"] = sorted(job_content_ids)[-500:]
         qualified = sum(
-            1 for item in classified.values()
-            if accept_evaluation_result(item, eval_spec)
+            1 for cid in job_comment_ids
+            if accept_evaluation_result(evaluation_cache.get(cid) or {}, eval_spec)
+        )
+    else:
+        job_comment_ids = {
+            str(x).strip() for x in (state.get("job_evaluation_comment_ids") or []) if str(x).strip()
+        }
+        qualified = sum(
+            1 for cid in job_comment_ids
+            if accept_evaluation_result(evaluation_cache.get(cid) or {}, eval_spec)
         )
 
     if evaluation_cache:
         state["evaluation_cache"] = dict(list(evaluation_cache.items())[-1200:])
     state["comments_evaluated"] = int(state.get("comments_evaluated") or 0) + evaluated
-    state["leads_qualified"] = sum(
-        1 for item in evaluation_cache.values()
-        if accept_evaluation_result(item, eval_spec)
-    )
+    state["leads_qualified"] = qualified
     state["evaluation_done"] = True
 
     return {

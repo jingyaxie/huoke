@@ -89,6 +89,49 @@ class ContentCommentRepository(BaseRepository):
             ).all()
         )
 
+    def list_by_content_ids(
+        self,
+        *,
+        platform: str,
+        content_ids: list[str],
+        limit: int = 5000,
+    ) -> list[ContentComment]:
+        ids = [str(item).strip() for item in content_ids if str(item).strip()]
+        if not ids:
+            return []
+        unique_ids = list(dict.fromkeys(ids))[:200]
+        return list(
+            self.session.scalars(
+                select(ContentComment)
+                .where(ContentComment.tenant_id == self.tenant_id)
+                .where(ContentComment.platform == platform)
+                .where(ContentComment.content_id.in_(unique_ids))
+                .order_by(ContentComment.last_seen_at.desc(), ContentComment.id.desc())
+                .limit(max(min(limit, 5000), 1))
+            ).all()
+        )
+
+    def list_by_comment_ids(
+        self,
+        *,
+        platform: str,
+        comment_ids: list[str],
+        limit: int = 500,
+    ) -> list[ContentComment]:
+        ids = [str(item).strip() for item in comment_ids if str(item).strip()]
+        if not ids:
+            return []
+        unique_ids = list(dict.fromkeys(ids))[: max(min(limit, 500), 1)]
+        return list(
+            self.session.scalars(
+                select(ContentComment)
+                .where(ContentComment.tenant_id == self.tenant_id)
+                .where(ContentComment.platform == platform)
+                .where(ContentComment.comment_id.in_(unique_ids))
+                .order_by(ContentComment.last_seen_at.desc(), ContentComment.id.desc())
+            ).all()
+        )
+
     def search_comments(
         self,
         *,

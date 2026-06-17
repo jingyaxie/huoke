@@ -128,6 +128,24 @@ export function getJobConfig(job) {
   return {};
 }
 
+function isMeaningfulOutreachEvent(event) {
+  if (String(event?.status || "").toLowerCase() === "ok") return true;
+  if (String(event?.comment_id || "").trim()) return true;
+  if (String(event?.target_user_id || "").trim()) return true;
+  const nickname = String(event?.nickname || event?.user_nickname || event?.author_nickname || "").trim();
+  const content = String(
+    event?.reply_text || event?.message || event?.content || event?.comment_content || "",
+  ).trim();
+  return Boolean(nickname && content);
+}
+
+function isMeaningfulOutreachRow(row) {
+  if (String(row?.outreach_status || "").toLowerCase() === "ok") return true;
+  if (String(row?.comment_id || "").trim()) return true;
+  if (row?.nickname && row.nickname !== "—") return true;
+  return Boolean(row?.reply_content || row?.dm_content);
+}
+
 export function getJobMetrics(job) {
   const config = getJobConfig(job);
   const sync = job?.sync && typeof job.sync === "object" ? job.sync : {};
@@ -139,30 +157,62 @@ export function getJobMetrics(job) {
   const stats = ledger.stats && typeof ledger.stats === "object" ? ledger.stats : {};
   const outreachEvents = Array.isArray(sync.outreach_events) ? sync.outreach_events : [];
 
-  const countFromEvents = (action) =>
-    outreachEvents.filter((row) => String(row?.action || row?.action_type || "").toLowerCase() === action).length;
+  const countOkFromEvents = (action) =>
+    outreachEvents.filter(
+      (row) =>
+        String(row?.action || row?.action_type || "").toLowerCase() === action
+        && String(row?.status || "").toLowerCase() === "ok",
+    ).length;
 
-  const replyOk = Number(stats.reply?.ok || countFromEvents("reply") || 0);
-  const dmOk = Number(stats.dm?.ok || countFromEvents("dm") || 0);
-  const followOk = Number(stats.follow?.ok || countFromEvents("follow") || 0);
+  const countMeaningfulFromEvents = (action) =>
+    outreachEvents.filter(
+      (row) =>
+        String(row?.action || row?.action_type || "").toLowerCase() === action
+        && isMeaningfulOutreachEvent(row),
+    ).length;
+
+  const statOutreachCount = (action) => {
+    const bucket = stats[action];
+    const meaningful = countMeaningfulFromEvents(action);
+    if (bucket && bucket.ok != null && bucket.ok !== "" && Number(bucket.ok) > 0) {
+      return Math.max(Number(bucket.ok), meaningful);
+    }
+    if (meaningful > 0) return meaningful;
+    if (bucket && bucket.ok != null && bucket.ok !== "") {
+      return Number(bucket.ok);
+    }
+    return countOkFromEvents(action);
+  };
+
+  const replyOk = statOutreachCount("reply");
+  const dmOk = statOutreachCount("dm");
+  const followOk = statOutreachCount("follow");
+  const viewCounts = getMetricViewCounts(job);
+  const hasRowData = viewCounts[OUTREACH_METRIC_VIEWS.ALL] > 0;
 
   const requestedTarget = Number(config.target_count || progress.target_leads || 0);
-  const producedTotal = Number(
-    progress.total_leads_collected
-    || progress.leads_collected
-    || sync.stats?.leads_total
-    || (Array.isArray(sync.leads) ? sync.leads.length : 0)
-    || 0,
-  );
-  const progressPrecise = Number(progress.leads_qualified || 0);
+  const producedTotal = hasRowData
+    ? viewCounts[OUTREACH_METRIC_VIEWS.ALL]
+    : Number(
+      progress.comments_evaluated
+      || progress.comments_captured
+      || progress.total_leads_collected
+      || progress.leads_collected
+      || sync.stats?.leads_total
+      || (Array.isArray(sync.leads) ? sync.leads.length : 0)
+      || 0,
+    );
+  const progressPrecise = hasRowData
+    ? viewCounts[OUTREACH_METRIC_VIEWS.PRECISE]
+    : Number(progress.leads_qualified || 0);
 
   return {
     requested_target: requestedTarget,
     produced_total: producedTotal,
     progress_precise: progressPrecise,
-    comment_count: replyOk,
-    dm_count: dmOk,
-    follow_count: followOk,
+    comment_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.REPLY] : replyOk,
+    dm_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.DM] : dmOk,
+    follow_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.FOLLOW] : followOk,
   };
 }
 
@@ -396,10 +446,79 @@ export function computeDashboardFromJobs(jobs) {
 
 export function getOutreachRows(job) {
   const sync = job?.sync && typeof job.sync === "object" ? job.sync : {};
+  const captured = Array.isArray(sync.captured_comments) ? sync.captured_comments : [];
+  if (captured.length) {
+    return captured.map((row) => ({
+      id: row.id || row.comment_id || Math.random().toString(36).slice(2),
+      comment_id: row.comment_id || row.id || "",
+      nickname: row.nickname || row.user_nickname || row.author_nickname || "—",
+      avatar: row.avatar_url || row.author_avatar || "",
+      comment_at: row.comment_at || row.source_comment_at || "",
+      video_title: row.video_title || "",
+      comment_content: row.comment_content || row.source_comment || row.comment_text || "",
+      is_precise: row.is_precise ?? row.precise ?? false,
+      reply_content: row.reply_content || "",
+      dm_content: row.dm_content || "",
+      location_text: row.location_text || row.location || "",
+      executed_at: row.executed_at || row.created_at || "",
+      profile_url: row.profile_url || row.user_profile_url || "",
+      video_url: row.video_url || row.content_url || "",
+      evaluation_reason: row.evaluation_reason || "",
+    }));
+  }
+
   const leads = Array.isArray(sync.leads) ? sync.leads : [];
   const events = Array.isArray(sync.outreach_events) ? sync.outreach_events : [];
-  if (events.length) {
-    return events.map((event) => ({
+
+  const outreachByComment = {};
+  for (const event of events) {
+    const commentId = String(event?.comment_id || "").trim();
+    if (!commentId) continue;
+    const bucket = outreachByComment[commentId] || {};
+    const action = String(event?.action || event?.action_type || "").toLowerCase();
+    if (action === "reply" && event.reply_text) bucket.reply_content = event.reply_text;
+    if (action === "dm" && event.reply_text) bucket.dm_content = event.reply_text;
+    if (String(event?.status || "").toLowerCase() === "ok") {
+      bucket.executed_at = event.executed_at || event.created_at || bucket.executed_at;
+    }
+    outreachByComment[commentId] = bucket;
+  }
+
+  if (leads.length) {
+    return leads.map((lead) => {
+      const commentId = String(lead.comment_id || lead.id || "").trim();
+      const outreach = commentId ? outreachByComment[commentId] || {} : {};
+      return {
+        id: lead.id || lead.lead_id || lead.comment_id || Math.random().toString(36).slice(2),
+        nickname: lead.nickname || lead.user_nickname || lead.author_nickname || "—",
+        avatar: lead.avatar_url || lead.author_avatar || "",
+        comment_at: lead.comment_at || lead.created_at || "",
+        video_title: lead.video_title || "",
+        comment_content: lead.comment_content || lead.comment_text || lead.comment || "",
+        is_precise: lead.is_precise ?? lead.qualified ?? false,
+        reply_content: outreach.reply_content || lead.reply_content || "",
+        dm_content: outreach.dm_content || lead.dm_content || "",
+        location_text: lead.location_text || lead.location || "",
+        executed_at: outreach.executed_at || lead.outreach_at || "",
+        profile_url: lead.profile_url || lead.user_profile_url || "",
+        video_url: lead.video_url || lead.content_url || "",
+      };
+    });
+  }
+
+  const displayableEvents = events.filter((event) => {
+    const hasIdentity = Boolean(
+      event?.nickname || event?.user_nickname || event?.author_nickname || event?.comment_id,
+    );
+    const hasContent = Boolean(
+      event?.comment_content || event?.source_comment || event?.reply_text || event?.content,
+    );
+    const succeeded = String(event?.status || "").toLowerCase() === "ok";
+    return hasIdentity && (hasContent || succeeded);
+  });
+
+  if (displayableEvents.length) {
+    return displayableEvents.map((event) => ({
       id: event.id || `${event.lead_id || ""}-${event.executed_at || ""}`,
       nickname: event.nickname || event.user_nickname || event.author_nickname || "—",
       avatar: event.avatar_url || event.author_avatar || "",
@@ -407,29 +526,121 @@ export function getOutreachRows(job) {
       video_title: event.video_title || "",
       comment_content: event.comment_content || event.source_comment || "",
       is_precise: event.is_precise ?? event.precise ?? false,
-      reply_content: event.reply_content || (event.action === "reply" ? event.content : ""),
-      dm_content: event.dm_content || (event.action === "dm" ? event.content : ""),
+      reply_content: event.reply_content || (event.action === "reply" ? event.content || event.reply_text : ""),
+      dm_content: event.dm_content || (event.action === "dm" ? event.content || event.reply_text : ""),
       location_text: event.location_text || event.location || "",
       executed_at: event.executed_at || event.created_at || "",
       profile_url: event.profile_url || event.user_profile_url || "",
       video_url: event.video_url || "",
     }));
   }
-  return leads.map((lead) => ({
-    id: lead.id || lead.lead_id || lead.comment_id || Math.random().toString(36).slice(2),
-    nickname: lead.nickname || lead.user_nickname || lead.author_nickname || "—",
-    avatar: lead.avatar_url || lead.author_avatar || "",
-    comment_at: lead.comment_at || lead.created_at || "",
-    video_title: lead.video_title || "",
-    comment_content: lead.comment_content || lead.comment || "",
-    is_precise: lead.is_precise ?? lead.qualified ?? false,
-    reply_content: lead.reply_content || "",
-    dm_content: lead.dm_content || "",
-    location_text: lead.location_text || lead.location || "",
-    executed_at: lead.outreach_at || "",
-    profile_url: lead.profile_url || lead.user_profile_url || "",
-    video_url: lead.video_url || "",
-  }));
+
+  return [];
+}
+
+export const OUTREACH_METRIC_VIEWS = {
+  ALL: "all",
+  PRECISE: "precise",
+  REPLY: "reply",
+  DM: "dm",
+  FOLLOW: "follow",
+};
+
+export const OUTREACH_METRIC_VIEW_LABELS = {
+  [OUTREACH_METRIC_VIEWS.ALL]: "全部采集",
+  [OUTREACH_METRIC_VIEWS.PRECISE]: "精准线索",
+  [OUTREACH_METRIC_VIEWS.REPLY]: "评论触达",
+  [OUTREACH_METRIC_VIEWS.DM]: "私信触达",
+  [OUTREACH_METRIC_VIEWS.FOLLOW]: "关注记录",
+};
+
+function mapOutreachEventRow(event) {
+  const action = String(event?.action || event?.action_type || "").toLowerCase();
+  const errorText = String(event?.error_message || event?.error || "").trim();
+  return {
+    id: `event-${event.id || event.created_at || Math.random().toString(36).slice(2)}`,
+    comment_id: String(event?.comment_id || ""),
+    nickname: event.nickname || event.user_nickname || event.author_nickname || event.target_user_id || "—",
+    avatar: event.avatar_url || event.author_avatar || "",
+    comment_at: event.comment_at || event.source_comment_at || "",
+    video_title: event.video_title || "",
+    comment_content: event.comment_content || event.source_comment || "",
+    is_precise: event.is_precise ?? event.precise ?? false,
+    reply_content: action === "reply" ? (event.reply_text || event.content || "") : "",
+    dm_content: action === "dm" ? (event.reply_text || event.message || event.content || "") : "",
+    location_text: event.location_text || event.location || "",
+    executed_at: event.executed_at || event.created_at || "",
+    profile_url: event.profile_url || event.user_profile_url || "",
+    video_url: event.video_url || "",
+    outreach_action: action,
+    outreach_status: String(event?.status || ""),
+    outreach_error: errorText,
+  };
+}
+
+export function getOutreachEventRows(job, action, { okOnly = false } = {}) {
+  const sync = job?.sync && typeof job.sync === "object" ? job.sync : {};
+  const events = Array.isArray(sync.outreach_events) ? sync.outreach_events : [];
+  const normalized = String(action || "").toLowerCase();
+  return events
+    .filter((event) => String(event?.action || event?.action_type || "").toLowerCase() === normalized)
+    .filter((event) => !okOnly || String(event?.status || "").toLowerCase() === "ok")
+    .map(mapOutreachEventRow);
+}
+
+function enrichOutreachRowsWithCaptured(eventRows, capturedRows) {
+  const byCommentId = new Map();
+  for (const row of capturedRows) {
+    const commentId = String(row.comment_id || row.id || "").trim();
+    if (commentId) byCommentId.set(commentId, row);
+  }
+  return eventRows.map((event) => {
+    const commentId = String(event.comment_id || "").trim();
+    const captured = commentId ? byCommentId.get(commentId) : null;
+    if (!captured) return event;
+    return {
+      ...event,
+      nickname: captured.nickname && captured.nickname !== "—" ? captured.nickname : event.nickname,
+      comment_content: captured.comment_content || event.comment_content,
+      comment_at: captured.comment_at || event.comment_at,
+      video_title: captured.video_title || event.video_title,
+      video_url: captured.video_url || event.video_url,
+      profile_url: captured.profile_url || event.profile_url,
+      is_precise: captured.is_precise ?? event.is_precise,
+    };
+  });
+}
+
+export function getRowsForMetricView(job, view = OUTREACH_METRIC_VIEWS.ALL) {
+  const allRows = getOutreachRows(job);
+  switch (view) {
+    case OUTREACH_METRIC_VIEWS.PRECISE:
+      return allRows.filter((row) => Boolean(row.is_precise));
+    case OUTREACH_METRIC_VIEWS.REPLY: {
+      const events = getOutreachEventRows(job, "reply").filter(isMeaningfulOutreachRow);
+      if (events.length) return enrichOutreachRowsWithCaptured(events, allRows);
+      return allRows.filter((row) => row.reply_content);
+    }
+    case OUTREACH_METRIC_VIEWS.DM: {
+      const events = getOutreachEventRows(job, "dm").filter(isMeaningfulOutreachRow);
+      if (events.length) return enrichOutreachRowsWithCaptured(events, allRows);
+      return allRows.filter((row) => row.dm_content);
+    }
+    case OUTREACH_METRIC_VIEWS.FOLLOW:
+      return getOutreachEventRows(job, "follow").filter(isMeaningfulOutreachRow);
+    default:
+      return allRows;
+  }
+}
+
+export function getMetricViewCounts(job) {
+  return {
+    [OUTREACH_METRIC_VIEWS.ALL]: getRowsForMetricView(job, OUTREACH_METRIC_VIEWS.ALL).length,
+    [OUTREACH_METRIC_VIEWS.PRECISE]: getRowsForMetricView(job, OUTREACH_METRIC_VIEWS.PRECISE).length,
+    [OUTREACH_METRIC_VIEWS.REPLY]: getRowsForMetricView(job, OUTREACH_METRIC_VIEWS.REPLY).length,
+    [OUTREACH_METRIC_VIEWS.DM]: getRowsForMetricView(job, OUTREACH_METRIC_VIEWS.DM).length,
+    [OUTREACH_METRIC_VIEWS.FOLLOW]: getRowsForMetricView(job, OUTREACH_METRIC_VIEWS.FOLLOW).length,
+  };
 }
 
 export function filterOutreachRows(rows, { keyword = "", actionType = "all" } = {}) {

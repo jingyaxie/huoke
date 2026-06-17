@@ -3,9 +3,27 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from app.core.config import Settings
+from app.db.base import Base
+from app.models.content_comment import ContentComment
 from app.services.agent_async_job_service import AgentAsyncJob
 from app.services.agent_job_sync_service import AgentJobSyncService, verify_sync_signature
+
+
+@pytest.fixture()
+def db_session():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def test_sync_payload_includes_correlation(tmp_path):
@@ -81,6 +99,188 @@ def test_sync_payload_includes_lead_evaluation(tmp_path):
     payload = AgentJobSyncService(settings).build_payload(job, event="job.progress")
 
     assert payload["lead_evaluation"] == spec
+
+
+def test_sync_payload_includes_captured_comments(tmp_path, db_session):
+    from app.models.content_comment import ContentComment
+    from datetime import datetime, timezone
+
+    settings = Settings(storage_root=tmp_path / "storage")
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        ContentComment(
+            tenant_id="default",
+            platform="douyin",
+            content_id="vid-1",
+            comment_id="cmt-1",
+            nickname="测试用户",
+            comment_text="想了解 ai获客 方案",
+            digg_count=0,
+            create_time=1_700_000_000,
+            content_url="https://example.test/video/1",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    spec = {
+        "schema": "huoke.lead_evaluation.v1",
+        "version": 1,
+        "thresholds": {"precise": 0.72, "outreach": 0.55},
+    }
+    job = AgentAsyncJob(
+        job_id="sync-captured",
+        tenant_id="default",
+        platform="douyin",
+        account_id="default",
+        message="ai获客",
+        status="pending",
+        result={
+            "orchestration": {"task_brief": {"constraints": {"lead_evaluation": spec}}},
+            "supervisor_state": {
+                "job_content_ids": ["vid-1"],
+                "evaluation_cache": {
+                    "cmt-1": {
+                        "is_lead": True,
+                        "score": 0.8,
+                        "worth_outreach": True,
+                        "reason": "有购买意向",
+                    }
+                }
+            },
+        },
+    )
+
+    payload = AgentJobSyncService(settings).build_payload(job, event="job.snapshot", db_session=db_session)
+
+    assert len(payload["captured_comments"]) == 1
+    row = payload["captured_comments"][0]
+    assert row["nickname"] == "测试用户"
+    assert "ai获客" in row["comment_content"]
+    assert row["is_precise"] is True
+
+
+def test_captured_comments_scoped_to_job_content_ids(tmp_path, db_session):
+    from datetime import datetime, timezone
+
+    settings = Settings(storage_root=tmp_path / "storage")
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        ContentComment(
+            tenant_id="default",
+            platform="douyin",
+            content_id="vid-job",
+            comment_id="cmt-job",
+            nickname="任务用户",
+            comment_text="本任务评论",
+            digg_count=0,
+            create_time=1_700_000_000,
+            content_url="https://example.test/video/job",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.add(
+        ContentComment(
+            tenant_id="default",
+            platform="douyin",
+            content_id="vid-other",
+            comment_id="cmt-other",
+            nickname="其他用户",
+            comment_text="其他任务评论",
+            digg_count=0,
+            create_time=1_700_000_001,
+            content_url="https://example.test/video/other",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    )
+    db_session.commit()
+
+    spec = {
+        "schema": "huoke.lead_evaluation.v1",
+        "version": 1,
+        "thresholds": {"precise": 0.72, "outreach": 0.55},
+    }
+    job = AgentAsyncJob(
+        job_id="sync-scope",
+        tenant_id="default",
+        platform="douyin",
+        account_id="default",
+        message="ai获客",
+        status="pending",
+        result={
+            "orchestration": {"task_brief": {"constraints": {"lead_evaluation": spec}}},
+            "supervisor_state": {
+                "job_content_ids": ["vid-job"],
+                "evaluation_cache": {
+                    "cmt-job": {"score": 0.8, "worth_outreach": True, "reason": "有意向"},
+                    "cmt-other": {"score": 0.9, "worth_outreach": True, "reason": "应被过滤"},
+                },
+            },
+        },
+    )
+
+    payload = AgentJobSyncService(settings).build_payload(job, event="job.snapshot", db_session=db_session)
+
+    assert len(payload["captured_comments"]) == 1
+    assert payload["captured_comments"][0]["comment_id"] == "cmt-job"
+
+
+def test_captured_comments_exclude_unevaluated_video_comments(tmp_path, db_session):
+    from datetime import datetime, timezone
+
+    settings = Settings(storage_root=tmp_path / "storage")
+    now = datetime.now(timezone.utc)
+    for idx in range(3):
+        db_session.add(
+            ContentComment(
+                tenant_id="default",
+                platform="douyin",
+                content_id="vid-job",
+                comment_id=f"cmt-{idx}",
+                nickname=f"用户{idx}",
+                comment_text=f"评论{idx}",
+                digg_count=0,
+                create_time=1_700_000_000 + idx,
+                content_url="https://example.test/video/job",
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+        )
+    db_session.commit()
+
+    spec = {
+        "schema": "huoke.lead_evaluation.v1",
+        "version": 1,
+        "thresholds": {"precise": 0.72, "outreach": 0.55},
+    }
+    job = AgentAsyncJob(
+        job_id="sync-evaluated-only",
+        tenant_id="default",
+        platform="douyin",
+        account_id="default",
+        message="ai获客",
+        status="pending",
+        result={
+            "orchestration": {"task_brief": {"constraints": {"lead_evaluation": spec}}},
+            "supervisor_state": {
+                "job_content_ids": ["vid-job"],
+                "job_evaluation_comment_ids": ["cmt-0", "cmt-1"],
+                "evaluation_cache": {
+                    "cmt-0": {"score": 0.8, "worth_outreach": True, "reason": "有意向"},
+                    "cmt-1": {"score": 0.4, "worth_outreach": False, "reason": "无关"},
+                    "cmt-2": {"score": 0.9, "worth_outreach": True, "reason": "未纳入任务"},
+                },
+            },
+        },
+    )
+
+    payload = AgentJobSyncService(settings).build_payload(job, event="job.snapshot", db_session=db_session)
+
+    assert len(payload["captured_comments"]) == 2
+    assert {row["comment_id"] for row in payload["captured_comments"]} == {"cmt-0", "cmt-1"}
 
 
 def test_sync_signature_roundtrip(tmp_path):

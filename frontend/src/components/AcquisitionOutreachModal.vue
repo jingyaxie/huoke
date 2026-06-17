@@ -1,13 +1,25 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="查看数据"
+    :title="dialogTitle"
     width="1180px"
     destroy-on-close
     class="outreach-dialog"
     @closed="resetState"
   >
     <div v-if="job" class="outreach-body">
+      <div class="view-tabs">
+        <el-radio-group v-model="activeView" size="small" @change="page = 1">
+          <el-radio-button
+            v-for="item in viewOptions"
+            :key="item.value"
+            :value="item.value"
+          >
+            {{ item.label }} ({{ item.count }})
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+
       <div class="outreach-toolbar">
         <span class="toolbar-label">评论筛选</span>
         <el-input
@@ -61,6 +73,23 @@
         </el-table-column>
         <el-table-column prop="reply_content" label="评论内容" min-width="140" show-overflow-tooltip />
         <el-table-column prop="dm_content" label="私信内容" min-width="140" show-overflow-tooltip />
+        <el-table-column v-if="showOutreachStatus" label="触达状态" width="100">
+          <template #default="{ row }">
+            <el-tag
+              :type="String(row.outreach_status).toLowerCase() === 'ok' ? 'success' : 'danger'"
+              size="small"
+            >
+              {{ String(row.outreach_status).toLowerCase() === "ok" ? "成功" : "失败" }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column
+          v-if="showOutreachStatus"
+          prop="outreach_error"
+          label="失败原因"
+          min-width="160"
+          show-overflow-tooltip
+        />
         <el-table-column prop="location_text" label="位置" width="100" show-overflow-tooltip />
         <el-table-column prop="executed_at" label="触达时间" width="140">
           <template #default="{ row }">{{ formatJobTime(row.executed_at) }}</template>
@@ -101,13 +130,17 @@ import {
   filterOutreachRows,
   formatJobTime,
   getJobRowModel,
-  getOutreachRows,
+  getMetricViewCounts,
+  getRowsForMetricView,
+  OUTREACH_METRIC_VIEWS,
+  OUTREACH_METRIC_VIEW_LABELS,
   platformLabel,
 } from "../utils/acquisitionJobs";
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   job: { type: Object, default: null },
+  initialView: { type: String, default: OUTREACH_METRIC_VIEWS.ALL },
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -118,13 +151,22 @@ const actionType = ref("all");
 const page = ref(1);
 const pageSize = 10;
 const loading = ref(false);
+const activeView = ref(OUTREACH_METRIC_VIEWS.ALL);
 
 watch(
   () => props.modelValue,
   (value) => {
     visible.value = value;
+    if (value) activeView.value = props.initialView || OUTREACH_METRIC_VIEWS.ALL;
   },
   { immediate: true },
+);
+
+watch(
+  () => props.initialView,
+  (value) => {
+    if (visible.value && value) activeView.value = value;
+  },
 );
 
 watch(visible, (value) => {
@@ -132,6 +174,27 @@ watch(visible, (value) => {
 });
 
 const rowModel = computed(() => (props.job ? getJobRowModel(props.job) : null));
+
+const dialogTitle = computed(() => {
+  const label = OUTREACH_METRIC_VIEW_LABELS[activeView.value] || "全部采集";
+  return `查看数据 · ${label}`;
+});
+
+const viewOptions = computed(() => {
+  if (!props.job) return [];
+  const counts = getMetricViewCounts(props.job);
+  return [
+    { value: OUTREACH_METRIC_VIEWS.ALL, label: "全部采集", count: counts[OUTREACH_METRIC_VIEWS.ALL] || 0 },
+    { value: OUTREACH_METRIC_VIEWS.PRECISE, label: "精准线索", count: counts[OUTREACH_METRIC_VIEWS.PRECISE] || 0 },
+    { value: OUTREACH_METRIC_VIEWS.REPLY, label: "评论触达", count: counts[OUTREACH_METRIC_VIEWS.REPLY] || 0 },
+    { value: OUTREACH_METRIC_VIEWS.DM, label: "私信触达", count: counts[OUTREACH_METRIC_VIEWS.DM] || 0 },
+    { value: OUTREACH_METRIC_VIEWS.FOLLOW, label: "关注记录", count: counts[OUTREACH_METRIC_VIEWS.FOLLOW] || 0 },
+  ];
+});
+
+const showOutreachStatus = computed(() =>
+  [OUTREACH_METRIC_VIEWS.REPLY, OUTREACH_METRIC_VIEWS.DM, OUTREACH_METRIC_VIEWS.FOLLOW].includes(activeView.value),
+);
 
 const publishLabel = computed(() => {
   const map = { unlimited: "不限", "1d": "1天内", "3d": "3天内", "7d": "1周内", "180d": "半年内" };
@@ -145,7 +208,7 @@ const commentDaysLabel = computed(() => {
   return map[days] || `${days}天`;
 });
 
-const allRows = computed(() => (props.job ? getOutreachRows(props.job) : []));
+const allRows = computed(() => (props.job ? getRowsForMetricView(props.job, activeView.value) : []));
 
 const filteredRows = computed(() =>
   filterOutreachRows(allRows.value, { keyword: keyword.value, actionType: actionType.value }),
@@ -161,9 +224,16 @@ const pageEnd = computed(() => Math.min(page.value * pageSize, filteredRows.valu
 
 const emptyHint = computed(() => {
   if (!props.job || loading.value) return "";
-  const produced = Number(rowModel.value?.metrics?.produced_total || 0);
-  if (filteredRows.value.length > 0 || produced <= 0) return "";
-  return `任务显示已采集 ${produced} 条线索，明细同步中，请稍后刷新。`;
+  const commentsCaptured = Number(
+    props.job?.sync?.progress?.comments_captured
+    || rowModel.value?.metrics?.produced_total
+    || 0,
+  );
+  if (filteredRows.value.length > 0) return "";
+  if (commentsCaptured > 0) {
+    return `任务已采集 ${commentsCaptured} 条评论，暂无触达记录。请刷新列表后重试，或前往「抓取数据」页查看完整评论库。`;
+  }
+  return "暂无采集或触达数据，任务执行后将在此展示。";
 });
 
 function openLink(url) {
@@ -175,6 +245,7 @@ function resetState() {
   keyword.value = "";
   actionType.value = "all";
   page.value = 1;
+  activeView.value = props.initialView || OUTREACH_METRIC_VIEWS.ALL;
 }
 </script>
 
@@ -183,6 +254,14 @@ function resetState() {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.view-tabs {
+  overflow-x: auto;
+}
+
+.view-tabs :deep(.el-radio-group) {
+  flex-wrap: nowrap;
 }
 
 .outreach-toolbar {

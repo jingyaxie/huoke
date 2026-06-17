@@ -74,19 +74,41 @@
       </template>
 
       <el-table-column label="实际抓取总线索" width="120" align="right">
-        <template #default="{ row }">{{ row.metrics.produced_total || 0 }}</template>
+        <template #default="{ row }">
+          <MetricLink :value="row.metrics.produced_total" @click="openOutreach(row.job, 'all')" />
+        </template>
       </el-table-column>
       <el-table-column label="精准线索" width="96" align="right">
-        <template #default="{ row }">{{ row.metrics.progress_precise || 0 }}</template>
+        <template #default="{ row }">
+          <MetricLink :value="row.metrics.progress_precise" @click="openOutreach(row.job, 'precise')" />
+        </template>
       </el-table-column>
       <el-table-column label="评论数" width="80" align="right">
-        <template #default="{ row }">{{ row.metrics.comment_count || 0 }}</template>
+        <template #default="{ row }">
+          <MetricLink
+            :value="row.metrics.comment_count"
+            :clickable="metricViewCount(row.job, 'reply') > 0"
+            @click="openOutreach(row.job, 'reply')"
+          />
+        </template>
       </el-table-column>
       <el-table-column label="私信数" width="80" align="right">
-        <template #default="{ row }">{{ row.metrics.dm_count || 0 }}</template>
+        <template #default="{ row }">
+          <MetricLink
+            :value="row.metrics.dm_count"
+            :clickable="metricViewCount(row.job, 'dm') > 0"
+            @click="openOutreach(row.job, 'dm')"
+          />
+        </template>
       </el-table-column>
       <el-table-column label="关注数" width="80" align="right">
-        <template #default="{ row }">{{ row.metrics.follow_count || 0 }}</template>
+        <template #default="{ row }">
+          <MetricLink
+            :value="row.metrics.follow_count"
+            :clickable="metricViewCount(row.job, 'follow') > 0"
+            @click="openOutreach(row.job, 'follow')"
+          />
+        </template>
       </el-table-column>
       <el-table-column label="创建时间" width="128">
         <template #default="{ row }">{{ formatJobTime(row.created_at) }}</template>
@@ -117,7 +139,7 @@
               {{ row.display_status === "suspended" ? "继续执行" : "更新线索" }}
             </el-button>
             <span class="action-sep">|</span>
-            <el-button link type="primary" size="small" @click.stop="openOutreach(row.job)">查看数据</el-button>
+            <el-button link type="primary" size="small" @click.stop="openOutreach(row.job, 'all')">查看数据</el-button>
             <template v-if="canDeleteJob(row.status)">
               <span class="action-sep">|</span>
               <el-button link type="danger" size="small" @click.stop="deleteOneJob(row)">删除</el-button>
@@ -142,7 +164,11 @@
     </div>
     </div>
 
-    <AcquisitionOutreachModal v-model="outreachOpen" :job="outreachJob" />
+    <AcquisitionOutreachModal
+      v-model="outreachOpen"
+      :job="outreachJob"
+      :initial-view="outreachView"
+    />
   </div>
 </template>
 
@@ -152,6 +178,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import AcquisitionOutreachModal from "./AcquisitionOutreachModal.vue";
 import AcquisitionStatsCards from "./AcquisitionStatsCards.vue";
 import AcquisitionTaskFilters from "./AcquisitionTaskFilters.vue";
+import MetricLink from "./MetricLink.vue";
 import PlatformChannelTag from "./PlatformChannelTag.vue";
 import TaskStatusBadge from "./TaskStatusBadge.vue";
 import {
@@ -169,6 +196,7 @@ import {
   formatJobTime,
   getJobDisplayStatus,
   getJobRowModel,
+  getMetricViewCounts,
   manualAccountLabel,
   manualIntentLabel,
   matchesJobFilter,
@@ -197,6 +225,7 @@ const page = ref(1);
 const pageSize = 5;
 const outreachOpen = ref(false);
 const outreachJob = ref(null);
+const outreachView = ref("all");
 let pollTimer = null;
 
 const modeJobs = computed(() => {
@@ -231,6 +260,11 @@ const hasFailedJobs = computed(() => modeJobs.value.some((job) => ["failed", "de
 
 function canDeleteJob(status) {
   return ["completed", "cancelled", "failed", "dead_letter"].includes(status);
+}
+
+function metricViewCount(job, view) {
+  if (!job) return 0;
+  return getMetricViewCounts(job)[view] || 0;
 }
 
 function onFilterSubmit() {
@@ -283,8 +317,9 @@ async function deleteOneJob(row) {
   }
 }
 
-function openOutreach(job) {
+function openOutreach(job, view = "all") {
   outreachJob.value = job;
+  outreachView.value = view;
   outreachOpen.value = true;
 }
 

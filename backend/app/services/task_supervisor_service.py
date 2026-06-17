@@ -1698,6 +1698,11 @@ class TaskSupervisorService:
                 }
                 existing.update(str(x).strip() for x in watched if str(x).strip())
                 state["watched_content_ids"] = sorted(existing)[-500:]
+                content_existing = {
+                    str(x).strip() for x in (state.get("job_content_ids") or []) if str(x).strip()
+                }
+                content_existing.update(str(x).strip() for x in watched if str(x).strip())
+                state["job_content_ids"] = sorted(content_existing)[-500:]
             if skill_result.get("crawl_search_exhausted") and videos_processed > 0 and not skill_result.get("cache_replay"):
                 state["crawl_search_exhausted"] = True
             else:
