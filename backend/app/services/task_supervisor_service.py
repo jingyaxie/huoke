@@ -875,7 +875,8 @@ class TaskSupervisorService:
         completion_outcome = None
         if state.get("crawl_search_exhausted"):
             completion_outcome = "source_exhausted"
-            exhausted_note = "已扫完当前搜索列表，LLM 评估后仍无待触达线索"
+            crawl_err = str(state.get("last_crawl_error") or "").strip()
+            exhausted_note = crawl_err or "已扫完当前搜索列表，LLM 评估后仍无待触达线索"
         return self._make_suspend_decision(
             state,
             brief,
@@ -1711,6 +1712,64 @@ class TaskSupervisorService:
                 state["outreach_quota_exhausted"] = True
             else:
                 state.pop("outreach_quota_exhausted", None)
+            if self.db_session is not None and not dry_run:
+                try:
+                    persisted = persist_crawl_skill_result(
+                        self.db_session,
+                        self.settings,
+                        tenant_id=self.tenant_id,
+                        platform=brief.platform or self.platform,
+                        skill_result=skill_result,
+                        source_job_id=str(state.get("job_id") or "").strip() or None,
+                        source_keyword=str(brief.keyword or skill_result.get("keyword") or "").strip() or None,
+                    )
+                    state["comments_persisted"] = int(state.get("comments_persisted") or 0) + persisted
+                except Exception:
+                    pass
+
+        if action in {"crawl_profile", "crawl_content_url"} and ok:
+            record_crawl_round_without_evaluation(state)
+            captured = count_crawl_from_skill_result(skill_result)
+            videos_processed = int(skill_result.get("videos_processed") or 0)
+            state["crawl_done"] = True
+            state["crawl_failures"] = 0
+            if params and params.get("show_browser"):
+                state["visible_crawl_done"] = True
+            if captured:
+                state["comments_captured"] = int(state.get("comments_captured") or 0) + captured
+            if videos_processed:
+                state["videos_processed"] = int(state.get("videos_processed") or 0) + videos_processed
+            session_persisted = int(skill_result.get("comments_persisted") or 0)
+            if session_persisted > 0:
+                state["comments_persisted"] = int(state.get("comments_persisted") or 0) + session_persisted
+            watched = skill_result.get("watched_content_ids")
+            watched_job_id = str(skill_result.get("watched_job_id") or state.get("job_id") or "").strip()
+            task_job_id = str(state.get("job_id") or "").strip()
+            if (
+                isinstance(watched, list)
+                and watched
+                and videos_processed > 0
+                and not skill_result.get("cache_replay")
+                and (not task_job_id or not watched_job_id or watched_job_id == task_job_id)
+            ):
+                existing = {
+                    str(x).strip() for x in (state.get("watched_content_ids") or []) if str(x).strip()
+                }
+                existing.update(str(x).strip() for x in watched if str(x).strip())
+                state["watched_content_ids"] = sorted(existing)[-500:]
+            # 主页/单链一轮即结束，避免 0 评论时 evaluate 后无限重抓
+            state["crawl_search_exhausted"] = True
+            if captured <= 0 and videos_processed <= 0:
+                err_text = " ".join(
+                    str(skill_result.get(k) or "")
+                    for k in ("error", "diagnostic", "summary")
+                ).strip()
+                if err_text:
+                    state["last_crawl_error"] = err_text[:500]
+            elif captured <= 0 and videos_processed > 0:
+                err_text = str(skill_result.get("summary") or skill_result.get("diagnostic") or "").strip()
+                if err_text:
+                    state["last_crawl_error"] = err_text[:500]
             if self.db_session is not None and not dry_run:
                 try:
                     persisted = persist_crawl_skill_result(

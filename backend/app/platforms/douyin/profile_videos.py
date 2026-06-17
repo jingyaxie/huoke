@@ -73,24 +73,42 @@ def parse_profile_input_url(url: str) -> dict[str, str]:
     }
 
 
-def _filter_by_publish_days(items: list[dict], days: int | None) -> list[dict]:
+def _parse_create_time(row: dict) -> datetime | None:
+    ts = row.get("create_time")
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _publish_cutoff(days: int | None) -> datetime | None:
     if not days or days <= 0:
+        return None
+    # 与表单「1周内」一致：按自然日计算，包含 cutoff 当天 00:00 之后发布的视频。
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return today_start - timedelta(days=int(days))
+
+
+def _filter_by_publish_days(items: list[dict], days: int | None) -> list[dict]:
+    cutoff = _publish_cutoff(days)
+    if cutoff is None:
         return items
-    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
     filtered: list[dict] = []
     for row in items:
-        ts = row.get("create_time")
-        if ts is None:
-            filtered.append(row)
-            continue
-        try:
-            created = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-        except (TypeError, ValueError):
-            filtered.append(row)
+        created = _parse_create_time(row)
+        if created is None:
             continue
         if created >= cutoff:
             filtered.append(row)
-    return filtered or items
+    return filtered
+
+
+def _newest_create_time(items: list[dict]) -> datetime | None:
+    times = [_parse_create_time(row) for row in items]
+    valid = [ts for ts in times if ts is not None]
+    return max(valid) if valid else None
 
 
 def _finalize_videos(
@@ -179,9 +197,18 @@ class DouyinProfileVideosTool(DouyinProfileTool):
                 await page.wait_for_selector('[data-e2e="user-detail"]', state="attached", timeout=15000)
             except Exception:
                 pass
-            for _ in range(8):
-                if len(api_items) >= limit:
+            cutoff = _publish_cutoff(days)
+            max_scroll_rounds = 12 if cutoff else 8
+            for _ in range(max_scroll_rounds):
+                if len(api_items) >= limit and cutoff is None:
                     break
+                filtered_preview = _filter_by_publish_days(list(api_items.values()), days)
+                if cutoff is not None:
+                    if len(filtered_preview) >= limit:
+                        break
+                    newest = _newest_create_time(list(api_items.values()))
+                    if newest is not None and newest < cutoff:
+                        break
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="fast")
                 try:
                     await page.mouse.wheel(0, 1200)
@@ -189,10 +216,13 @@ class DouyinProfileVideosTool(DouyinProfileTool):
                     pass
                 await page.wait_for_timeout(800)
 
-            if len(api_items) < limit:
+            if len(api_items) < limit or (cutoff is not None and len(_filter_by_publish_days(list(api_items.values()), days)) < limit):
                 template_url = await self.pick_api_template_url(page, donors)
                 if template_url:
-                    data = await self.fetch_self_works(page, template_url, sec_uid, limit=max(limit, 15))
+                    fetch_limit = max(limit, 15)
+                    if cutoff is not None:
+                        fetch_limit = max(fetch_limit, limit * 3)
+                    data = await self.fetch_self_works(page, template_url, sec_uid, limit=fetch_limit)
                     for row in extract_aweme_items_from_json(data):
                         api_items.setdefault(row["aweme_id"], row)
         finally:
@@ -204,6 +234,10 @@ class DouyinProfileVideosTool(DouyinProfileTool):
         filtered_rows = _filter_by_publish_days(list(api_items.values()), days)
         filtered_items = {row["aweme_id"]: row for row in filtered_rows if row.get("aweme_id")}
 
+        diagnostic_extra = None
+        if days and days > 0 and api_items and not filtered_rows:
+            diagnostic_extra = f"主页近 {days} 天内未找到可抓取视频"
+
         videos, diagnostic = _finalize_videos(
             filtered_items,
             limit=limit,
@@ -211,6 +245,7 @@ class DouyinProfileVideosTool(DouyinProfileTool):
             sec_uid=sec_uid,
             capture_method="profile_url_api_listen",
             priority_vid=priority_vid,
+            diagnostic=diagnostic_extra,
         )
         capture = "profile_url_api_listen" if videos else "profile_url_empty"
         return videos, diagnostic, capture

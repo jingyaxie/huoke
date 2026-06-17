@@ -161,6 +161,8 @@ class DouyinCommentCrawler:
             )
             if comment_days is not None:
                 cutoff = _days_cutoff_ts(comment_days)
+                before_count = len(payload.get("comments") or [])
+                api_total = int(payload.get("api_total_top_comments") or before_count or 0)
                 comments_map = {
                     str(row.get("comment_id")): row
                     for row in (payload.get("comments") or [])
@@ -177,6 +179,10 @@ class DouyinCommentCrawler:
                     [row for row in filtered if not row.get("parent_comment_id")]
                 )
                 payload["comment_days"] = comment_days
+                if not filtered and api_total > 0:
+                    payload["warning"] = (
+                        f"接口返回 {api_total} 条评论，近 {comment_days} 天时间窗内 0 条"
+                    )
             payload["platform"] = PLATFORM
             payload["profile_context"] = {
                 "profile_url": parsed.get("profile_url") or profile_url,

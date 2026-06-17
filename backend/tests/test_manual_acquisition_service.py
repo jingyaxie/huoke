@@ -87,3 +87,29 @@ def test_enrich_manual_maps_publish_time_range_and_splits_comment_days():
     assert params["video_publish_days"] == 7
     assert params["comment_days"] == 3
     assert "days" not in params
+
+
+def test_infer_manual_url_mode_profile():
+    from app.services.manual_acquisition_service import infer_manual_url_mode
+
+    url = "https://www.douyin.com/user/MS4wLjABAAAAR-hiJNkDpOJIXZ7D"
+    assert infer_manual_url_mode(url, "douyin") == "account_home"
+
+
+def test_enrich_manual_reconciles_profile_url_for_single_video_intent():
+    brief = TaskBrief(title="手动", platform="douyin", goals={})
+    profile = "https://www.douyin.com/user/MS4wLjABAAAAR-hiJNkDpOJIXZ7D"
+    brief = enrich_manual_acquisition_brief(
+        brief,
+        {
+            "acquisition_mode": "single_video",
+            "input_url": profile,
+            "comment_days": 3,
+            "crawl_video_limit": 10,
+        },
+    )
+    assert manual_acquisition_mode(brief) == "account_home"
+    assert brief.goals["profile_url"] == profile
+    plan = build_manual_acquisition_plan(brief, {})
+    assert plan is not None
+    assert plan["steps"][0]["action"] == "crawl_profile"

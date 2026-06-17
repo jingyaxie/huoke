@@ -242,26 +242,31 @@ onUnmounted(() => {
 
 .brand-block {
   margin: 22px 16px 18px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(31, 155, 255, 0.28);
-  background: rgba(8, 14, 28, 0.7);
-  box-shadow: 0 16px 28px rgba(3, 7, 18, 0.45);
+  padding: 18px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 155, 255, 0.32);
+  background: linear-gradient(145deg, rgba(12, 22, 42, 0.85) 0%, rgba(8, 14, 28, 0.75) 100%);
+  box-shadow: 0 16px 28px rgba(3, 7, 18, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .brand-title {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  color: var(--sidebar-text-strong);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  line-height: 1.25;
+  background: linear-gradient(135deg, #ffffff 0%, #b8e4ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .brand-sub {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--sidebar-text-muted);
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: rgba(148, 180, 210, 0.88);
+  letter-spacing: 0.3px;
+  line-height: 1.4;
 }
 
 .sidebar-divider {

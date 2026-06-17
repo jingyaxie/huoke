@@ -19,6 +19,7 @@ from app.services.supervisor_crawl_helpers import (
     build_url_revisit_decision,
     effective_crawl_video_limit,
     prepare_plan_recrawl,
+    reset_crawl_evaluate_gate_state,
     should_resume_crawl_on_no_match,
     infer_suspend_next_action as infer_skill_flow_suspend_next_action,
 )
@@ -284,6 +285,8 @@ def reset_supervisor_state_for_manual_retry(
     state["stale_cycles"] = 0
     state["_repeat_action_count"] = 0
     state.pop("_repeat_action", None)
+    state.pop("completion_outcome", None)
+    reset_crawl_evaluate_gate_state(state)
 
     from app.services.supervisor_crawl_helpers import prepare_plan_recrawl
 

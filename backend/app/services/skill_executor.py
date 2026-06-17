@@ -765,7 +765,16 @@ class SkillExecutor:
                     "videos_processed": videos_processed,
                     "results": result_rows,
                 }
-            summary = f"主页链接共处理 {videos_processed} 个视频，抓取 {total_captured} 条评论"
+            api_total = sum(int(r.get("api_total_top_comments") or 0) for r in results)
+            time_window = comment_days if comment_days is not None else search_days
+            if total_captured <= 0 and videos_processed > 0 and api_total > 0 and time_window:
+                filter_note = (
+                    f"主页链接共处理 {videos_processed} 个视频，"
+                    f"近 {time_window} 天内 0 条评论（接口共约 {api_total} 条，均被时间窗过滤）"
+                )
+            else:
+                filter_note = ""
+            summary = filter_note or f"主页链接共处理 {videos_processed} 个视频，抓取 {total_captured} 条评论"
             payload: dict[str, Any] = {
                 "skill_id": skill.id,
                 "skill_name": skill.name,
@@ -779,7 +788,7 @@ class SkillExecutor:
                 "total_comments_captured": total_captured,
                 "output_files": [str(p) for p in outputs],
                 "results": result_rows,
-                "diagnostic": error,
+                "diagnostic": filter_note or error,
             }
             watched = meta.get("watched_content_ids")
             if isinstance(watched, list) and watched:

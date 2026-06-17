@@ -230,6 +230,7 @@ class CommentCrawlerService:
         limit: int = 5,
         show_browser: bool = False,
         days: int = 3,
+        comment_days: int | None = None,
         *,
         max_comments: int = 200,
         existing_page=None,
@@ -243,6 +244,8 @@ class CommentCrawlerService:
             crawl_kwargs["existing_page"] = existing_page
         if video_publish_days is not None:
             crawl_kwargs["video_publish_days"] = video_publish_days
+        if comment_days is not None:
+            crawl_kwargs["comment_days"] = comment_days
         results, outputs, diagnostic, session_meta = await backend.crawl_profile_comments(
             profile_url=profile_url,
             limit=limit,

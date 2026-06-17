@@ -32,11 +32,41 @@ def test_reset_supervisor_state_for_manual_retry_after_crawl_failed():
     decision = plan_driven_supervisor_decision(plan, brief, state)
     assert decision is not None
     assert decision.get("action") == "crawl_keyword"
-    brief = TaskBrief(keyword="团餐配送", goals={"target_leads": 10, "video_limit": 1}, platform="douyin")
-    plan = build_supervisor_execution_plan(brief, {})
-    actions = [s["action"] for s in plan["steps"]]
+    brief2 = TaskBrief(keyword="团餐配送", goals={"target_leads": 10, "video_limit": 1}, platform="douyin")
+    plan2 = build_supervisor_execution_plan(brief2, {})
+    actions = [s["action"] for s in plan2["steps"]]
     assert actions == ["crawl_keyword", "query_stats", "complete"]
-    assert plan["current_index"] == 0
+    assert plan2["current_index"] == 0
+
+
+def test_reset_manual_retry_after_crawl_profile_failed_skill_flow_brief():
+    """手动获客主页任务（skill_flow brief）抓取失败后，继续执行应回到 crawl_profile。"""
+    brief = TaskBrief(
+        keyword="",
+        platform="douyin",
+        goals={
+            "target_leads": 50,
+            "comment_days": 3,
+            "execution_mode": "skill_flow",
+            "acquisition_mode": "account_home",
+            "profile_url": "https://www.douyin.com/user/test",
+            "crawl_video_limit": 10,
+        },
+        agent_strategy="douyin_supervisor",
+    )
+    plan = build_supervisor_execution_plan(brief, {})
+    plan["steps"][0]["status"] = "failed"
+    state = {
+        "suspended": True,
+        "wake_reason": "抓取失败",
+        "execution_plan": plan,
+    }
+    reset_supervisor_state_for_manual_retry(state, plan, brief=brief)
+    assert plan["steps"][0]["action"] == "crawl_profile"
+    assert plan["steps"][0]["status"] == "pending"
+    decision = plan_driven_supervisor_decision(plan, brief, state)
+    assert decision is not None
+    assert decision.get("action") == "crawl_profile"
 
 
 def test_plan_driven_decide_starts_with_crawl():

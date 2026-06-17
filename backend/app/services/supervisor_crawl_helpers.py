@@ -286,6 +286,10 @@ def should_resume_crawl_on_no_match(
 ) -> bool:
     if not is_skill_flow_brief(brief):
         return False
+    # 手动获客（主页/单视频）一轮抓取后不应因「0 精准线索」回退重抓同一链接
+    mode = str(brief.goals.get("acquisition_mode") or "").strip().lower()
+    if mode in {"account_home", "single_video"}:
+        return False
     gate = crawl_evaluate_gate(brief, state)
     if gate.force_evaluate or gate.suspend:
         return False
@@ -332,7 +336,7 @@ def prepare_plan_recrawl(
         if not isinstance(step, dict):
             continue
         action = str(step.get("action") or "")
-        if action in {"crawl_keyword", "query_stats"}:
+        if action in CRAWL_SUPERVISOR_ACTIONS or action == "query_stats":
             step["status"] = "pending"
         elif action in OUTREACH_LOOP_ACTIONS:
             step["status"] = "pending"

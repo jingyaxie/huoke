@@ -38,10 +38,11 @@
 
         <el-form-item :label="urlLabel" required>
           <el-input v-model="form.inputUrl" :placeholder="urlPlaceholder" />
+          <p v-if="urlHint" class="field-hint">{{ urlHint }}</p>
           <p v-if="urlError" class="field-hint error">{{ urlError }}</p>
         </el-form-item>
 
-        <el-form-item v-if="form.intent === 'account_home'" label="扫描视频数">
+        <el-form-item v-if="effectiveIntent === 'account_home'" label="扫描视频数">
           <el-input-number v-model="form.crawlVideoLimit" :min="1" :max="50" />
         </el-form-item>
 
@@ -152,7 +153,7 @@ import {
   validateRequiredScopeFields,
 } from "../utils/huokeTaskForm";
 import { buildManualPreflightPayload } from "../utils/huokeTaskPreflight";
-import { deriveManualTaskName, validateManualTaskUrl } from "../utils/manualTaskForm";
+import { deriveManualTaskName, detectManualUrlIntent, manualUrlIntentHint, validateManualTaskUrl } from "../utils/manualTaskForm";
 import { validateTaskPresetSelection } from "../utils/presetSelection";
 
 const props = defineProps({
@@ -175,7 +176,7 @@ const selectedDmPresetIds = ref([]);
 const settings = ref({ ...DEFAULT_INTERACTION_SETTINGS });
 
 const form = reactive({
-  intent: "single_video",
+  intent: "account_home",
   platform: "douyin",
   browserMode: "headed",
   inputUrl: "",
@@ -214,10 +215,14 @@ const commentOptions = computed(() =>
 );
 const evaluationTemplates = computed(() => capabilities.value?.evaluation_templates || []);
 const urlError = computed(() => validateManualTaskUrl(form.inputUrl, form.intent, form.platform));
-const urlLabel = computed(() => (form.intent === "single_video" ? "视频链接" : "主页链接"));
+const urlHint = computed(() => manualUrlIntentHint(form.inputUrl, form.intent, form.platform));
+const effectiveIntent = computed(
+  () => detectManualUrlIntent(form.inputUrl, form.platform) || form.intent,
+);
+const urlLabel = computed(() => (effectiveIntent.value === "single_video" ? "视频链接" : "主页链接"));
 const urlPlaceholder = computed(() =>
-  form.intent === "account_home"
-    ? "粘贴博主账号主页链接，系统将定期扫描其新视频并抓取评论"
+  effectiveIntent.value === "account_home"
+    ? "粘贴博主账号主页链接，系统将从主页获取视频列表并抓取评论"
     : "粘贴单条视频详情页链接",
 );
 
@@ -276,6 +281,15 @@ async function reloadPresets() {
 }
 
 watch(
+  () => [form.inputUrl, form.platform],
+  () => {
+    if (!visible.value) return;
+    const detected = detectManualUrlIntent(form.inputUrl, form.platform);
+    if (detected) form.intent = detected;
+  },
+);
+
+watch(
   () => form.platform,
   async () => {
     if (!visible.value) return;
@@ -330,7 +344,7 @@ watch(
       preflightAcknowledged.value = false;
       try {
         const payload = buildManualPreflightPayload({
-          intent: form.intent,
+          intent: effectiveIntent.value,
           name: deriveManualTaskName(form.inputUrl, form.intent),
           platform: form.platform,
           inputUrl: form.inputUrl.trim(),
@@ -357,7 +371,7 @@ watch(
 );
 
 function resetForm() {
-  form.intent = "single_video";
+  form.intent = "account_home";
   form.platform = "douyin";
   form.browserMode = "headed";
   form.inputUrl = "";
@@ -379,9 +393,9 @@ async function submit() {
     ElMessage.warning(urlError.value);
     return;
   }
-  const taskName = deriveManualTaskName(form.inputUrl, form.intent);
+  const taskName = deriveManualTaskName(form.inputUrl, effectiveIntent.value);
   const validationError = validateRequiredScopeFields(
-    manualTaskType.value,
+    effectiveIntent.value === "account_home" ? "home_manual" : "video_manual",
     {
       input_url: form.inputUrl.trim(),
       comment_days: form.commentDays,
@@ -416,7 +430,7 @@ async function submit() {
     syncRequestContext();
     await putInteractionSettings(settings.value).catch(() => {});
     const payload = buildManualTaskPayload({
-      intent: form.intent,
+      intent: effectiveIntent.value,
       name: taskName,
       platform: form.platform,
       inputUrl: form.inputUrl.trim(),

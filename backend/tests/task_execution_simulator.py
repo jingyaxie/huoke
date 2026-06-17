@@ -122,18 +122,24 @@ def mock_skill_result(
             "video_url": state.get("_last_video_url") or brief.goals.get("video_url"),
         }
     if action == "crawl_profile":
+        limit = int(brief.goals.get("crawl_video_limit") or 5)
+        zero = bool(state.get("_sim_profile_zero_comments"))
+        captured = 0 if zero else 18
         return {
             "status": "completed",
-            "total_comments_captured": 18,
-            "videos_processed": int(brief.goals.get("crawl_video_limit") or 5),
+            "total_comments_captured": captured,
+            "videos_processed": limit,
             "profile_url": brief.goals.get("profile_url"),
+            "watched_content_ids": [f"aweme-{i}" for i in range(min(limit, 3))],
         }
     if action == "evaluate_leads":
+        inventory = int(state.get("comments_captured") or 0)
+        qualified = max(target, 3) if inventory > 0 else 0
         return {
             "status": "completed",
-            "evaluated": 20,
-            "qualified": max(target, 3),
-            "summary": f"评估完成，{max(target, 3)} 条符合标准",
+            "evaluated": max(inventory, 20) if inventory > 0 else 0,
+            "qualified": qualified,
+            "summary": f"评估完成，{qualified} 条符合标准",
         }
     if action == "query_stats":
         return {"status": "completed", "result": stats}
@@ -223,11 +229,9 @@ def simulate_planned_execution(
             dry_run=True,
             params=params,
         )
-        if action in {"crawl_keyword", "crawl_content_url", "crawl_profile"} and ok:
-            state["crawl_done"] = True
         if action == "evaluate_leads":
-            target = effective_target_leads(brief, state) or int(brief.goals.get("target_leads") or 0)
-            state["leads_qualified"] = max(target, 3)
+            qualified = int(skill_result.get("qualified") or 0)
+            state["leads_qualified"] = qualified
         if action in {"reply", "dm", "follow"} and ok:
             batch = 1
             inline = skill_result.get("inline_outreach")

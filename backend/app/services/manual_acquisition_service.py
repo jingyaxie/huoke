@@ -1,6 +1,7 @@
 """手动获客（账号主页 / 单条视频）→ Huoke Agent brief 与执行计划。"""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.services.task_brief_service import TaskBrief
@@ -9,11 +10,44 @@ from app.services.supervisor_outreach import outreach_priority_from_brief
 
 MANUAL_ACQUISITION_MODES = frozenset({"single_video", "account_home"})
 
+_PROFILE_URL_PATTERNS: dict[str, tuple[str, ...]] = {
+    "douyin": (r"douyin\.com/user/", r"iesdouyin\.com/share/user/"),
+    "xiaohongshu": (r"xiaohongshu\.com/user/profile/",),
+    "kuaishou": (r"kuaishou\.com/profile/", r"v\.kuaishou\.com/"),
+}
+_VIDEO_URL_PATTERNS: dict[str, tuple[str, ...]] = {
+    "douyin": (r"douyin\.com/video/", r"iesdouyin\.com/share/video/"),
+    "xiaohongshu": (r"xiaohongshu\.com/explore/", r"xiaohongshu\.com/discovery/item/"),
+    "kuaishou": (r"kuaishou\.com/short-video/", r"v\.kuaishou\.com/short"),
+}
+
 _OUTREACH_LABELS = {
     "reply": "回复评论",
     "dm": "私信用户",
     "follow": "关注用户",
 }
+
+
+def infer_manual_url_mode(input_url: str, platform: str) -> str | None:
+    """根据链接判断手动获客方式；无法判断时返回 None。"""
+    raw = str(input_url or "").strip()
+    if not raw:
+        return None
+    plat = str(platform or "douyin").strip().lower()
+    profile_hits = any(re.search(pat, raw, re.I) for pat in _PROFILE_URL_PATTERNS.get(plat, ()))
+    video_hits = any(re.search(pat, raw, re.I) for pat in _VIDEO_URL_PATTERNS.get(plat, ()))
+    if profile_hits and not video_hits:
+        return "account_home"
+    if video_hits and not profile_hits:
+        return "single_video"
+    return None
+
+
+def reconcile_manual_acquisition_mode(mode: str, input_url: str, platform: str) -> str:
+    inferred = infer_manual_url_mode(input_url, platform)
+    if inferred and inferred in MANUAL_ACQUISITION_MODES:
+        return inferred
+    return mode if mode in MANUAL_ACQUISITION_MODES else "account_home"
 
 
 def manual_acquisition_mode(brief: TaskBrief) -> str | None:
@@ -36,7 +70,11 @@ def enrich_manual_acquisition_brief(brief: TaskBrief, payload: dict[str, Any] | 
     input_url = str(payload.get("input_url") or payload.get("video_url") or payload.get("profile_url") or "").strip()
     if input_url:
         brief.goals["input_url"] = input_url
+    platform = str(payload.get("platform") or brief.platform or "douyin")
     mode = str(brief.goals.get("acquisition_mode") or mode or "").strip().lower()
+    if input_url and mode in MANUAL_ACQUISITION_MODES:
+        mode = reconcile_manual_acquisition_mode(mode, input_url, platform)
+        brief.goals["acquisition_mode"] = mode
     if mode == "single_video":
         brief.goals["video_url"] = str(payload.get("video_url") or input_url)
     elif mode == "account_home":

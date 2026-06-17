@@ -43,21 +43,9 @@ INTENT_SPECS: tuple[ExternalTaskIntentSpec, ...] = (
         ],
     ),
     ExternalTaskIntentSpec(
-        intent="single_video",
-        label="单视频手动获客",
-        description="从指定视频链接抓取评论并触达。",
-        lead_task_types=["video_manual"],
-        default_comment_days=3,
-        scope_fields=[
-            ExternalTaskFieldSpec(key="input_url", type="string", required=True, label="视频链接"),
-            ExternalTaskFieldSpec(key="comment_days", type="integer", label="评论天数"),
-            ExternalTaskFieldSpec(key="publish_time_range", type="string", label="视频发布时间筛选"),
-        ],
-    ),
-    ExternalTaskIntentSpec(
         intent="account_home",
         label="账号主页手动获客",
-        description="浏览指定账号主页，抓取评论并触达。",
+        description="浏览指定账号主页，获取视频列表并抓取评论触达。",
         lead_task_types=["home_manual"],
         default_comment_days=3,
         scope_fields=[
@@ -65,6 +53,18 @@ INTENT_SPECS: tuple[ExternalTaskIntentSpec, ...] = (
             ExternalTaskFieldSpec(key="comment_days", type="integer", label="评论天数"),
             ExternalTaskFieldSpec(key="publish_time_range", type="string", label="视频发布时间筛选"),
             ExternalTaskFieldSpec(key="crawl_video_limit", type="integer", label="扫描视频数"),
+        ],
+    ),
+    ExternalTaskIntentSpec(
+        intent="single_video",
+        label="单视频手动获客",
+        description="从指定单条视频链接抓取评论并触达。",
+        lead_task_types=["video_manual"],
+        default_comment_days=3,
+        scope_fields=[
+            ExternalTaskFieldSpec(key="input_url", type="string", required=True, label="视频链接"),
+            ExternalTaskFieldSpec(key="comment_days", type="integer", label="评论天数"),
+            ExternalTaskFieldSpec(key="publish_time_range", type="string", label="视频发布时间筛选"),
         ],
     ),
 )
@@ -149,6 +149,12 @@ def normalize_external_create(request: ExternalTaskCreateRequest) -> tuple[str, 
     outreach = request.outreach.model_dump(exclude_none=True)
     constraints = _normalize_constraints(outreach.get("constraints"))
 
+    input_url = str(scope.get("input_url") or "").strip()
+    if input_url and intent in {"single_video", "account_home"}:
+        from app.services.manual_acquisition_service import reconcile_manual_acquisition_mode
+
+        intent = reconcile_manual_acquisition_mode(intent, input_url, request.platform)
+
     acquisition_mode = {
         "keyword_auto": "keyword_auto",
         "single_video": "single_video",
@@ -167,7 +173,6 @@ def normalize_external_create(request: ExternalTaskCreateRequest) -> tuple[str, 
 
     keyword = str(scope.get("keyword") or "").strip()
     region = str(scope.get("region") or "").strip()
-    input_url = str(scope.get("input_url") or "").strip()
     target_count = scope.get("target_count")
     comment_days = scope.get("comment_days")
     publish_days = _map_publish_time_range(scope.get("publish_time_range"))

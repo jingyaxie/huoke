@@ -85,6 +85,21 @@ def test_should_not_resume_crawl_when_gate_forces_evaluate():
     assert should_resume_crawl_on_no_match(brief, state) is False
 
 
+def test_should_not_resume_crawl_for_account_home_manual():
+    brief = TaskBrief(
+        keyword="",
+        platform="douyin",
+        goals={
+            "target_leads": 50,
+            "execution_mode": "skill_flow",
+            "acquisition_mode": "account_home",
+            "profile_url": "https://www.douyin.com/user/test",
+        },
+    )
+    state = {"evaluation_done": True, "leads_qualified": 0}
+    assert should_resume_crawl_on_no_match(brief, state) is False
+
+
 def test_guard_blocks_crawl_when_inventory_high():
     brief = _skill_flow_brief(min_comments_before_evaluate=50)
     decision = guard_supervisor_action(

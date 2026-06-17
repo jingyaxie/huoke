@@ -81,7 +81,7 @@ export function getScopeFieldLabel(taskType, fieldKey, capabilities, fallback) {
 
 export function listManualModeOptions(capabilities) {
   const defaults = [
-    { value: "account_home", label: "账号客户", description: "关注博主主页，定期扫描新视频并抓取评论" },
+    { value: "account_home", label: "账号客户", description: "粘贴博主主页链接，扫描主页视频列表并抓取评论" },
     { value: "single_video", label: "单条视频获客", description: "从单条视频互动人群中提取线索" },
   ];
   const intents = capabilities?.intents || [];
