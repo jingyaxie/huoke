@@ -7,15 +7,19 @@
       </div>
     </header>
 
-    <iframe
-      ref="frameRef"
-      class="portal-login-frame"
-      :src="loginUrl"
-      title="盈小蚁登录"
-      scrolling="yes"
-      referrerpolicy="no-referrer-when-downgrade"
-      @load="pingFrame"
-    />
+    <div class="portal-login-body">
+      <div class="portal-login-frame-wrap">
+        <iframe
+          ref="frameRef"
+          class="portal-login-frame"
+          :src="loginUrl"
+          title="盈小蚁登录"
+          scrolling="yes"
+          referrerpolicy="no-referrer-when-downgrade"
+          @load="pingFrame"
+        />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -103,10 +107,31 @@ onUnmounted(() => {
   color: #0f172a;
 }
 
-.portal-login-frame {
+.portal-login-body {
   flex: 1;
-  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   min-height: 0;
+  padding: 32px 24px;
+  overflow: auto;
+  background: linear-gradient(160deg, #f0fdfa 0%, #f8fafc 45%, #eff6ff 100%);
+}
+
+.portal-login-frame-wrap {
+  width: min(440px, 100%);
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.portal-login-frame {
+  display: block;
+  width: 100%;
+  height: 520px;
   border: 0;
   background: #fff;
 }
