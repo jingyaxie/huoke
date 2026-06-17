@@ -13,7 +13,10 @@
           v-for="section in navSections"
           :key="section.label"
           class="nav-section"
-          :class="{ 'is-collapsed': !isSectionExpanded(section) }"
+          :class="{
+            'is-collapsed': !isSectionExpanded(section),
+            'section-has-active': sectionHasActiveItem(section),
+          }"
         >
           <button
             type="button"
@@ -274,7 +277,13 @@ onUnmounted(() => {
 }
 
 .nav-section {
-  padding: 6px 12px 2px;
+  padding: 4px 12px 0;
+}
+
+.nav-section + .nav-section {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .section-title-btn {
@@ -282,24 +291,28 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  margin: 0 0 4px;
-  padding: 8px 12px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  margin: 0 0 2px;
+  padding: 8px 8px 8px;
+  border: none;
+  border-radius: 0;
   background: transparent;
-  color: var(--sidebar-text);
+  color: var(--sidebar-text-strong);
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 .section-title-btn:hover {
-  background: var(--sidebar-accent-soft);
-  border-color: rgba(0, 229, 255, 0.22);
-  color: var(--sidebar-text-strong);
+  color: #fff;
+}
+
+.section-has-active .section-title-btn {
+  color: var(--sidebar-accent);
 }
 
 .section-title-text {
@@ -309,16 +322,17 @@ onUnmounted(() => {
 
 .section-chevron {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   margin-left: 8px;
-  border-right: 2px solid var(--sidebar-text-muted);
-  border-bottom: 2px solid var(--sidebar-text-muted);
+  border-right: 1.5px solid var(--sidebar-text);
+  border-bottom: 1.5px solid var(--sidebar-text);
   transform: rotate(45deg);
   transition: transform 0.15s ease, border-color 0.15s ease;
   flex-shrink: 0;
 }
 
+.section-has-active .section-chevron,
 .section-title-btn:hover .section-chevron {
   border-color: var(--sidebar-accent);
 }
@@ -328,7 +342,9 @@ onUnmounted(() => {
 }
 
 .section-items {
-  padding-bottom: 4px;
+  margin: 0 0 8px 10px;
+  padding: 2px 0 2px 12px;
+  border-left: 1px solid rgba(148, 163, 184, 0.24);
 }
 
 .nav-section.is-collapsed .section-title-btn {
@@ -341,12 +357,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 2px 0;
-  padding: 9px 12px 9px 16px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--sidebar-text);
   text-decoration: none;
   font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -369,18 +387,18 @@ onUnmounted(() => {
 
 .nav-indicator {
   position: absolute;
-  left: 0;
+  left: -13px;
   top: 50%;
-  width: 3px;
-  height: 24px;
-  border-radius: 0 4px 4px 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background: transparent;
   transform: translateY(-50%);
 }
 
 .nav-link.active .nav-indicator {
   background: var(--sidebar-accent);
-  box-shadow: 0 0 10px rgba(0, 229, 255, 0.8);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.75);
 }
 
 .sidebar-foot {
