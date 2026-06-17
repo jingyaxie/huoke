@@ -9,51 +9,35 @@
       <div class="sidebar-divider" />
 
       <nav class="nav-scroll">
-        <template v-if="portalEnabled">
-          <div v-for="section in cloudNavSections" :key="section.label" class="nav-section">
-            <div class="section-title">{{ section.label }}</div>
+        <div
+          v-for="section in navSections"
+          :key="section.label"
+          class="nav-section"
+          :class="{ 'is-collapsed': !isSectionExpanded(section) }"
+        >
+          <button
+            type="button"
+            class="section-title-btn"
+            :aria-expanded="isSectionExpanded(section)"
+            @click="toggleSection(section.label)"
+          >
+            <span class="section-title-text">{{ section.label }}</span>
+            <span class="section-chevron" :class="{ expanded: isSectionExpanded(section) }" aria-hidden="true" />
+          </button>
+
+          <div v-show="isSectionExpanded(section)" class="section-items">
             <router-link
               v-for="item in section.items"
               :key="item.to"
               :to="item.to"
               class="nav-link"
-              :class="{ active: isActive(item.to) }"
+              :class="{ active: isActive(item.to), 'nav-link-local': section.local }"
             >
               <span class="nav-indicator" />
               <span>{{ item.label }}</span>
             </router-link>
           </div>
-
-          <div class="nav-section">
-            <div class="section-title">AI获客管理</div>
-            <router-link
-              v-for="item in localNavItems"
-              :key="item.to"
-              :to="item.to"
-              class="nav-link nav-link-local"
-              :class="{ active: isActive(item.to) }"
-            >
-              <span class="nav-indicator" />
-              <span>{{ item.label }}</span>
-            </router-link>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="nav-section">
-            <div class="section-title">{{ localNavSection.label }}</div>
-            <router-link
-              v-for="item in localNavItems"
-              :key="item.to"
-              :to="item.to"
-              class="nav-link"
-              :class="{ active: isActive(item.to) }"
-            >
-              <span class="nav-indicator" />
-              <span>{{ item.label }}</span>
-            </router-link>
-          </div>
-        </template>
+        </div>
       </nav>
 
       <div class="sidebar-foot">
@@ -84,7 +68,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import {
@@ -105,8 +89,68 @@ const router = useRouter();
 
 const portalEnabled = isPortalEnabled();
 const cloudNavSections = CLOUD_NAV_SECTIONS.filter((s) => s.label !== "AI获客管理");
-const localNavSection = LOCAL_NAV_SECTION;
 const localNavItems = LOCAL_NAV_SECTION.items;
+const SECTION_STATE_KEY = "huoke_sidebar_sections";
+
+const navSections = computed(() => {
+  if (!portalEnabled) {
+    return [{ label: LOCAL_NAV_SECTION.label, items: localNavItems, local: false }];
+  }
+  return [
+    ...cloudNavSections.map((section) => ({ ...section, local: false })),
+    { label: "AI获客管理", items: localNavItems, local: true },
+  ];
+});
+
+const sectionExpanded = ref(loadSectionState());
+
+function loadSectionState() {
+  try {
+    const raw = localStorage.getItem(SECTION_STATE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSectionState() {
+  localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(sectionExpanded.value));
+}
+
+function sectionHasActiveItem(section) {
+  return section.items.some((item) => isActive(item.to));
+}
+
+function isSectionExpanded(section) {
+  const saved = sectionExpanded.value[section.label];
+  if (typeof saved === "boolean") return saved;
+  return sectionHasActiveItem(section);
+}
+
+function toggleSection(label) {
+  const section = navSections.value.find((item) => item.label === label);
+  if (!section) return;
+  sectionExpanded.value = {
+    ...sectionExpanded.value,
+    [label]: !isSectionExpanded(section),
+  };
+  saveSectionState();
+}
+
+function syncActiveSection() {
+  let changed = false;
+  const next = { ...sectionExpanded.value };
+  for (const section of navSections.value) {
+    if (sectionHasActiveItem(section) && next[section.label] === false) {
+      next[section.label] = true;
+      changed = true;
+    }
+  }
+  if (changed) {
+    sectionExpanded.value = next;
+    saveSectionState();
+  }
+}
 
 const portalLoggedIn = ref(isPortalAuthenticated());
 
@@ -147,7 +191,12 @@ function handlePortalLogout() {
 }
 
 onMounted(() => {
+  syncActiveSection();
   window.addEventListener("huoke-portal-auth-changed", onPortalAuthChanged);
+});
+
+watch(() => route.path, () => {
+  syncActiveSection();
 });
 
 onUnmounted(() => {
@@ -163,34 +212,59 @@ onUnmounted(() => {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: var(--sidebar-width);
   flex-shrink: 0;
   background: var(--sidebar-bg);
-  color: #f8fafc;
+  color: var(--sidebar-text);
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: 0 16px 32px rgba(1, 5, 14, 0.35);
+}
+
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top, var(--sidebar-glow), transparent 55%);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 
 .brand-block {
-  padding: 28px 20px 20px;
+  margin: 22px 16px 18px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 155, 255, 0.28);
+  background: rgba(8, 14, 28, 0.7);
+  box-shadow: 0 16px 28px rgba(3, 7, 18, 0.45);
 }
 
 .brand-title {
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  letter-spacing: 0.4px;
+  color: var(--sidebar-text-strong);
 }
 
 .brand-sub {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #6ee7b7;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--sidebar-text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 .sidebar-divider {
   height: 1px;
-  margin: 0 12px;
-  background: rgba(255, 255, 255, 0.1);
+  margin: 0 16px 4px;
+  background: var(--sidebar-border);
 }
 
 .nav-scroll {
@@ -200,14 +274,65 @@ onUnmounted(() => {
 }
 
 .nav-section {
-  padding: 16px 12px 8px;
+  padding: 6px 12px 2px;
 }
 
-.section-title {
-  padding: 0 12px 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
+.section-title-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--sidebar-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.section-title-btn:hover {
+  background: var(--sidebar-accent-soft);
+  border-color: rgba(0, 229, 255, 0.22);
+  color: var(--sidebar-text-strong);
+}
+
+.section-title-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.section-chevron {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-right: 2px solid var(--sidebar-text-muted);
+  border-bottom: 2px solid var(--sidebar-text-muted);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.section-title-btn:hover .section-chevron {
+  border-color: var(--sidebar-accent);
+}
+
+.section-chevron.expanded {
+  transform: rotate(-135deg);
+}
+
+.section-items {
+  padding-bottom: 4px;
+}
+
+.nav-section.is-collapsed .section-title-btn {
+  margin-bottom: 0;
 }
 
 .nav-link {
@@ -216,26 +341,30 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 2px 0;
-  padding: 10px 12px 10px 16px;
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.92);
+  padding: 9px 12px 9px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--sidebar-text);
   text-decoration: none;
-  font-size: 13px;
-  transition: background 0.15s ease, color 0.15s ease;
+  font-size: 12px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nav-link-local {
-  color: #a7f3d0;
+  color: #b8c5d6;
 }
 
 .nav-link:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  background: var(--sidebar-accent-soft);
+  border-color: rgba(0, 229, 255, 0.28);
+  color: var(--sidebar-text-strong);
 }
 
 .nav-link.active {
-  background: rgba(191, 219, 254, 0.18);
+  background: rgba(31, 155, 255, 0.14);
+  border-color: rgba(31, 155, 255, 0.35);
   color: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.2), 0 0 16px rgba(0, 229, 255, 0.12);
 }
 
 .nav-indicator {
@@ -250,17 +379,18 @@ onUnmounted(() => {
 }
 
 .nav-link.active .nav-indicator {
-  background: #34d399;
+  background: var(--sidebar-accent);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.8);
 }
 
 .sidebar-foot {
   padding: 14px 20px 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .foot-meta {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--sidebar-text-muted);
 }
 
 .main-column {
@@ -332,8 +462,9 @@ onUnmounted(() => {
 }
 
 .content-embed {
-  padding: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 900px) {

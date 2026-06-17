@@ -44,16 +44,23 @@ function onFrameLoad() {
 
 <style scoped>
 .cloud-embed {
-  height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  margin: -28px -32px;
+  height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
 }
 
 .cloud-frame {
+  flex: 1;
   display: block;
   width: 100%;
-  height: 100%;
-  min-height: calc(100vh - 56px);
+  min-height: 0;
   border: 0;
   background: #fff;
 }

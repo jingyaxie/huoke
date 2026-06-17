@@ -31,7 +31,9 @@ import {
   handlePortalMessage,
   isPortalAuthenticated,
   PORTAL_PING_MESSAGE,
+  readPortalAuth,
 } from "../utils/portalShell";
+import { mapH5PathToCloudRoute } from "../config/cloudNav";
 
 const router = useRouter();
 const route = useRoute();
@@ -49,18 +51,25 @@ function pingFrame() {
   }
 }
 
+function resolveRedirectTarget() {
+  if (typeof route.query.redirect === "string" && route.query.redirect) {
+    return route.query.redirect;
+  }
+  const authPath = readPortalAuth()?.path;
+  if (authPath) return mapH5PathToCloudRoute(authPath);
+  return "/cloud/dashboard";
+}
+
 function onMessage(event) {
   const result = handlePortalMessage(event);
   if (!result || result.navigate) return;
   if (!isPortalAuthenticated()) return;
-  const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/cloud/dashboard";
-  router.replace(redirect).catch(() => {});
+  router.replace(resolveRedirectTarget()).catch(() => {});
 }
 
 onMounted(() => {
   if (isPortalAuthenticated()) {
-    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/cloud/dashboard";
-    router.replace(redirect).catch(() => {});
+    router.replace(resolveRedirectTarget()).catch(() => {});
     return;
   }
   window.addEventListener("message", onMessage);

@@ -91,6 +91,20 @@ export function findCloudNavByRoute(path) {
   return null;
 }
 
+/** 将 H5 路径（/customer/dashboard）映射为壳层路由（/cloud/dashboard） */
+export function mapH5PathToCloudRoute(h5Path) {
+  const normalized = String(h5Path || "").trim();
+  if (!normalized) return "/cloud/dashboard";
+  const item = CLOUD_NAV_SECTIONS.flatMap((s) => s.items).find((entry) => {
+    return normalized === entry.h5Path || normalized.startsWith(`${entry.h5Path}/`);
+  });
+  if (item) return item.to;
+  if (normalized.startsWith("/customer/")) {
+    return `/cloud${normalized.slice("/customer".length)}`;
+  }
+  return "/cloud/dashboard";
+}
+
 export function buildCloudRoutes() {
   const routes = [];
   const seen = new Set();
@@ -98,7 +112,7 @@ export function buildCloudRoutes() {
   for (const item of allCloudItems) {
     if (seen.has(item.to)) continue;
     seen.add(item.to);
-    const routePath = item.to.replace(/^\/cloud\//, "");
+    const routePath = item.to.replace(/^\//, "");
     routes.push({
       path: routePath,
       name: `cloud-${item.key}`,

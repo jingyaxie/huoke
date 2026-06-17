@@ -7,7 +7,14 @@
   --primary: #2563eb;
   --accent: #ea580c;
   --sidebar-width: 240px;
-  --sidebar-bg: #535370;
+  --sidebar-bg: linear-gradient(180deg, rgba(10, 16, 30, 0.98), rgba(8, 12, 24, 0.98));
+  --sidebar-glow: rgba(0, 229, 255, 0.18);
+  --sidebar-text: #d0d7e2;
+  --sidebar-text-muted: #64748b;
+  --sidebar-text-strong: #e6f3ff;
+  --sidebar-accent: #00e5ff;
+  --sidebar-accent-soft: rgba(0, 229, 255, 0.14);
+  --sidebar-border: rgba(148, 163, 184, 0.18);
   --el-color-primary: #2563eb;
   --el-color-primary-light-3: #93c5fd;
   --el-color-primary-light-5: #bfdbfe;
