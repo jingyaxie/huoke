@@ -40,6 +40,7 @@ fi
 cd "$BACKEND"
 "$PY" -m pytest \
   tests/test_task_form_orchestration_audit.py \
+  tests/test_task_planned_execution_simulation.py \
   tests/test_task_orchestration_flow.py \
   tests/test_external_task_agent_e2e.py \
   tests/test_external_task_preflight.py \

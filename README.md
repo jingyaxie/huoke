@@ -142,6 +142,9 @@ pytest
 npm run test:task-flow
 # 或
 bash scripts/test_task_flow.sh
+
+# 仅编排后计划执行模拟（dry-run，不调用浏览器）
+cd backend && pytest tests/test_task_planned_execution_simulation.py -v
 ```
 
 编排任务相关：
