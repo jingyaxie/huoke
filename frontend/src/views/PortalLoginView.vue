@@ -119,7 +119,7 @@ onUnmounted(() => {
 }
 
 .portal-login-frame-wrap {
-  width: min(440px, 100%);
+  width: min(920px, calc(100vw - 48px));
   flex-shrink: 0;
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -131,7 +131,8 @@ onUnmounted(() => {
 .portal-login-frame {
   display: block;
   width: 100%;
-  height: 520px;
+  height: min(600px, calc(100vh - 140px));
+  min-height: 520px;
   border: 0;
   background: #fff;
 }
