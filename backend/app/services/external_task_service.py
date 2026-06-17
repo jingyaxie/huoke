@@ -296,4 +296,14 @@ def enrich_brief_from_external_config(brief, config: dict[str, Any]):
     elif config.get("headless") is False:
         brief.goals["show_browser"] = True
         brief.goals["headless"] = False
+
+    from app.core.antibot import headless_for_platform
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    platform = str(config.get("platform") or brief.platform or "douyin")
+    if settings.desktop_mode and not headless_for_platform(settings, platform):
+        brief.goals["show_browser"] = True
+        brief.goals["headless"] = False
+
     return brief

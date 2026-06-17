@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     frontend_origin: str = "http://localhost:5173"
     desktop_mode: bool = False
-    desktop_port: int = 8000
+    desktop_port: int = 18765
     frontend_dist_dir: Path = Field(default_factory=lambda: ROOT_DIR / "frontend" / "dist")
 
     douyin_home_url: str = "https://www.douyin.com"

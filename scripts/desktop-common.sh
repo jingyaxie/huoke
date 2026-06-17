@@ -2,6 +2,10 @@
 # 解析 Huoke 工程根目录（开发 / .app 打包后均可用）
 set -euo pipefail
 
+# 桌面版专用端口，避免与本地 dev 后端 (8000) 冲突导致 WebView 加载 API 404
+HUOKE_DESKTOP_PORT="${HUOKE_DESKTOP_PORT:-18765}"
+export HUOKE_DESKTOP_PORT
+
 ensure_desktop_path() {
   export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
 }

@@ -16,19 +16,14 @@
 
 <script setup>
 import { ref } from "vue";
-import { useRouter } from "vue-router";
 import AcquisitionJobsPanel from "../../components/AcquisitionJobsPanel.vue";
 import CreateManualTaskDialog from "../../components/CreateManualTaskDialog.vue";
 
-const router = useRouter();
 const panelRef = ref(null);
 const createOpen = ref(false);
 
-function onCreated(job) {
-  void panelRef.value?.loadJobs?.();
-  if (job?.job_id) {
-    router.push(`/tasks/jobs/${job.job_id}`);
-  }
+async function onCreated() {
+  await panelRef.value?.loadJobs?.();
 }
 </script>
 

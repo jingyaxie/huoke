@@ -13,7 +13,15 @@
       type="info"
       :closable="false"
       show-icon
-      title="存在排队中的任务，请确认平台账号已绑定登录，任务将自动执行。"
+      title="存在排队中的任务，Worker 将按顺序自动执行；若长时间无进展，请确认后端服务正常并已绑定平台账号。"
+    />
+
+    <el-alert
+      v-if="hasSuspendedJobs"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="部分任务已挂起（抓取或触达步骤失败），请点击操作列「继续执行」重试，或检查账号登录与浏览器环境。"
     />
 
     <el-alert
@@ -86,16 +94,16 @@
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-button
-            v-if="row.error && ['failed', 'dead_letter'].includes(row.status)"
+            v-if="row.error && (['failed', 'dead_letter'].includes(row.status) || row.display_status === 'suspended')"
             link
-            type="danger"
+            :type="row.display_status === 'suspended' ? 'warning' : 'danger'"
             size="small"
             class="status-btn"
             @click.stop="showFailure(row)"
           >
-            <TaskStatusBadge :status="row.status" />
+            <TaskStatusBadge :status="row.display_status || row.status" />
           </el-button>
-          <TaskStatusBadge v-else :status="row.status" />
+          <TaskStatusBadge v-else :status="row.display_status || row.status" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
@@ -105,7 +113,9 @@
               <el-button link type="primary" size="small" @click.stop="cancelOneJob(row.job.job_id)">关闭</el-button>
               <span class="action-sep">|</span>
             </template>
-            <el-button link type="primary" size="small" @click.stop="executeOneJob(row.job.job_id)">更新线索</el-button>
+            <el-button link type="primary" size="small" @click.stop="executeOneJob(row.job.job_id)">
+              {{ row.display_status === "suspended" ? "继续执行" : "更新线索" }}
+            </el-button>
             <span class="action-sep">|</span>
             <el-button link type="primary" size="small" @click.stop="openOutreach(row.job)">查看数据</el-button>
             <template v-if="canDeleteJob(row.status)">
@@ -157,6 +167,7 @@ import {
   filterAutoJobs,
   filterManualJobs,
   formatJobTime,
+  getJobDisplayStatus,
   getJobRowModel,
   manualAccountLabel,
   manualIntentLabel,
@@ -210,7 +221,12 @@ const pageStart = computed(() => (filteredRows.value.length ? (page.value - 1) *
 const pageEnd = computed(() => Math.min(page.value * pageSize, filteredRows.value.length));
 
 const dashboard = computed(() => computeDashboardFromJobs(modeJobs.value));
-const hasQueuedJobs = computed(() => modeJobs.value.some((job) => ["queued", "pending"].includes(job.status)));
+const hasQueuedJobs = computed(() =>
+  modeJobs.value.some((job) => getJobDisplayStatus(job) === "queued"),
+);
+const hasSuspendedJobs = computed(() =>
+  modeJobs.value.some((job) => getJobDisplayStatus(job) === "suspended"),
+);
 const hasFailedJobs = computed(() => modeJobs.value.some((job) => ["failed", "dead_letter"].includes(job.status)));
 
 function canDeleteJob(status) {
@@ -273,7 +289,9 @@ function openOutreach(job) {
 }
 
 function showFailure(row) {
-  ElMessageBox.alert(row.error || "任务执行失败", "失败详情", { type: "error" });
+  const title = row.display_status === "suspended" ? "挂起原因" : "失败详情";
+  const message = row.suspend_reason || row.error || "任务执行失败";
+  ElMessageBox.alert(message, title, { type: row.display_status === "suspended" ? "warning" : "error" });
 }
 
 function hasActiveJobs() {

@@ -9,8 +9,12 @@ from starlette.staticfiles import StaticFiles
 
 def mount_desktop_frontend(app: FastAPI, dist_dir: Path) -> None:
     """Desktop 模式：由 FastAPI 托管前端静态资源，与 /api 同源。"""
+    import logging
+
+    logger = logging.getLogger(__name__)
     dist = dist_dir.resolve()
     if not dist.is_dir():
+        logger.error("desktop frontend dist missing: %s", dist)
         return
 
     assets_dir = dist / "assets"

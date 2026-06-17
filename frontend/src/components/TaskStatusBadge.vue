@@ -14,8 +14,10 @@ const label = computed(() => jobStatusLabel(props.status));
 
 const tone = computed(() => {
   const status = props.status;
-  if (status === "running") return "running";
-  if (status === "queued" || status === "pending") return "queued";
+  if (status === "running" || status === "retrying") return "running";
+  if (status === "queued") return "queued";
+  if (status === "suspended") return "suspended";
+  if (status === "pending" || status === "waiting_start") return "waiting";
   if (status === "completed") return "completed";
   if (status === "cancelled") return "stopped";
   if (status === "failed" || status === "dead_letter") return "failed";
@@ -42,6 +44,16 @@ const tone = computed(() => {
 .status-badge--queued {
   background: #fff7ed;
   color: #ea580c;
+}
+
+.status-badge--suspended {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.status-badge--waiting {
+  background: #f8fafc;
+  color: #64748b;
 }
 
 .status-badge--completed {

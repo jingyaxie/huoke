@@ -5,8 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/dev-common.sh
 source "$ROOT/scripts/dev-common.sh"
+# shellcheck source=scripts/desktop-common.sh
+source "$ROOT/scripts/desktop-common.sh"
 
-BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_PORT="${BACKEND_PORT:-$HUOKE_DESKTOP_PORT}"
 
 "$ROOT/scripts/desktop-run-backend.sh" &
 BACKEND_PID=$!

@@ -207,7 +207,7 @@ const form = reactive({
   regionCode: "",
   selectedAccountKey: "",
   platform: "douyin",
-  browserMode: "headless",
+  browserMode: "headed",
   keywords: "",
   publishTimeRange: "unlimited",
   commentDays: 3,
@@ -399,7 +399,7 @@ function resetForm() {
   form.regionCode = "";
   form.selectedAccountKey = "";
   form.platform = "douyin";
-  form.browserMode = "headless";
+  form.browserMode = "headed";
   form.keywords = "";
   form.publishTimeRange = "unlimited";
   form.commentDays = 3;

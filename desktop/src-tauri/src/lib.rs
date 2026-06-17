@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
-const HEALTH_URL: &str = "http://127.0.0.1:8000/api/health";
-const APP_HOME_URL: &str = "http://127.0.0.1:8000/auto-tasks";
+const DESKTOP_PORT: u16 = 18765;
+const HEALTH_URL: &str = "http://127.0.0.1:18765/api/health";
+const APP_HOME_URL: &str = "http://127.0.0.1:18765/auto-tasks";
 
 struct ServiceState {
     backend: Mutex<Option<Child>>,
@@ -110,6 +111,31 @@ fn start_backend(root: &PathBuf) -> Result<Child, String> {
     Ok(child)
 }
 
+fn verify_desktop_frontend(client: &reqwest::blocking::Client) -> Result<(), String> {
+    let resp = client
+        .get(APP_HOME_URL)
+        .send()
+        .map_err(|err| err.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "获客界面不可用 (HTTP {})。请查看日志: ~/Library/Application Support/com.huoke.desktop/logs/desktop-backend.log",
+            resp.status()
+        ));
+    }
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !content_type.contains("text/html") {
+        return Err(format!(
+            "端口 {DESKTOP_PORT} 未托管桌面前端（可能连到了开发 API 或其它服务）。\n\
+             请关闭占用该端口的进程后重开应用。"
+        ));
+    }
+    Ok(())
+}
+
 fn wait_backend_ready(timeout: Duration, child: &mut Child) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -119,7 +145,7 @@ fn wait_backend_ready(timeout: Duration, child: &mut Child) -> Result<(), String
 
     while Instant::now() < deadline {
         if let Ok(resp) = client.get(HEALTH_URL).send() {
-            if resp.status().is_success() {
+            if resp.status().is_success() && verify_desktop_frontend(&client).is_ok() {
                 return Ok(());
             }
         }

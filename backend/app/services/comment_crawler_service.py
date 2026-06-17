@@ -127,6 +127,9 @@ class CommentCrawlerService:
             crawl_kwargs["ui_flow_context"] = ui_flow_context
 
         if self._coordinator is not None:
+            effective_days = days if days is not None else comment_days
+            if effective_days is None:
+                effective_days = 3
             items, outputs, diagnostic, session_meta, meta = await self._coordinator.cached_keyword_comments(
                 self._backend.crawl_keyword_comments,
                 keyword=keyword,
@@ -134,8 +137,7 @@ class CommentCrawlerService:
                 max_comments=max_comments or 200,
                 show_browser=show_browser,
                 guest_mode=guest_mode,
-                days=days,
-                comment_days=comment_days,
+                days=effective_days,
                 region=region,
                 force_refresh=force_refresh,
                 cache_ttl_hours=cache_ttl_hours,

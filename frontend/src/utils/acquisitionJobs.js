@@ -25,10 +25,83 @@ export const ACQUISITION_PLATFORM_OPTIONS = [
   { value: "kuaishou", label: "快手" },
 ];
 
+function parseJsonMessage(message) {
+  const text = String(message || "").trim();
+  if (!text.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function configFromTaskBrief(brief) {
+  if (!brief || typeof brief !== "object") return null;
+  const goals = brief.goals && typeof brief.goals === "object" ? brief.goals : {};
+  const constraints = brief.constraints && typeof brief.constraints === "object" ? brief.constraints : {};
+  const inputUrl = goals.input_url || goals.video_url || goals.profile_url || "";
+  const acquisitionMode = String(goals.acquisition_mode || "").trim().toLowerCase();
+  let intent = acquisitionMode;
+  if (!intent) {
+    if (goals.video_url || (inputUrl && !goals.profile_url && acquisitionMode !== "account_home")) {
+      intent = "single_video";
+    } else if (goals.profile_url) {
+      intent = "account_home";
+    } else if (brief.keyword) {
+      intent = "keyword_auto";
+    }
+  }
+  return {
+    intent,
+    acquisition_mode: acquisitionMode || intent,
+    task_name: brief.title,
+    keyword: brief.keyword,
+    keywords: brief.keyword ? [brief.keyword] : [],
+    platform: brief.platform,
+    region: brief.region,
+    target_count: goals.target_leads ?? goals.target_count,
+    comment_days: goals.comment_days,
+    input_url: inputUrl,
+    video_url: goals.video_url,
+    profile_url: goals.profile_url,
+    constraints,
+  };
+}
+
+function configFromMessagePayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const constraints = payload.constraints && typeof payload.constraints === "object" ? payload.constraints : {};
+  const inputUrl = payload.input_url || payload.video_url || payload.profile_url || "";
+  let intent = String(payload.intent || payload.acquisition_mode || "").trim().toLowerCase();
+  if (!intent) {
+    if (payload.video_url || inputUrl.includes("/video/")) {
+      intent = "single_video";
+    } else if (payload.profile_url || (inputUrl && !payload.keyword)) {
+      intent = "account_home";
+    } else if (payload.keyword) {
+      intent = "keyword_auto";
+    }
+  }
+  return {
+    ...payload,
+    intent,
+    acquisition_mode: payload.acquisition_mode || intent,
+    task_name: payload.task_name || payload.name,
+    keywords: payload.keyword ? [payload.keyword] : payload.keywords,
+    target_count: payload.target_count ?? payload.target_leads,
+    constraints,
+  };
+}
+
 export function getJobIntent(job) {
   const config = getJobConfig(job);
   const intent = String(config.intent || config.acquisition_mode || "").trim().toLowerCase();
   if (intent) return intent;
+
+  const brief = job?.result?.orchestration?.task_brief;
+  const briefConfig = configFromTaskBrief(brief);
+  if (briefConfig?.intent) return briefConfig.intent;
 
   const message = String(job?.message || "");
   if (message.includes("单条视频")) return "single_video";
@@ -40,8 +113,17 @@ export function getJobIntent(job) {
 export function getJobConfig(job) {
   const orchConfig = job?.result?.orchestration?.config;
   if (orchConfig && typeof orchConfig === "object") return orchConfig;
+
+  const briefConfig = configFromTaskBrief(job?.result?.orchestration?.task_brief);
+  if (briefConfig) return briefConfig;
+
+  const messageConfig = configFromMessagePayload(parseJsonMessage(job?.message));
+  if (messageConfig) return messageConfig;
+
   const syncOrch = job?.sync?.summary?.orchestration;
   if (syncOrch?.config && typeof syncOrch.config === "object") return syncOrch.config;
+  const syncBriefConfig = configFromTaskBrief(syncOrch?.task_brief);
+  if (syncBriefConfig) return syncBriefConfig;
   if (job?.sync?.task?.config && typeof job.sync.task.config === "object") return job.sync.task.config;
   return {};
 }
@@ -84,6 +166,31 @@ export function getJobMetrics(job) {
   };
 }
 
+export function isJobSuspended(job) {
+  const state = job?.result?.supervisor_state;
+  return job?.status === "pending" && state?.suspended === true;
+}
+
+export function getJobSuspendReason(job) {
+  if (!isJobSuspended(job)) return "";
+  const state = job?.result?.supervisor_state || {};
+  return String(
+    state.wake_reason
+    || job?.result?.summary
+    || job?.result?.orchestration?.execution_note
+    || "任务已挂起，等待恢复",
+  ).trim();
+}
+
+export function getJobDisplayStatus(job) {
+  const status = job?.status || "";
+  if (status === "retrying") return "retrying";
+  if (status === "pending") {
+    return isJobSuspended(job) ? "suspended" : "waiting_start";
+  }
+  return status;
+}
+
 export function getJobRowModel(job) {
   const config = getJobConfig(job);
   const metrics = getJobMetrics(job);
@@ -101,6 +208,8 @@ export function getJobRowModel(job) {
     || "",
   ).trim();
   const inputUrl = config.input_url || config.video_url || config.profile_url || "";
+  const displayStatus = getJobDisplayStatus(job);
+  const suspendReason = getJobSuspendReason(job);
   return {
     job,
     config,
@@ -113,7 +222,9 @@ export function getJobRowModel(job) {
     platform: job?.platform || config.platform || "",
     created_at: job?.created_at || job?.updated_at || null,
     status: job?.status || "",
-    error: job?.error || job?.dead_letter_reason || "",
+    display_status: displayStatus,
+    suspend_reason: suspendReason,
+    error: job?.error || job?.dead_letter_reason || suspendReason,
   };
 }
 
@@ -137,6 +248,7 @@ export function mapStatusForFilter(status) {
   if (status === "completed") return "completed";
   if (status === "cancelled") return "cancelled";
   if (status === "dead_letter") return "failed";
+  if (status === "suspended" || status === "waiting_start") return "queued";
   if (status === "pending") return "queued";
   return status;
 }
@@ -144,19 +256,24 @@ export function mapStatusForFilter(status) {
 export function jobStatusLabel(status) {
   const map = {
     queued: "排队中",
-    pending: "排队中",
+    pending: "待启动",
+    waiting_start: "待启动",
+    suspended: "已挂起",
     running: "抓取中",
     completed: "已完成",
     failed: "失败",
     cancelled: "已关闭",
     dead_letter: "失败",
+    retrying: "重试中",
   };
   return map[status] || status || "未知";
 }
 
 export function jobStatusTagType(status) {
-  if (status === "running") return "primary";
-  if (status === "queued" || status === "pending") return "warning";
+  if (status === "running" || status === "retrying") return "primary";
+  if (status === "queued") return "warning";
+  if (status === "suspended") return "suspended";
+  if (status === "pending" || status === "waiting_start") return "waiting";
   if (status === "completed") return "success";
   if (status === "cancelled") return "info";
   if (status === "failed" || status === "dead_letter") return "danger";
@@ -219,8 +336,8 @@ export function matchesJobFilter(job, filter) {
   const row = getJobRowModel(job);
   if (filter.platform && row.platform !== filter.platform) return false;
   if (filter.status) {
-    const mapped = mapStatusForFilter(job.status);
-    if (mapped !== filter.status && job.status !== filter.status) return false;
+    const mapped = mapStatusForFilter(row.display_status || job.status);
+    if (mapped !== filter.status && (row.display_status || job.status) !== filter.status) return false;
   }
   if (filter.keyword?.trim()) {
     const kw = filter.keyword.trim().toLowerCase();
@@ -259,8 +376,8 @@ export function sortJobsByCreated(jobs, sort = "desc") {
 export function computeDashboardFromJobs(jobs) {
   const rows = (jobs || []).map((job) => getJobRowModel(job));
   return {
-    running_tasks: rows.filter((row) => row.status === "running").length,
-    queued_tasks: rows.filter((row) => ["queued", "pending"].includes(row.status)).length,
+    running_tasks: rows.filter((row) => ["running", "retrying"].includes(row.status)).length,
+    queued_tasks: rows.filter((row) => ["queued", "waiting_start"].includes(row.display_status)).length,
     precise_customers: rows.reduce((sum, row) => sum + Number(row.metrics.progress_precise || 0), 0),
     total_leads: rows.reduce((sum, row) => sum + Number(row.metrics.produced_total || 0), 0),
     dm_count: rows.reduce((sum, row) => sum + Number(row.metrics.dm_count || 0), 0),

@@ -9,7 +9,7 @@ ensure_desktop_path
 
 BUNDLE_DIR="$(resolve_huoke_bundle_dir)"
 DATA_DIR="$(resolve_huoke_data_dir)"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_PORT="${BACKEND_PORT:-$HUOKE_DESKTOP_PORT}"
 STORAGE_DIR="$DATA_DIR/storage"
 ENV_FILE="$DATA_DIR/.env.desktop"
 LOG_FILE="$DATA_DIR/logs/desktop-backend.log"
@@ -61,8 +61,10 @@ if [[ ! -x "$CHROME" ]]; then
 fi
 
 if lsof -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -P -n 2>/dev/null | grep -qv '^COMMAND'; then
-  echo "端口 ${BACKEND_PORT} 已被占用，跳过后端启动。" >&2
-  exit 0
+  echo "桌面版端口 ${BACKEND_PORT} 已被占用，无法启动内置后端。" >&2
+  lsof -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -P -n 2>/dev/null || true
+  echo "请关闭占用该端口的进程后重开应用（勿与 dev 后端 8000 混淆）。" >&2
+  exit 1
 fi
 
 cd "$BACKEND_DIR"
@@ -83,6 +85,11 @@ set -a
 source "$ENV_FILE"
 set +a
 
+export DESKTOP_MODE=true
+export FRONTEND_ORIGIN="http://127.0.0.1:${BACKEND_PORT}"
+if [[ -d "$BUNDLE_DIR/frontend-dist" ]]; then
+  export FRONTEND_DIST_DIR="$BUNDLE_DIR/frontend-dist"
+fi
 export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
 export STORAGE_ROOT="$STORAGE_DIR"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"

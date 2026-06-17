@@ -177,7 +177,7 @@ const settings = ref({ ...DEFAULT_INTERACTION_SETTINGS });
 const form = reactive({
   intent: "single_video",
   platform: "douyin",
-  browserMode: "headless",
+  browserMode: "headed",
   inputUrl: "",
   crawlVideoLimit: 10,
   publishTimeRange: "unlimited",
@@ -359,7 +359,7 @@ watch(
 function resetForm() {
   form.intent = "single_video";
   form.platform = "douyin";
-  form.browserMode = "headless";
+  form.browserMode = "headed";
   form.inputUrl = "";
   form.crawlVideoLimit = 10;
   form.publishTimeRange = "unlimited";
