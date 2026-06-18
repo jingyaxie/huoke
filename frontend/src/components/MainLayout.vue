@@ -2,8 +2,7 @@
   <div class="merchant-layout">
     <aside class="sidebar">
       <div class="brand-block">
-        <div class="brand-title">AI获客</div>
-        <div class="brand-sub">盈小蚁 · 客户后台</div>
+        <div class="brand-title">盈小蚁客户前端</div>
       </div>
 
       <div class="sidebar-divider" />

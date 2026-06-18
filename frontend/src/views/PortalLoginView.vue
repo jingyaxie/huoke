@@ -2,8 +2,8 @@
   <div class="portal-login">
     <header class="portal-login-bar">
       <div class="portal-login-bar-text">
-        <strong>盈小蚁 · AI获客</strong>
-        <span>登录云端客户后台后，可使用数据看板、AI 客服；本机获客从侧栏直接进入</span>
+        <strong>盈小蚁客户前端</strong>
+        <span>登录盈小蚁客户账号后，可使用数据看板、账号绑定与本机智能获客能力</span>
       </div>
     </header>
 
