@@ -65,7 +65,8 @@ if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force }
 if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force }
 
 $backendScript = Join-Path $InstallRoot "scripts/desktop-run-backend.ps1"
-$proc = Start-Process -FilePath "powershell.exe" -PassThru -WindowStyle Hidden -ArgumentList @(
+$shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+$proc = Start-Process -FilePath $shell -PassThru -WindowStyle Hidden -ArgumentList @(
   "-NoProfile",
   "-ExecutionPolicy", "Bypass",
   "-File", $backendScript

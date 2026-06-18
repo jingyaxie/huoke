@@ -75,9 +75,14 @@ function Get-HuokeBundleFingerprint {
   param([Parameter(Mandatory = $true)][string]$BundleDir)
   $manifest = Join-Path $BundleDir "BUNDLE_MANIFEST.json"
   if (Test-Path $manifest) {
-    return (Get-FileHash -Algorithm SHA256 -Path $manifest).Hash
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+      return (Get-FileHash -Algorithm SHA256 -Path $manifest).Hash
+    }
+    $item = Get-Item $manifest
+    return ("{0}:{1}" -f $item.Length, $item.LastWriteTimeUtc.Ticks)
   }
-  return (Get-Item $BundleDir).LastWriteTimeUtc.Ticks.ToString()
+  $item = Get-Item $BundleDir
+  return $item.LastWriteTimeUtc.Ticks.ToString()
 }
 
 function Sync-HuokeBundleCache {
