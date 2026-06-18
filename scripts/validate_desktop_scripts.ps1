@@ -40,13 +40,36 @@ try {
   Write-Host "tauri.conf.json ok"
 
   if (Test-Path "desktop/bundle/runtime") {
-    Write-Host "bundle present, running installed-layout smoke (ASCII)..."
-    $asciiRoot = Join-Path $env:TEMP "huoke-validate-ascii"
+    . (Join-Path $repoRoot "scripts/desktop-bundle-cache.ps1")
+    $bundleDir = (Resolve-Path "desktop/bundle").Path
+    $asciiData = Join-Path $env:TEMP ("huoke-validate-cache-{0}" -f ([guid]::NewGuid().ToString('N')))
+    $asciiRoot = Join-Path $env:TEMP "huoke-validate-ascii-root"
+    try {
+      $resolved = Sync-HuokeBundleCache -SourceBundleDir $bundleDir -DataDir $asciiData -Root $asciiRoot
+      if ($resolved -ne $bundleDir) {
+        throw "ASCII install path must not trigger bundle cache sync (got: $resolved)"
+      }
+      $py = Find-PortablePythonExe -BundleDir $bundleDir
+      $probe = Invoke-PortablePythonProbe -PythonExe $py -BackendDir (Join-Path $bundleDir "backend")
+      if (-not $probe.Ok) {
+        throw "portable python probe failed under ASCII path: $($probe.Output)"
+      }
+      Write-Host "bundle-cache ASCII guard ok"
+    } finally {
+      if (Test-Path $asciiData) {
+        Remove-Item -Recurse -Force $asciiData -ErrorAction SilentlyContinue
+      }
+    }
+
+    Write-Host "bundle present, running installed-layout smoke (ASCII, powershell.exe)..."
+    $asciiInstall = Join-Path $env:TEMP "huoke-validate-ascii"
     & (Join-Path $repoRoot "scripts/verify_installed_startup.ps1") `
       -RepoRoot $repoRoot `
-      -InstallRoot $asciiRoot `
-      -BackendPort 18766
-    Write-Host "installed-layout smoke ok"
+      -InstallRoot $asciiInstall `
+      -BackendPort 18766 `
+      -Shell "powershell.exe" `
+      -AssertNoBundleCacheSync
+    Write-Host "installed-layout smoke ok (powershell.exe)"
   } else {
     Write-Host "desktop/bundle missing; syntax-only validation passed (run prepare_desktop_bundle.ps1 for full smoke)"
   }

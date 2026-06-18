@@ -54,6 +54,20 @@ fn backend_script_name() -> &'static str {
     }
 }
 
+fn windows_backend_shell() -> &'static str {
+    for candidate in ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] {
+        let ok = Command::new(candidate)
+            .args(["-NoProfile", "-Command", "exit 0"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if ok {
+            return candidate;
+        }
+    }
+    "powershell"
+}
+
 fn normalize_path(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
     if let Some(stripped) = text.strip_prefix(r"\\?\") {
@@ -246,7 +260,7 @@ fn start_backend(
     let log_file = Arc::new(log_file.to_path_buf());
 
     let mut command = if cfg!(windows) {
-        let mut cmd = Command::new("powershell");
+        let mut cmd = Command::new(windows_backend_shell());
         cmd.args([
             "-NoProfile",
             "-ExecutionPolicy",

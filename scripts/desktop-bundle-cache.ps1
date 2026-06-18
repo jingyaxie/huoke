@@ -33,26 +33,34 @@ function Set-PortablePythonHome {
   $env:PYTHONUTF8 = "1"
 }
 
-function Test-PortablePythonRunnable {
+function Invoke-PortablePythonProbe {
   param(
     [Parameter(Mandatory = $true)][string]$PythonExe,
-    [Parameter(Mandatory = $true)][string]$BackendDir
+    [Parameter(Mandatory = $true)][string]$BackendDir,
+    [string]$Code = "import uvicorn; print('portable python probe ok')"
   )
-  if (-not (Test-Path $PythonExe)) { return $false }
-  if (-not (Test-Path $BackendDir)) { return $false }
+  if (-not (Test-Path $PythonExe)) {
+    return @{ Ok = $false; Output = "python exe missing: $PythonExe" }
+  }
+  if (-not (Test-Path $BackendDir)) {
+    return @{ Ok = $false; Output = "backend dir missing: $BackendDir" }
+  }
+
   $prevPythonPath = $env:PYTHONPATH
   $prevPythonHome = $env:PYTHONHOME
   $prevPythonUtf8 = $env:PYTHONUTF8
+  $prevEap = $ErrorActionPreference
   $env:PYTHONPATH = $BackendDir
   Set-PortablePythonHome -PythonExe $PythonExe
-  $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & $PythonExe -c "import uvicorn; from app.main import app; print('portable python probe ok')" 2>&1 | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    # Do NOT pipe to Out-Null: PowerShell 5.1 loses native $LASTEXITCODE after a pipeline.
+    $output = & $PythonExe -c $Code 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = if ($output) { ($output | ForEach-Object { "$_" }) -join "`n" } else { "" }
+    return @{ Ok = ($exitCode -eq 0); Output = $text; ExitCode = $exitCode }
   } finally {
     $ErrorActionPreference = $prevEap
-  } finally {
     if ($null -eq $prevPythonPath) {
       Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
     } else {
@@ -71,6 +79,15 @@ function Test-PortablePythonRunnable {
   }
 }
 
+function Test-PortablePythonRunnable {
+  param(
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string]$BackendDir
+  )
+  $result = Invoke-PortablePythonProbe -PythonExe $PythonExe -BackendDir $BackendDir
+  return $result.Ok
+}
+
 function Get-HuokeBundleFingerprint {
   param([Parameter(Mandatory = $true)][string]$BundleDir)
   $manifest = Join-Path $BundleDir "BUNDLE_MANIFEST.json"
@@ -85,6 +102,14 @@ function Get-HuokeBundleFingerprint {
   return $item.LastWriteTimeUtc.Ticks.ToString()
 }
 
+function Clear-HuokeBundleCache {
+  param([Parameter(Mandatory = $true)][string]$DataDir)
+  $cacheRoot = Join-Path $DataDir "bundle-cache"
+  if (Test-Path $cacheRoot) {
+    Remove-Item -Recurse -Force $cacheRoot -ErrorAction SilentlyContinue
+  }
+}
+
 function Sync-HuokeBundleCache {
   param(
     [Parameter(Mandatory = $true)][string]$SourceBundleDir,
@@ -96,15 +121,15 @@ function Sync-HuokeBundleCache {
     throw "Source bundle missing runtime: $SourceBundleDir"
   }
 
-  $backendDir = Join-Path $SourceBundleDir "backend"
-  $pythonExe = Find-PortablePythonExe -BundleDir $SourceBundleDir
-  $needsCache = (Test-HuokePathHasNonAscii $Root) -or (Test-HuokePathHasNonAscii $SourceBundleDir)
-  if (-not $needsCache -and $pythonExe) {
-    $needsCache = -not (Test-PortablePythonRunnable -PythonExe $pythonExe -BackendDir $backendDir)
+  $pathNeedsCache = (Test-HuokePathHasNonAscii $Root) -or (Test-HuokePathHasNonAscii $SourceBundleDir)
+  if (-not $pathNeedsCache) {
+    return $SourceBundleDir
   }
 
-  if (-not $needsCache) {
-    return $SourceBundleDir
+  $backendDir = Join-Path $SourceBundleDir "backend"
+  $pythonExe = Find-PortablePythonExe -BundleDir $SourceBundleDir
+  if (-not $pythonExe) {
+    throw "Unicode install path but portable Python not found under $SourceBundleDir"
   }
 
   $cacheRoot = Join-Path $DataDir "bundle-cache"
@@ -112,21 +137,17 @@ function Sync-HuokeBundleCache {
   $manifestFile = Join-Path $cacheRoot "CACHE_MANIFEST.json"
   $fingerprint = Get-HuokeBundleFingerprint -BundleDir $SourceBundleDir
 
-  $reuse = $false
   if (Test-Path $manifestFile) {
     try {
       $existing = Get-Content $manifestFile -Raw | ConvertFrom-Json
       if ($existing.fingerprint -eq $fingerprint -and (Test-Path (Join-Path $cacheBundle "runtime"))) {
         $cachedPython = Find-PortablePythonExe -BundleDir $cacheBundle
         if (Test-PortablePythonRunnable -PythonExe $cachedPython -BackendDir (Join-Path $cacheBundle "backend")) {
-          $reuse = $true
+          Write-Host "Reusing bundle cache: $cacheBundle"
+          return $cacheBundle
         }
       }
     } catch {}
-  }
-
-  if ($reuse) {
-    return $cacheBundle
   }
 
   Write-Host "Syncing bundle cache to ASCII path: $cacheBundle"
@@ -141,6 +162,7 @@ function Sync-HuokeBundleCache {
     $dst = Join-Path $cacheBundle $name
     robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
     if ($LASTEXITCODE -ge 8) {
+      Clear-HuokeBundleCache -DataDir $DataDir
       throw "Failed to cache bundle component '$name' (robocopy exit $LASTEXITCODE)"
     }
   }
@@ -153,8 +175,11 @@ function Sync-HuokeBundleCache {
   } | ConvertTo-Json | Set-Content -Path $manifestFile -Encoding UTF8
 
   $cachedPython = Find-PortablePythonExe -BundleDir $cacheBundle
-  if (-not (Test-PortablePythonRunnable -PythonExe $cachedPython -BackendDir (Join-Path $cacheBundle "backend"))) {
-    throw "Bundle cache sync completed but portable Python still cannot import uvicorn"
+  $probe = Invoke-PortablePythonProbe -PythonExe $cachedPython -BackendDir (Join-Path $cacheBundle "backend")
+  if (-not $probe.Ok) {
+    Clear-HuokeBundleCache -DataDir $DataDir
+    $detail = if ($probe.Output) { $probe.Output } else { "(no output, exit $($probe.ExitCode))" }
+    throw "Bundle cache sync completed but portable Python probe failed: $detail"
   }
 
   return $cacheBundle

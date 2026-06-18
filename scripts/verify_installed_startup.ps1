@@ -2,7 +2,9 @@
 param(
   [Parameter(Mandatory = $true)][string]$RepoRoot,
   [Parameter(Mandatory = $true)][string]$InstallRoot,
-  [int]$BackendPort = 18765
+  [int]$BackendPort = 18765,
+  [string]$Shell = "",
+  [switch]$AssertNoBundleCacheSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,8 +67,11 @@ if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force }
 if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force }
 
 $backendScript = Join-Path $InstallRoot "scripts/desktop-run-backend.ps1"
-$shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
-$proc = Start-Process -FilePath $shell -PassThru -WindowStyle Hidden -ArgumentList @(
+if (-not $Shell) {
+  $Shell = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+}
+Write-Host "startup smoke shell: $Shell installRoot=$InstallRoot"
+$proc = Start-Process -FilePath $Shell -PassThru -WindowStyle Hidden -ArgumentList @(
   "-NoProfile",
   "-ExecutionPolicy", "Bypass",
   "-File", $backendScript
@@ -110,7 +115,15 @@ try {
     throw "backend stdout missing [backend] log lines for install root: $InstallRoot"
   }
 
-  Write-Host "startup smoke ok: $InstallRoot ($($backendLines.Count) [backend] lines)"
+  if ($AssertNoBundleCacheSync) {
+    $stdoutText = Get-Content $stdoutFile -Raw
+    if ($stdoutText -match 'Syncing bundle cache') {
+      Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
+      throw "ASCII install must not sync bundle cache (install root: $InstallRoot)"
+    }
+  }
+
+  Write-Host "startup smoke ok: $InstallRoot ($($backendLines.Count) [backend] lines, shell=$Shell)"
 } finally {
   if (-not $proc.HasExited) {
     try {
