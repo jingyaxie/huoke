@@ -35,6 +35,20 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Prepare desktop bundle
+        shell: pwsh
+        run: ./scripts/prepare_desktop_bundle.ps1
+
+      - name: Validate desktop scripts and startup smoke (fast gate)
+        shell: pwsh
+        run: ./scripts/validate_desktop_scripts.ps1
+
+      - name: Installed layout startup smoke (Unicode path)
+        shell: pwsh
+        run: |
+          $unicodeRoot = Join-Path $env:TEMP "huoke-smoke-unicode-盈小蚁"
+          ./scripts/verify_installed_startup.ps1 -RepoRoot (Get-Location) -InstallRoot $unicodeRoot -BackendPort 18767
+
       - name: Build Windows NSIS installer
         shell: pwsh
         run: ./scripts/build_native_win.ps1
@@ -79,11 +93,3 @@ jobs:
           name: huoke-windows-installer
           path: desktop/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
-
-      - name: Installed layout startup smoke (ASCII + Unicode)
-        shell: pwsh
-        run: |
-          $asciiRoot = Join-Path $env:TEMP "huoke-smoke-ascii"
-          $unicodeRoot = Join-Path $env:TEMP "huoke-smoke-unicode-盈小蚁"
-          ./scripts/verify_installed_startup.ps1 -RepoRoot (Get-Location) -InstallRoot $asciiRoot -BackendPort 18766
-          ./scripts/verify_installed_startup.ps1 -RepoRoot (Get-Location) -InstallRoot $unicodeRoot -BackendPort 18767

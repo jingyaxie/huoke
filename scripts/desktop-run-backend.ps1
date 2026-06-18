@@ -19,14 +19,20 @@ function Invoke-PythonStep {
     [string]$Code
   )
   Write-Log "preflight: $Label"
-  $output = & $PythonExe -c $Code 2>&1
-  if ($output) {
-    foreach ($line in @($output)) {
-      Write-Output "[backend] $line"
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $PythonExe -c $Code 2>&1
+    if ($output) {
+      foreach ($line in @($output)) {
+        Write-Output "[backend] $line"
+      }
     }
-  }
-  if ($LASTEXITCODE -ne 0) {
-    throw "preflight failed at '$Label' (exit $LASTEXITCODE)"
+    if ($LASTEXITCODE -ne 0) {
+      throw "preflight failed at '$Label' (exit $LASTEXITCODE)"
+    }
+  } finally {
+    $ErrorActionPreference = $prevEap
   }
 }
 
@@ -192,11 +198,15 @@ function Start-HuokeDesktopBackend {
   Invoke-PythonStep -Label "ensure_database_schema" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')"
 
   Write-Log "starting uvicorn on port $BackendPort"
-  & $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort 2>&1 | ForEach-Object {
-    Write-Output "[backend] $_"
-  }
-  if ($LASTEXITCODE -ne 0) {
-    throw "uvicorn exited with code $LASTEXITCODE"
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort
+    if ($LASTEXITCODE -ne 0) {
+      throw "uvicorn exited with code $LASTEXITCODE"
+    }
+  } finally {
+    $ErrorActionPreference = $prevEap
   }
 }
 
