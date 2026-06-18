@@ -112,9 +112,16 @@ try {
   Write-Host "startup smoke ok: $InstallRoot ($($backendLines.Count) [backend] lines)"
 } finally {
   if (-not $proc.HasExited) {
-    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    try {
+      & taskkill.exe /PID $proc.Id /T /F | Out-Null
+    } catch {
+      Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
   }
+  Start-Sleep -Seconds 1
   if (Test-Path $dataDir) {
     Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
   }
 }
+
+exit 0

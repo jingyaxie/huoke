@@ -52,6 +52,7 @@ try {
   }
 
   Write-Host "validate_desktop_scripts: all checks passed"
+  exit 0
 } finally {
   Pop-Location
 }
