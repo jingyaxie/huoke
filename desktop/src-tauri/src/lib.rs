@@ -220,6 +220,10 @@ fn start_backend(root: &PathBuf, log_state: Arc<BackendLogState>) -> Result<Chil
         cmd
     };
 
+    if let Some(data_dir) = windows_data_dir() {
+        command.env("HUOKE_DATA_DIR", data_dir);
+    }
+
     let mut child = command
         .current_dir(&root)
         .env("HUOKE_ROOT", &root)
@@ -228,10 +232,6 @@ fn start_backend(root: &PathBuf, log_state: Arc<BackendLogState>) -> Result<Chil
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("启动后端失败: {err}"))?;
-
-    if let Some(data_dir) = windows_data_dir() {
-        let _ = child.env("HUOKE_DATA_DIR", data_dir);
-    }
 
     spawn_log_reader(child.stdout.take(), "backend", Some(Arc::clone(&log_state)));
     spawn_log_reader(child.stderr.take(), "backend", Some(log_state));
