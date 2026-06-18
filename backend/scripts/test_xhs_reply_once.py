@@ -1,30 +1,61 @@
 #!/usr/bin/env python3
+"""测试小红书 warm_publish 回复（Direct API 已移除）。"""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import os
 import sys
+from pathlib import Path
 
-from app.core.config import get_settings
-from app.db.session import SessionLocal
-from app.services.comment_reply_service import CommentReplyService
+ROOT = Path(__file__).resolve().parents[1]
+HUOKE_ROOT = ROOT.parent
 
-COMMENT_ID = "6a0e60ed000000002b02bf0e"
-REPLY_TEXT = "有这个可能，有些唇釉叠护唇油确实会这种光泽感"
+if not os.environ.get("STORAGE_ROOT"):
+    os.environ["STORAGE_ROOT"] = str((HUOKE_ROOT / "storage/sidecar-dev").resolve())
+if not os.environ.get("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = (
+        f"sqlite+pysqlite:///{(HUOKE_ROOT / 'storage/sidecar-dev/huoke_sidecar.db').resolve()}"
+    )
+sys.path.insert(0, str(ROOT))
+
+DEFAULT_COMMENT_ID = "69816b1500000000060085e8"
+DEFAULT_REPLY_TEXT = "有这个可能，有些唇釉叠护唇油确实会这种光泽感"
 
 
 async def main() -> int:
+    parser = argparse.ArgumentParser(description="测试小红书 warm_publish 回复")
+    parser.add_argument("--comment-id", default=DEFAULT_COMMENT_ID)
+    parser.add_argument("--reply-text", default=DEFAULT_REPLY_TEXT)
+    parser.add_argument("--dry-run", action="store_true", help="只暖场+输入，不点发送")
+    parser.add_argument("--headless", action="store_true")
+    args = parser.parse_args()
+
+    from app.core.config import get_settings
+    from app.db.session import SessionLocal
+    from app.services.agent_browser_session import AgentBrowserSession
+    from app.services.comment_reply_service import CommentReplyService
+
     settings = get_settings()
-    session = SessionLocal()
+    db = SessionLocal()
+    browser = AgentBrowserSession(
+        "test-xhs-reply",
+        "default",
+        "xiaohongshu",
+        settings,
+        headless=args.headless,
+    )
     try:
+        page = await browser.ensure_started()
         service = CommentReplyService(
             settings,
             tenant_id="default",
             platform="xiaohongshu",
-            session=session,
+            session=db,
             account_id="default",
         )
-        target = service.resolve_target(comment_id=COMMENT_ID)
+        target = service.resolve_target(comment_id=args.comment_id)
         print("=== resolve_target ===", flush=True)
         if isinstance(target, dict):
             print(json.dumps(target, ensure_ascii=False, indent=2), flush=True)
@@ -45,15 +76,18 @@ async def main() -> int:
         )
 
         result = await service.reply_comment(
-            comment_id=COMMENT_ID,
-            reply_text=REPLY_TEXT,
-            show_browser=False,
+            comment_id=args.comment_id,
+            reply_text=args.reply_text,
+            page=page,
+            warm_publish=True,
+            dry_run=args.dry_run,
         )
         print("=== reply_result ===", flush=True)
         print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
         return 0 if result.get("status") == "completed" else 2
     finally:
-        session.close()
+        db.close()
+        await browser.close()
 
 
 if __name__ == "__main__":

@@ -79,9 +79,9 @@ def get_follow_tool(settings: Settings, platform: str, tenant_id: str, account_i
 
         return DouyinFollowTool(settings, tenant_id, store, account_id=account_id)
     if platform == "xiaohongshu":
-        from app.platforms.xiaohongshu.follow import XhsFollowTool
-
-        return XhsFollowTool(settings, tenant_id, store, account_id=account_id)
+        raise NotImplementedError(
+            "小红书 Direct API 关注已移除，请使用 warm_outreach（follow-user + warm_outreach=true + 浏览器 page）"
+        )
     if platform == "kuaishou":
         from app.platforms.kuaishou.follow import KuaishouFollowTool
 
@@ -115,9 +115,9 @@ def get_reply_comment_tool(settings: Settings, platform: str, tenant_id: str, ac
 
         return DouyinReplyCommentTool(settings, tenant_id, store, account_id=account_id)
     if platform == "xiaohongshu":
-        from app.platforms.xiaohongshu.reply_comment import XhsReplyCommentTool
-
-        return XhsReplyCommentTool(settings, tenant_id, store, account_id=account_id)
+        raise NotImplementedError(
+            "小红书 Direct API 回复已移除，请使用 warm_publish（reply-comment + warm_publish=true + 浏览器 page）"
+        )
     if platform == "kuaishou":
         from app.platforms.kuaishou.reply_comment import KuaishouReplyCommentTool
 

@@ -3,11 +3,14 @@ from __future__ import annotations
 from app.core.config import Settings
 from app.platforms.session_store import PlatformSessionStore
 from app.platforms.xiaohongshu.dm import XhsDmTool
-from app.platforms.xiaohongshu.follow import XhsFollowTool
 from app.platforms.xiaohongshu.profile import build_profile_url
 from app.platforms.xiaohongshu.session import XhsSessionStore
 
 __all__ = ["XhsUserActions", "build_profile_url"]
+
+_XHS_WARM_FOLLOW_ERROR = (
+    "小红书 Direct API 关注已移除，请使用 warm_outreach（需 comment_id、content_url 与浏览器 page）"
+)
 
 
 class XhsUserActions:
@@ -24,7 +27,6 @@ class XhsUserActions:
         self.tenant_id = tenant_id
         self.account_id = account_id
         self.store = store or XhsSessionStore(settings)
-        self._follow = XhsFollowTool(settings, tenant_id, self.store, account_id=account_id)
         self._dm = XhsDmTool(settings, tenant_id, self.store, account_id=account_id)
 
     async def follow_and_dm(
@@ -47,20 +49,7 @@ class XhsUserActions:
             "message": None,
         }
         if follow:
-            follow_result = await self._follow.follow_user(
-                user_id=user_id,
-                username=username,
-                show_browser=show_browser,
-            )
-            result.update(
-                {
-                    "username": follow_result.get("username") or username,
-                    "follow_status_before": follow_result.get("follow_status_before"),
-                    "follow_status_after": follow_result.get("follow_status_after"),
-                    "follow": follow_result.get("follow"),
-                    "output_file": follow_result.get("output_file"),
-                }
-            )
+            result["follow"] = {"ok": False, "error": _XHS_WARM_FOLLOW_ERROR}
         if send_message:
             dm_result = await self._dm.send_message(
                 user_id=user_id,

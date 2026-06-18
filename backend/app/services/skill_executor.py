@@ -1025,6 +1025,13 @@ class SkillExecutor:
             if self.platform == "xiaohongshu":
                 warm_params["do_dm"] = False
             return await self._execute_warm_outreach_from_comment(warm_params)
+        if self.platform == "xiaohongshu":
+            if not str(params.get("user_id") or "").strip():
+                return {"error": "缺少 user_id", "status": "failed"}
+            return {
+                "error": "小红书 Direct API 关注/取关已移除，请使用 warm_outreach（需 comment_id、content_url 与浏览器 page）",
+                "status": "failed",
+            }
         tool = get_follow_tool(
             self.settings,
             self.platform,

@@ -1,5 +1,5 @@
 from app.platforms.douyin.follow import _is_followed_status
-from app.platforms.xiaohongshu.follow import XhsFollowTool
+from app.platforms.xiaohongshu.follow import _parse_follow_status
 
 
 def test_douyin_is_followed_status():
@@ -9,6 +9,6 @@ def test_douyin_is_followed_status():
 
 
 def test_xhs_parse_follow_status():
-    assert XhsFollowTool._parse_follow_status({"followed": True}) == "followed"
-    assert XhsFollowTool._parse_follow_status({"follow_status": 0}) == "none"
-    assert XhsFollowTool._parse_follow_status({}) == "unknown"
+    assert _parse_follow_status({"followed": True}) == "followed"
+    assert _parse_follow_status({"follow_status": 0}) == "none"
+    assert _parse_follow_status({}) == "unknown"

@@ -546,14 +546,13 @@ class CommentReplyService:
         if isinstance(target, dict):
             return target
 
-        tool = get_reply_comment_tool(
-            self.settings,
-            self.platform,
-            self.tenant_id,
-            account_id=self.account_id,
-        )
-
         if self.platform == "douyin":
+            tool = get_reply_comment_tool(
+                self.settings,
+                self.platform,
+                self.tenant_id,
+                account_id=self.account_id,
+            )
             aweme_id = target.content_id
             try:
                 aweme_id = _extract_aweme_id(target.content_url)
@@ -598,35 +597,34 @@ class CommentReplyService:
                 show_browser=show_browser,
             )
         elif self.platform == "xiaohongshu":
-            note_id = target.content_id
-            try:
-                note_id = extract_note_id(target.content_url)
-            except ValueError:
-                note_id = target.content_id
-            if page is not None and warm_publish:
-                warm_payload = await self._reply_xhs_via_warm_publish(
-                    target,
-                    reply_text=reply_text,
-                    page=page,
-                    dry_run=dry_run,
-                )
-                if warm_payload is not None:
-                    return warm_payload
-                if ui_first:
-                    return {
-                        "status": "failed",
-                        "error": "warm_publish 失败，ui_first 模式下禁止回退 JS 接口",
-                        "platform": self.platform,
-                        "comment_id": target.comment_id,
-                    }
-            result = await tool.reply_comment(
-                comment_id=target.comment_id,
+            if page is None:
+                return {
+                    "status": "failed",
+                    "error": "小红书回复需要浏览器 page，请启用 warm_publish",
+                    "platform": self.platform,
+                    "comment_id": target.comment_id,
+                }
+            warm_payload = await self._reply_xhs_via_warm_publish(
+                target,
                 reply_text=reply_text,
-                note_url=target.content_url,
-                note_id=note_id,
-                show_browser=show_browser,
+                page=page,
+                dry_run=dry_run,
             )
+            if warm_payload is not None:
+                return warm_payload
+            return {
+                "status": "failed",
+                "error": "warm_publish 回复失败",
+                "platform": self.platform,
+                "comment_id": target.comment_id,
+            }
         else:
+            tool = get_reply_comment_tool(
+                self.settings,
+                self.platform,
+                self.tenant_id,
+                account_id=self.account_id,
+            )
             photo_id = target.content_id
             result = await tool.reply_comment(
                 comment_id=target.comment_id,

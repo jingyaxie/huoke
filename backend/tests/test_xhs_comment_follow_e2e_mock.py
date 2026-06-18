@@ -11,8 +11,6 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import Settings
 from app.db.base import Base
 from app.models.content_comment import ContentComment
-from app.platforms.xiaohongshu.follow import XhsFollowTool
-from app.platforms.xiaohongshu.reply_comment import XhsReplyCommentTool
 from app.schemas.skill import SkillOut
 from app.services.comment_reply_service import CommentReplyService
 from app.services.skill_executor import SkillExecutor
@@ -99,88 +97,6 @@ def _skill(handler: str) -> SkillOut:
         builtin_handler=handler,
         tool_name="skill_test",
     )
-
-
-@pytest.mark.asyncio
-async def test_xhs_follow_relation_on_page_api_success(xhs_settings, xhs_store):
-    tool = XhsFollowTool(xhs_settings, "default", xhs_store)
-    page = make_mock_page(
-        url=f"https://www.xiaohongshu.com/user/profile/{USER_ID}",
-        body_text="关注",
-    )
-
-    async def fake_warmup(page_obj, captured):
-        captured.append("https://edith.xiaohongshu.com/api/sns/web/v1/user/otherinfo?a=1")
-
-    profile = tool._profile
-    profile.open_profile = AsyncMock(return_value=f"https://www.xiaohongshu.com/user/profile/{USER_ID}")
-    profile.fetch_user_info = AsyncMock(
-        side_effect=[
-            {"data": {"basic_info": {"follow_status": 0, "nickname": "目标用户"}}},
-            {"data": {"basic_info": {"follow_status": 1, "nickname": "目标用户"}}},
-        ]
-    )
-    tool.warmup_for_js_api = fake_warmup
-    tool.pick_api_template_url = AsyncMock(return_value="https://edith.xiaohongshu.com/api/sns/web/v1/user/otherinfo?a=1")
-    tool.post_json_via_page = AsyncMock(return_value={"code": 0, "success": True, "msg": "ok"})
-
-    result = await tool._relation_on_page(page, user_id=USER_ID, username="", action="follow")
-
-    assert result["follow"]["ok"] is True
-    assert result["follow_status_before"] == "none"
-    assert result["follow_status_after"] in {"followed", "none", "unknown"}
-    tool.post_json_via_page.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_xhs_follow_skips_when_already_followed(xhs_settings, xhs_store):
-    tool = XhsFollowTool(xhs_settings, "default", xhs_store)
-    page = make_mock_page(body_text="已关注 发消息")
-
-    tool.warmup_for_js_api = AsyncMock()
-    tool.pick_api_template_url = AsyncMock(return_value="https://edith.xiaohongshu.com/api/template")
-    tool._profile.open_profile = AsyncMock(return_value="https://profile")
-    tool._profile.fetch_user_info = AsyncMock(
-        return_value={"data": {"basic_info": {"followed": True, "nickname": "已关"}}}
-    )
-    tool.post_json_via_page = AsyncMock()
-
-    result = await tool._relation_on_page(page, user_id=USER_ID, username="", action="follow")
-
-    assert result["follow"]["ok"] is True
-    assert result["follow"]["skipped"] is True
-    assert result["follow"]["reason"] == "already_followed"
-    tool.post_json_via_page.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_xhs_reply_on_page_api_success(xhs_settings, xhs_store):
-    tool = XhsReplyCommentTool(xhs_settings, "default", xhs_store)
-    page = make_mock_page(url=NOTE_URL, title="笔记详情")
-
-    tool.warmup_for_js_api = AsyncMock()
-    tool.pick_api_template_url = AsyncMock(return_value="https://edith.xiaohongshu.com/api/template")
-    tool.post_signed_json_via_page = AsyncMock(
-        return_value={"ok": True, "code": 0, "success": True, "msg": "success", "data": {"comment_id": "new1"}}
-    )
-
-    with patch(
-        "app.platforms.xiaohongshu.reply_comment.ensure_logged_in_user",
-        AsyncMock(return_value={"ok": True, "user_id": "self123"}),
-    ):
-        tool._resolve_note_open_url = AsyncMock(return_value=NOTE_URL)
-        tool._open_note_page = AsyncMock(return_value={"ok": True, "page_url": NOTE_URL, "page_title": "笔记"})
-        result = await tool._reply_on_page(
-            page,
-            note_id=NOTE_ID,
-            comment_id=COMMENT_ID,
-            reply_text=REPLY_TEXT,
-            note_url=NOTE_URL,
-        )
-
-    assert result["reply"]["ok"] is True
-    assert result["capture_method"] == "note_page_js_api_signed"
-    tool.post_signed_json_via_page.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -503,7 +419,7 @@ async def test_skill_executor_xhs_warm_outreach_follow(xhs_settings):
 
 
 @pytest.mark.asyncio
-async def test_skill_executor_xhs_follow_user_tool_path(xhs_settings, xhs_store):
+async def test_skill_executor_xhs_follow_requires_warm_outreach(xhs_settings, xhs_store):
     session = MagicMock()
     session.account_id = "default"
     session.is_started = False
@@ -518,27 +434,10 @@ async def test_skill_executor_xhs_follow_user_tool_path(xhs_settings, xhs_store)
     )
     executor._record_interaction_log = MagicMock()
 
-    mock_tool = MagicMock()
-    mock_tool.follow_user = AsyncMock(
-        return_value={
-            "platform": "xiaohongshu",
-            "user_id": USER_ID,
-            "follow": {"ok": True, "skipped": False},
-            "follow_status_before": "none",
-            "follow_status_after": "followed",
-        }
+    result = await executor._execute_follow(
+        {"user_id": USER_ID, "username": "目标"},
+        action="follow",
     )
 
-    with patch("app.services.skill_executor.get_follow_tool", return_value=mock_tool):
-        result = await executor._execute_follow(
-            {"user_id": USER_ID, "username": "目标"},
-            action="follow",
-        )
-
-    assert result["status"] == "completed"
-    assert result["handler"] == "follow_user"
-    mock_tool.follow_user.assert_awaited_once_with(
-        user_id=USER_ID,
-        username="目标",
-        show_browser=False,
-    )
+    assert result["status"] == "failed"
+    assert "warm_outreach" in result["error"]
