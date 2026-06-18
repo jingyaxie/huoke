@@ -19,9 +19,10 @@ export function fetchContentDetail(platform, contentId, { maxComments } = {}) {
   });
 }
 
-/** 回复指定评论（走 builtin reply-comment，页面 JS 接口） */
+/** 回复指定评论（暖场浏览评论区 + 拦截 API 替换目标 comment_id，不必在页面定位该评论） */
 export function replyComment(platform, params) {
   const contentUrl = params.content_url || params.video_url || params.note_url || "";
+  const useWarmPublish = platform === "xiaohongshu" || platform === "douyin";
   return executeSkill({
     skill_id: "reply-comment",
     platform,
@@ -36,6 +37,7 @@ export function replyComment(platform, params) {
       photo_author_id: params.photo_author_id,
       reply_to_user_id: params.reply_to_user_id,
       show_browser: Boolean(params.show_browser),
+      warm_publish: params.warm_publish ?? useWarmPublish,
     },
     timeout_seconds: 120,
   });

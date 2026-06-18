@@ -1,50 +1,91 @@
-"""小红书评论回复：UI 暖场 + 页内签名 comment/post（不依赖 DOM 定位目标评论）。"""
+"""小红书评论回复：UI 暖场 → 随机点可见评论「回复」→ 拦截 comment/post 替换 target_comment_id。"""
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import random
 from typing import Any
 
 from app.core.config import Settings
 from app.platforms.xiaohongshu.human_guards import assert_xhs_human_ready
-from app.platforms.xiaohongshu.reply_comment import XhsReplyCommentTool
 from app.platforms.xiaohongshu.utils import extract_note_id
 from app.services.ui_flow.platforms.xiaohongshu.feed_ui import (
     activate_comments_on_detail,
     is_note_detail_open,
-    open_note_for_human_action,
+    open_note_for_ui_action,
     scroll_comment_list_in_detail,
 )
-from app.services.ui_flow.platforms.xiaohongshu.note_ui import (
-    scroll_note_page,
-    trigger_comment_panel,
-)
+from app.services.ui_flow.platforms.xiaohongshu.note_ui import trigger_comment_panel
 
-_WARM_REPLY_INPUT_SELECTORS = (
-    'div.content-input [contenteditable="true"]',
-    'textarea[placeholder*="回复"]',
-    'textarea[placeholder*="评论"]',
-    'div[contenteditable="true"]',
-    "textarea",
-)
+_REPLY_POPUP_MARK = "data-huoke-reply-popup"
+_REPLY_INPUT_MARK = "data-huoke-reply-input"
 
-_COMMENT_ITEM_SELECTORS = (
-    ".note-comment-item",
-    '[class*="comment-item"]',
-    '[class*="CommentItem"]',
-    "#comment-list > div",
-)
+_FIND_REPLY_COMPOSE_JS = """
+() => {
+  document.querySelectorAll('[data-huoke-reply-popup="1"], [data-huoke-reply-input="1"]').forEach((el) => {
+    el.removeAttribute('data-huoke-reply-popup');
+    el.removeAttribute('data-huoke-reply-input');
+  });
+  const isVisible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 20 && r.height > 12 && r.bottom > 0 && r.top < innerHeight;
+  };
+  const sendNodes = [...document.querySelectorAll('button, div, span')].filter((el) => {
+    return (el.textContent || '').trim() === '发送' && isVisible(el);
+  });
+  for (const send of sendNodes) {
+    let root = send.parentElement;
+    for (let depth = 0; depth < 12 && root; depth += 1) {
+      const text = (root.textContent || '').trim();
+      const hasCancel = [...root.querySelectorAll('button, div, span')].some(
+        (el) => (el.textContent || '').trim() === '取消'
+      );
+      const hasReplyTitle = /回复\\s+\\S/.test(text.slice(0, 48));
+      const input = root.querySelector('[contenteditable="true"], textarea');
+      if (hasCancel && hasReplyTitle && input && isVisible(input)) {
+        root.setAttribute('data-huoke-reply-popup', '1');
+        input.setAttribute('data-huoke-reply-input', '1');
+        input.focus();
+        input.click();
+        return true;
+      }
+      root = root.parentElement;
+    }
+  }
+  return false;
+}
+"""
+
+_IS_REPLY_COMPOSE_OPEN_JS = """
+() => Boolean(document.querySelector('[data-huoke-reply-input="1"], [data-huoke-reply-popup="1"] [contenteditable="true"]'))
+"""
 
 _ITEM_REPLY_BTN_SELECTORS = (
     ".reply.icon-container",
-    '[class*="reply"]',
-    'span:has-text("回复")',
-    'button:has-text("回复")',
+    ".reply",
 )
 
 CAPTURE_METHOD = "xiaohongshu_comment_warm_publish"
 CAPTURE_METHOD_DRY = "xiaohongshu_comment_warm_publish_dry_run"
+
+_COMMENT_ITEM_SELECTORS = (
+    ".comment-item",
+    ".parent-comment",
+    ".note-comment-item",
+)
+
+_POPUP_INPUT_SELECTORS = (
+    '[contenteditable="true"]',
+    "textarea",
+)
+
+_POPUP_SEND_SELECTORS = (
+    'button:has-text("发送")',
+    'div:has-text("发送")',
+    'span:has-text("发送")',
+)
 
 
 async def _human_pause(*, min_s: float = 1.0, max_s: float = 1.8) -> None:
@@ -135,7 +176,7 @@ async def _ensure_on_note_page(
             await assert_xhs_human_ready(page, settings, tenant_id=tenant_id, stage="note")
             return "note"
 
-    opened = await open_note_for_human_action(
+    opened = await open_note_for_ui_action(
         page,
         settings,
         tenant_id=tenant_id,
@@ -143,6 +184,14 @@ async def _ensure_on_note_page(
         note_id=resolved_id,
         note_meta=note_meta,
     )
+    if not opened.get("ok") and content_url:
+        with contextlib.suppress(Exception):
+            await page.goto(content_url, wait_until="domcontentloaded", timeout=45000)
+            await _human_pause(min_s=2.0, max_s=3.0)
+        if await _page_note_accessible(page):
+            await activate_comments_on_detail(page, settings, tenant_id=tenant_id)
+            await assert_xhs_human_ready(page, settings, tenant_id=tenant_id, stage="note")
+            return "note_goto"
     if not opened.get("ok"):
         raise RuntimeError("无法打开笔记详情")
     await assert_xhs_human_ready(page, settings, tenant_id=tenant_id, stage="note")
@@ -173,41 +222,194 @@ async def _find_reply_btn_in_item(item):
     return None
 
 
-async def _reply_input_ready(page) -> bool:
+async def _clear_reply_popup_mark(page) -> None:
+    with contextlib.suppress(Exception):
+        await page.evaluate(
+            """() => {
+              document.querySelectorAll('[data-huoke-reply-popup="1"], [data-huoke-reply-input="1"]').forEach((el) => {
+                el.removeAttribute('data-huoke-reply-popup');
+                el.removeAttribute('data-huoke-reply-input');
+              });
+            }"""
+        )
+
+
+async def _mark_reply_compose(page) -> bool:
+    with contextlib.suppress(Exception):
+        return bool(await page.evaluate(_FIND_REPLY_COMPOSE_JS))
+    return False
+
+
+async def _reply_compose_open(page) -> bool:
+    if await _mark_reply_compose(page):
+        return True
+    with contextlib.suppress(Exception):
+        return bool(await page.evaluate(_IS_REPLY_COMPOSE_OPEN_JS))
+    return False
+
+
+def _reply_input_locator(page):
+    return page.locator(f'[{_REPLY_INPUT_MARK}="1"]').first
+
+
+def _reply_popup_locator(page):
+    return page.locator(f'[{_REPLY_POPUP_MARK}="1"]').first
+
+
+async def _focus_reply_input_in_popup(page, input_loc) -> bool:
+    """点击弹层输入框并 focus（对应「回复 xxx」pop 内光标）。"""
+    with contextlib.suppress(Exception):
+        await input_loc.click()
+    await _human_pause(min_s=0.4, max_s=0.7)
     try:
         return bool(
-            await page.evaluate(
-                """() => {
-                const nodes = document.querySelectorAll(
-                  'div.content-input [contenteditable="true"], textarea[placeholder*="回复"], textarea[placeholder*="评论"]'
-                );
-                for (const el of nodes) {
-                  const rect = el.getBoundingClientRect();
-                  if (rect.width < 8 || rect.height < 8) continue;
-                  const ph = (el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '').trim();
-                  const active = document.activeElement === el || el.contains(document.activeElement);
-                  if (active || ph.includes('回复')) return true;
-                }
-                return false;
-              }"""
+            await input_loc.evaluate(
+                """(el) => {
+                  const node = el.getAttribute('contenteditable') === 'true'
+                    ? el
+                    : el.querySelector('[contenteditable="true"]');
+                  if (!node) return false;
+                  node.focus();
+                  node.click();
+                  return document.activeElement === node || node.contains(document.activeElement);
+                }"""
             )
         )
     except Exception:
         return False
 
 
+async def _slow_type_reply_input(page, input_loc, text: str) -> None:
+    """逐字输入：先 focus 弹层输入框，再 keyboard.type。"""
+    await _focus_reply_input_in_popup(page, input_loc)
+    modifier = "Meta" if __import__("platform").system() == "Darwin" else "Control"
+    with contextlib.suppress(Exception):
+        await page.keyboard.press(f"{modifier}+A")
+        await page.keyboard.press("Backspace")
+    await _human_pause(min_s=0.3, max_s=0.5)
+    for ch in text:
+        await page.keyboard.type(ch, delay=random.randint(60, 180))
+        if random.random() < 0.08:
+            await _human_pause(min_s=0.25, max_s=0.5)
+
+
+async def _wait_reply_popup(page, *, timeout_s: float = 12.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        if await _reply_compose_open(page):
+            return True
+        await asyncio.sleep(0.25)
+    return False
+
+
+async def _locate_reply_input_in_popup(page):
+    if await _mark_reply_compose(page):
+        loc = _reply_input_locator(page)
+        try:
+            if await loc.count() and await loc.is_visible():
+                return loc
+        except Exception:
+            pass
+    return None
+
+
+async def _locate_send_in_popup(page):
+    if not await _mark_reply_compose(page):
+        return None
+    popup = _reply_popup_locator(page)
+    for selector in _POPUP_SEND_SELECTORS:
+        loc = popup.locator(selector).last
+        try:
+            if await loc.count() and await loc.is_visible():
+                return loc
+        except Exception:
+            continue
+    return None
+
+
+async def _pick_random_comment_item(page):
+    """任取一条可见评论（只选 .comment-item，避免多 selector 重复）。"""
+    loc = page.locator(".comment-item")
+    try:
+        count = await loc.count()
+    except Exception:
+        return None
+    if count <= 0:
+        return None
+    indices = list(range(min(count, 12)))
+    random.shuffle(indices)
+    for idx in indices:
+        item = loc.nth(idx)
+        try:
+            if await item.count() and await item.is_visible():
+                return item
+        except Exception:
+            continue
+    return None
+
+
+async def _click_reply_on_comment_item(page, item) -> bool:
+    """只对指定评论点一次「回复」，不切换其他用户。"""
+    with contextlib.suppress(Exception):
+        clicked = await item.evaluate(
+            """(el) => {
+              const btn = el.querySelector('.reply.icon-container');
+              if (!btn) return false;
+              btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+              btn.click();
+              return true;
+            }"""
+        )
+        if clicked:
+            return True
+    reply_btn = await _find_reply_btn_in_item(item)
+    if reply_btn is None:
+        return False
+    with contextlib.suppress(Exception):
+        await reply_btn.click()
+        return True
+    return False
+
+
+async def _click_reply_on_visible_comment(
+    page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+) -> bool:
+    """打开评论区 → 只点一条可见评论的「回复」→ 等 pop 出现（不轮流点多个用户）。"""
+    await _human_pause(min_s=0.8, max_s=1.4)
+    await trigger_comment_panel(page, settings, tenant_id=tenant_id)
+    if not await _wait_comment_panel_ready(page, timeout_s=10.0):
+        return False
+
+    await _human_pause(min_s=0.6, max_s=1.0)
+    await scroll_comment_list_in_detail(page, settings, tenant_id=tenant_id, rounds=1)
+    await _human_pause(min_s=0.5, max_s=0.9)
+
+    item = await _pick_random_comment_item(page)
+    if item is None:
+        return False
+
+    await _hover_comment_item(page, item)
+    await _human_pause(min_s=0.4, max_s=0.7)
+    if not await _click_reply_on_comment_item(page, item):
+        return False
+
+    if not await _wait_reply_popup(page, timeout_s=12.0):
+        return False
+
+    input_loc = await _locate_reply_input_in_popup(page)
+    return input_loc is not None
+
+
 async def _locate_reply_input(page, *, timeout_s: float = 12.0):
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
-        if await _reply_input_ready(page):
-            for selector in _WARM_REPLY_INPUT_SELECTORS:
-                loc = page.locator(selector).last
-                try:
-                    if await loc.count() > 0 and await loc.is_visible():
-                        return loc
-                except Exception:
-                    continue
-        await asyncio.sleep(0.42)
+        loc = await _locate_reply_input_in_popup(page)
+        if loc is not None:
+            return loc
+        await asyncio.sleep(0.35)
     return None
 
 
@@ -241,44 +443,25 @@ async def _pick_visible_comment_item(page, *, max_scan: int = 12):
     return None
 
 
-async def _click_reply_on_visible_comment(
+async def _ensure_note_url_loaded(
     page,
-    settings: Settings,
     *,
-    tenant_id: str,
+    content_url: str,
+    note_id: str,
 ) -> bool:
-    """打开评论区 → 随便点一条可见评论的「回复」暖场（不必是目标评论）。"""
-    from app.core.antibot import human_click
-
-    await _human_pause(min_s=1.0, max_s=1.8)
-    await trigger_comment_panel(page, settings, tenant_id=tenant_id)
-    panel_ok = await _wait_comment_panel_ready(page, timeout_s=12.0)
-    if not panel_ok:
+    url = page.url or ""
+    if note_id and note_id in url and await _page_note_accessible(page):
+        return True
+    if not content_url:
         return False
-
-    await _human_pause(min_s=1.0, max_s=1.6)
-    await scroll_note_page(page, settings, tenant_id=tenant_id, rounds=1)
-    await scroll_comment_list_in_detail(page, settings, tenant_id=tenant_id, rounds=2)
-    await _human_pause(min_s=0.8, max_s=1.4)
-
-    tried = 0
-    async for item in _iter_comment_items(page):
-        if tried >= 10:
-            break
-        tried += 1
-        try:
-            await _hover_comment_item(page, item)
-            reply_btn = await _find_reply_btn_in_item(item)
-            if reply_btn is None:
-                continue
-            await _human_pause(min_s=0.5, max_s=0.9)
-            await human_click(page, reply_btn, settings, tenant_id=tenant_id)
-            await _human_pause(min_s=1.0, max_s=1.8)
-            if await _locate_reply_input(page, timeout_s=10.0):
-                return True
-        except Exception:
-            continue
-    return False
+    for attempt in range(2):
+        with contextlib.suppress(Exception):
+            await page.goto(content_url, wait_until="domcontentloaded", timeout=45000)
+            await _human_pause(min_s=2.0, max_s=3.0)
+        if await _page_note_accessible(page):
+            return True
+        await _human_pause(min_s=1.0, max_s=1.5)
+    return await _page_note_accessible(page)
 
 
 async def _type_into_reply_input(
@@ -288,15 +471,109 @@ async def _type_into_reply_input(
     tenant_id: str,
     reply_text: str,
 ) -> bool:
-    from app.core.antibot import human_type
-
-    input_loc = await _locate_reply_input(page, timeout_s=10.0)
+    input_loc = await _locate_reply_input_in_popup(page)
+    if input_loc is None:
+        input_loc = await _locate_reply_input(page, timeout_s=6.0)
     if input_loc is None:
         return False
-    await _human_pause(min_s=0.6, max_s=1.1)
-    await human_type(page, input_loc, reply_text, settings, tenant_id=tenant_id)
-    await _human_pause(min_s=1.0, max_s=1.8)
+    await _human_pause(min_s=0.3, max_s=0.6)
+    await _slow_type_reply_input(page, input_loc, reply_text)
+    await _human_pause(min_s=0.5, max_s=0.9)
     return True
+
+
+def _patch_comment_post_body(
+    post_data: str,
+    *,
+    note_id: str,
+    comment_id: str,
+    reply_text: str,
+) -> str:
+    """拦截 comment/post 时把 target_comment_id/content 替换为入库目标（类比抖音 publish route patch）。"""
+    try:
+        body = json.loads(post_data or "{}")
+    except json.JSONDecodeError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    body["note_id"] = note_id
+    body["target_comment_id"] = comment_id
+    body["content"] = reply_text
+    body.setdefault("at_users", [])
+    return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+
+
+async def _install_comment_post_interceptor(
+    page,
+    *,
+    dry_run: bool,
+    note_id: str,
+    comment_id: str,
+    reply_text: str,
+) -> None:
+    async def _handle(route) -> None:
+        if "/comment/post" not in (route.request.url or ""):
+            await route.continue_()
+            return
+        if dry_run:
+            await route.abort("blockedbyclient")
+            return
+        patched = _patch_comment_post_body(
+            route.request.post_data or "",
+            note_id=note_id,
+            comment_id=comment_id,
+            reply_text=reply_text,
+        )
+        await route.continue_(post_data=patched)
+
+    await page.route("**/*", _handle)
+
+
+async def _remove_comment_post_interceptor(page) -> None:
+    with contextlib.suppress(Exception):
+        await page.unroute("**/*")
+
+
+async def _click_send_and_wait_post(
+    page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    publish_result: dict[str, Any],
+    timeout_s: float = 14.0,
+) -> bool:
+    from app.core.antibot import human_click
+
+    async def _wait_result() -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while asyncio.get_running_loop().time() < deadline:
+            if publish_result.get("ok"):
+                return True
+            if publish_result.get("error"):
+                return False
+            await asyncio.sleep(0.35)
+        return bool(publish_result.get("ok"))
+
+    await _human_pause(min_s=0.4, max_s=0.8)
+    with contextlib.suppress(Exception):
+        await page.keyboard.press("Enter")
+    if await _wait_result():
+        publish_result["method"] = "enter"
+        return True
+
+    send_btn = await _locate_send_in_popup(page)
+    if send_btn is None:
+        publish_result["error"] = "回复弹层内 Enter 未触发发送，且未找到发送按钮"
+        return False
+
+    await _human_pause(min_s=0.5, max_s=0.9)
+    await human_click(page, send_btn, settings, tenant_id=tenant_id)
+    if await _wait_result():
+        publish_result["method"] = "send_button"
+        return True
+
+    publish_result.setdefault("error", "Enter/发送后未捕获 comment/post 成功响应")
+    return False
 
 
 async def warm_publish_reply_comment(
@@ -311,7 +588,7 @@ async def warm_publish_reply_comment(
     dry_run: bool = False,
     note_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """UI 暖场后在页内 context 调用 comment/post；目标 comment_id 仅用于 API，不必在 DOM 中定位。"""
+    """UI 暖场 → 点回复打开 pop → 弹层输入框 focus → 逐字输入 → Enter 发送；route 拦截 comment/post。"""
     text = str(reply_text or "").strip()
     target_cid = str(comment_id or "").strip()
     if not target_cid:
@@ -326,23 +603,61 @@ async def warm_publish_reply_comment(
     if not resolved_note:
         return {"ok": False, "error": "缺少 note_id", "capture_method": CAPTURE_METHOD}
 
+    publish_result: dict[str, Any] = {"ok": False}
+
+    async def on_response(resp) -> None:
+        if "/comment/post" not in (resp.url or ""):
+            return
+        try:
+            body = await resp.json()
+        except Exception:
+            return
+        code = body.get("code")
+        success = body.get("success")
+        if code == 0 or success is True:
+            publish_result.update(
+                {
+                    "ok": True,
+                    "code": code,
+                    "success": success,
+                    "msg": body.get("msg") or body.get("message") or "",
+                    "data": body.get("data") or {},
+                }
+            )
+        else:
+            publish_result["error"] = (
+                body.get("msg")
+                or body.get("message")
+                or body.get("error")
+                or f"code={code}"
+            )
+
+    page.on("response", on_response)
+    await _install_comment_post_interceptor(
+        page,
+        dry_run=dry_run,
+        note_id=resolved_note,
+        comment_id=target_cid,
+        reply_text=text,
+    )
     steps: list[str] = []
     try:
-        stage = await _ensure_on_note_page(
-            page,
-            settings,
-            tenant_id=tenant_id,
-            content_url=content_url,
-            note_id=resolved_note,
-            note_meta=note_meta,
-        )
-        steps.append(f"stage={stage}")
-        await _warmup_note_page(page)
+        if not await _ensure_note_url_loaded(page, content_url=content_url, note_id=resolved_note):
+            return {
+                "ok": False,
+                "error": "笔记链接不可访问，请重新抓取更新 xsec_token",
+                "capture_method": CAPTURE_METHOD_DRY if dry_run else CAPTURE_METHOD,
+                "steps": steps,
+            }
+        steps.append("stage=note_goto")
+        await activate_comments_on_detail(page, settings, tenant_id=tenant_id)
+        await assert_xhs_human_ready(page, settings, tenant_id=tenant_id, stage="note")
+        await _human_pause(min_s=0.8, max_s=1.2)
 
         if not await _click_reply_on_visible_comment(page, settings, tenant_id=tenant_id):
             return {
                 "ok": False,
-                "error": "未能点击评论回复并打开输入框",
+                "error": "未能点击评论回复并打开回复弹层",
                 "capture_method": CAPTURE_METHOD_DRY if dry_run else CAPTURE_METHOD,
                 "steps": steps,
             }
@@ -353,7 +668,7 @@ async def warm_publish_reply_comment(
         ):
             return {
                 "ok": False,
-                "error": "未能输入回复文案",
+                "error": "未能向回复弹层输入文案",
                 "capture_method": CAPTURE_METHOD_DRY if dry_run else CAPTURE_METHOD,
                 "steps": steps,
             }
@@ -363,6 +678,8 @@ async def warm_publish_reply_comment(
             "note_id": resolved_note,
             "target_comment_id": target_cid,
             "text_preview": text[:120],
+            "intercept": "comment/post route patch target_comment_id",
+            "submit": "Enter（失败再点弹层发送）",
         }
 
         if dry_run:
@@ -376,20 +693,27 @@ async def warm_publish_reply_comment(
                 "page_url": page.url,
                 "steps": steps,
                 "would_publish": would_publish,
-                "diagnostic": "dry_run：已完成暖场与输入，未调用 comment/post",
+                "diagnostic": "dry_run：已完成弹层 focus 与逐字输入，未按 Enter 发送",
             }
 
-        tool = XhsReplyCommentTool(settings, tenant_id)
-        publish_result = await tool._reply_via_api(
+        sent_ok = await _click_send_and_wait_post(
             page,
-            note_id=resolved_note,
-            comment_id=target_cid,
-            reply_text=text,
-            referer=page.url,
+            settings,
+            tenant_id=tenant_id,
+            publish_result=publish_result,
         )
-        ok = bool(publish_result.get("ok"))
+        steps.append("submit=enter_or_send")
+        if not sent_ok:
+            return {
+                "ok": False,
+                "error": publish_result.get("error") or "comment_post_failed",
+                "capture_method": CAPTURE_METHOD,
+                "comment_id": target_cid,
+                "steps": steps,
+                "would_publish": would_publish,
+            }
         return {
-            "ok": ok,
+            "ok": True,
             "dry_run": False,
             "capture_method": CAPTURE_METHOD,
             "comment_id": target_cid,
@@ -399,8 +723,6 @@ async def warm_publish_reply_comment(
             "steps": steps,
             "would_publish": would_publish,
             "publish": publish_result,
-            "error": None if ok else publish_result.get("error"),
-            "diagnostic": "已调用 comment/post" if ok else "comment/post 失败",
         }
     except Exception as exc:
         return {
@@ -409,3 +731,8 @@ async def warm_publish_reply_comment(
             "capture_method": CAPTURE_METHOD_DRY if dry_run else CAPTURE_METHOD,
             "steps": steps,
         }
+    finally:
+        await _remove_comment_post_interceptor(page)
+        await _clear_reply_popup_mark(page)
+        with contextlib.suppress(Exception):
+            page.remove_listener("response", on_response)

@@ -1,4 +1,4 @@
-"""诊断 open_note_for_human_action 各步骤。"""
+"""诊断 open_note_for_ui_action 各步骤。"""
 from __future__ import annotations
 
 import asyncio
@@ -24,9 +24,9 @@ async def main() -> None:
     from app.db.session import SessionLocal
     from app.services.agent_browser_session import AgentBrowserSession
     from app.services.comment_reply_service import CommentReplyService
-    from app.services.human_journey.platforms.xiaohongshu.feed_ui import (
+    from app.services.ui_flow.platforms.xiaohongshu.feed_ui import (
         detect_page_scene,
-        open_note_for_human_action,
+        open_note_for_ui_action,
         page_has_search_note_cards,
     )
 
@@ -45,7 +45,7 @@ async def main() -> None:
     page = await browser.ensure_started()
     print("start url:", page.url)
 
-    result = await open_note_for_human_action(
+    result = await open_note_for_ui_action(
         page,
         settings,
         tenant_id="default",

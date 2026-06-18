@@ -1388,6 +1388,11 @@ class SkillExecutor:
             params.get("warm_publish")
             or str(params.get("reply_mode") or "").strip().lower() == "warm_publish"
             or (bool(params.get("ui_first")) and page is not None)
+            or (
+                page is not None
+                and self.platform in ("douyin", "xiaohongshu")
+                and params.get("warm_publish") is not False
+            )
         )
         dry_run = bool(params.get("dry_run", False))
         try:

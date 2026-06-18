@@ -12,7 +12,7 @@ from app.platforms.xiaohongshu.human_guards import assert_xhs_human_ready
 from app.platforms.xiaohongshu.profile import build_profile_url
 from app.services.ui_flow.platforms.xiaohongshu.feed_ui import (
     activate_comments_on_detail,
-    open_note_for_human_action,
+    open_note_for_ui_action,
     scroll_comment_list_in_detail,
 )
 from app.services.social_roam.human.xiaohongshu.reply_warm_publish import (
@@ -240,7 +240,7 @@ async def warm_outreach_follow_from_comment(
     open_method = ""
 
     try:
-        opened = await open_note_for_human_action(
+        opened = await open_note_for_ui_action(
             page,
             settings,
             tenant_id=tenant_id,
