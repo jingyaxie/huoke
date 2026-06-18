@@ -60,6 +60,11 @@ try {
   $healthy = $false
   while ((Get-Date) -lt $deadline) {
     if ($proc.HasExited) {
+      $logFile = Join-Path $dataDir "logs/desktop-backend.log"
+      if (Test-Path $logFile) {
+        Write-Host "--- desktop-backend.log ---"
+        Get-Content $logFile -Tail 80 | ForEach-Object { Write-Host $_ }
+      }
       throw "backend exited early with code $($proc.ExitCode) for install root: $InstallRoot"
     }
     try {

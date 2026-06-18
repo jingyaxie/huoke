@@ -23,6 +23,16 @@ function Find-PortablePythonExe {
   return $null
 }
 
+function Set-PortablePythonHome {
+  param([Parameter(Mandatory = $true)][string]$PythonExe)
+  $pythonHome = Split-Path $PythonExe -Parent
+  if ((Split-Path $pythonHome -Leaf) -eq "bin") {
+    $pythonHome = Split-Path $pythonHome -Parent
+  }
+  $env:PYTHONHOME = $pythonHome
+  $env:PYTHONUTF8 = "1"
+}
+
 function Test-PortablePythonRunnable {
   param(
     [Parameter(Mandatory = $true)][string]$PythonExe,
@@ -31,7 +41,10 @@ function Test-PortablePythonRunnable {
   if (-not (Test-Path $PythonExe)) { return $false }
   if (-not (Test-Path $BackendDir)) { return $false }
   $prevPythonPath = $env:PYTHONPATH
+  $prevPythonHome = $env:PYTHONHOME
+  $prevPythonUtf8 = $env:PYTHONUTF8
   $env:PYTHONPATH = $BackendDir
+  Set-PortablePythonHome -PythonExe $PythonExe
   try {
     & $PythonExe -c "import uvicorn; print('portable python probe ok')" 2>$null | Out-Null
     return ($LASTEXITCODE -eq 0)
@@ -40,6 +53,16 @@ function Test-PortablePythonRunnable {
       Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
     } else {
       $env:PYTHONPATH = $prevPythonPath
+    }
+    if ($null -eq $prevPythonHome) {
+      Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+    } else {
+      $env:PYTHONHOME = $prevPythonHome
+    }
+    if ($null -eq $prevPythonUtf8) {
+      Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
+    } else {
+      $env:PYTHONUTF8 = $prevPythonUtf8
     }
   }
 }
@@ -67,7 +90,7 @@ function Sync-HuokeBundleCache {
   $backendDir = Join-Path $SourceBundleDir "backend"
   $pythonExe = Find-PortablePythonExe -BundleDir $SourceBundleDir
   $needsCache = (Test-HuokePathHasNonAscii $Root) -or (Test-HuokePathHasNonAscii $SourceBundleDir)
-  if (-not $needsCache) {
+  if (-not $needsCache -and $pythonExe) {
     $needsCache = -not (Test-PortablePythonRunnable -PythonExe $pythonExe -BackendDir $backendDir)
   }
 

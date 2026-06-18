@@ -73,12 +73,7 @@ function Test-PortInUse([int]$Port) {
 
 function Set-PortablePythonEnv {
   param([Parameter(Mandatory = $true)][string]$PythonExe)
-  $pythonHome = Split-Path $PythonExe -Parent
-  if ((Split-Path $pythonHome -Leaf) -eq "bin") {
-    $pythonHome = Split-Path $pythonHome -Parent
-  }
-  $env:PYTHONHOME = $pythonHome
-  $env:PYTHONUTF8 = "1"
+  Set-PortablePythonHome -PythonExe $PythonExe
 }
 
 $SourceBundleDir = Resolve-HuokeBundleDir
