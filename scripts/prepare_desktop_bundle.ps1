@@ -51,7 +51,11 @@ if ($LASTEXITCODE -ge 8) { throw "Frontend dist copy failed" }
 $PortableDir = Join-Path $RuntimeDir "python"
 $RequirementsFile = Join-Path $TargetBackend "requirements.txt"
 . "$PSScriptRoot/install_portable_python_win.ps1"
-$PortablePython = Install-HuokePortablePython -TargetDir $PortableDir -RequirementsFile $RequirementsFile
+Install-HuokePortablePython -TargetDir $PortableDir -RequirementsFile $RequirementsFile | Out-Null
+$PortablePython = Find-PortablePythonExe -Root $PortableDir
+if (-not $PortablePython) {
+  throw "Portable Python binary missing under $PortableDir"
+}
 
 Write-Host "Verifying portable Python can load backend..."
 $env:PYTHONPATH = $TargetBackend

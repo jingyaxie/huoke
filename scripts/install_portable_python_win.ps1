@@ -70,14 +70,15 @@ function Install-HuokePortablePython {
   }
 
   Write-Host "Installing pip + backend requirements..."
-  & $pythonExe -m ensurepip --upgrade
+  # Pipe subprocess stdout away from the success stream so callers can safely capture the return path.
+  & $pythonExe -m ensurepip --upgrade 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "ensurepip failed with exit code $LASTEXITCODE" }
-  & $pythonExe -m pip install --disable-pip-version-check -U pip setuptools wheel
+  & $pythonExe -m pip install --disable-pip-version-check -U pip setuptools wheel 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE" }
-  & $pythonExe -m pip install --disable-pip-version-check -r $RequirementsFile
+  & $pythonExe -m pip install --disable-pip-version-check -r $RequirementsFile 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "pip install requirements failed with exit code $LASTEXITCODE" }
 
-  & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
+  & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "portable python import smoke test failed" }
 
   Write-Host "Portable Python ready: $pythonExe"
