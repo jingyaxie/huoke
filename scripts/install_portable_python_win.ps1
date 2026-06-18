@@ -85,16 +85,19 @@ function Install-HuokePortablePython {
   New-Item -ItemType Directory -Force -Path $BrowsersDir | Out-Null
   $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
 
-  Write-Host "Installing Playwright Chromium into $BrowsersDir (bundled browser, Chrome not required)..."
-  & $pythonExe -m playwright install chromium 2>&1 | Out-Host
+  Write-Host "Installing Playwright Chromium into $BrowsersDir (full browser for headed desktop, --no-shell)..."
+  & $pythonExe -m playwright install chromium --no-shell 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed with exit code $LASTEXITCODE" }
 
-  $browserExe = Get-ChildItem -Path $BrowsersDir -Recurse -Filter "chrome.exe" -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  if (-not $browserExe) {
-    throw "Playwright Chromium not found under $BrowsersDir after install"
-  }
-  Write-Host "Bundled Chromium: $($browserExe.FullName)"
+  $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
+  & $pythonExe -c @"
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    browser.close()
+print('playwright chromium launch ok')
+"@ 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
 
   & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "portable python import smoke test failed" }

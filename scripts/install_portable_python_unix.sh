@@ -94,12 +94,18 @@ rm -rf "$browsers_dir"
 mkdir -p "$browsers_dir"
 export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
 
-echo "Installing Playwright Chromium into $browsers_dir (bundled browser, Chrome not required)..."
-"$python_bin" -m playwright install chromium
-if ! find "$browsers_dir" -type f \( -name "chrome" -o -name "Chromium" -o -name "chrome.exe" \) 2>/dev/null | head -n1 | grep -q .; then
-  echo "Playwright Chromium not found under $browsers_dir after install" >&2
-  exit 1
-fi
+echo "Installing Playwright Chromium into $browsers_dir (full browser for headed desktop, --no-shell)..."
+"$python_bin" -m playwright install chromium --no-shell
+
+export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
+"$python_bin" -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    browser.close()
+print('playwright chromium launch ok')
+"
+
 "$python_bin" -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
 
 echo "Portable Python ready: $python_bin"

@@ -50,10 +50,14 @@ jobs:
             echo "Missing bundled Playwright browsers: $pw_browsers" >&2
             exit 1
           fi
-          if ! find "$pw_browsers" -type f \( -name 'chrome' -o -name 'Chromium' \) 2>/dev/null | head -n1 | grep -q .; then
-            echo "No Chromium binary under $pw_browsers" >&2
-            exit 1
-          fi
+          export PLAYWRIGHT_BROWSERS_PATH="$(pwd)/$pw_browsers"
+          PYTHONPATH="$(pwd)/desktop/bundle/backend" "$py" -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    browser.close()
+print('playwright chromium launch ok')
+"
           echo "Bundled Playwright browsers verified under $pw_browsers"
 
       - name: Upload DMG artifact
