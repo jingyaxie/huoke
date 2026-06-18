@@ -65,13 +65,7 @@ jobs:
             throw "Missing bundled Playwright browsers: $pwBrowsers"
           }
           $env:PLAYWRIGHT_BROWSERS_PATH = (Resolve-Path $pwBrowsers).Path
-          & $py -c @"
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    browser.close()
-print('playwright chromium launch ok')
-"@
+          & $py (Resolve-Path "scripts/verify_playwright_bundle.py").Path
           if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch verify failed" }
           Write-Host "Bundled Playwright browsers verified under $pwBrowsers"
 

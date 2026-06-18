@@ -98,13 +98,8 @@ echo "Installing Playwright Chromium into $browsers_dir (full browser for headed
 "$python_bin" -m playwright install chromium --no-shell
 
 export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
-"$python_bin" -c "
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    browser.close()
-print('playwright chromium launch ok')
-"
+script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLAYWRIGHT_BROWSERS_PATH="$browsers_dir" "$python_bin" "$script_root/verify_playwright_bundle.py"
 
 "$python_bin" -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
 

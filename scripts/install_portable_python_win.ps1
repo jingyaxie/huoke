@@ -90,13 +90,8 @@ function Install-HuokePortablePython {
   if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed with exit code $LASTEXITCODE" }
 
   $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
-  & $pythonExe -c @"
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    browser.close()
-print('playwright chromium launch ok')
-"@ 2>&1 | Out-Host
+  $verifyScript = Join-Path $PSScriptRoot "verify_playwright_bundle.py"
+  & $pythonExe $verifyScript 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
 
   & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
