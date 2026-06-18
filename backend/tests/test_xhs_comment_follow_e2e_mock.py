@@ -291,20 +291,8 @@ async def test_warm_outreach_follow_from_comment_dry_run(xhs_settings):
 
     with (
         patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile.open_note_for_ui_action",
-            AsyncMock(return_value={"ok": True}),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._warmup_note_page",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile.scroll_comment_list_in_detail",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._open_profile_via_warm_comment_click",
-            AsyncMock(return_value=(profile_page, "warm_click_href_patched")),
+            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._open_commenter_profile",
+            AsyncMock(return_value=(profile_page, f"https://www.xiaohongshu.com/user/profile/{USER_ID}")),
         ),
         patch(
             "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._warmup_browse_profile",
@@ -327,7 +315,7 @@ async def test_warm_outreach_follow_from_comment_dry_run(xhs_settings):
     assert result["dry_run"] is True
     assert result["capture_method"] == OUTREACH_CAPTURE_METHOD
     assert result["follow"]["reason"] == "dry_run"
-    assert "warm_click_href_patched" in result["steps"]
+    assert "profile_goto_direct" in result["steps"]
 
 
 @pytest.mark.asyncio
@@ -340,20 +328,8 @@ async def test_warm_outreach_follow_from_comment_clicks_follow(xhs_settings):
 
     with (
         patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile.open_note_for_ui_action",
-            AsyncMock(return_value={"ok": True}),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._warmup_note_page",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile.scroll_comment_list_in_detail",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._open_profile_via_warm_comment_click",
-            AsyncMock(return_value=(profile_page, "warm_click_href_patched")),
+            "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._open_commenter_profile",
+            AsyncMock(return_value=(profile_page, f"https://www.xiaohongshu.com/user/profile/{USER_ID}")),
         ),
         patch(
             "app.services.social_roam.human.xiaohongshu.warm_outreach_profile._warmup_browse_profile",
