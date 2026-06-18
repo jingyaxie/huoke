@@ -75,11 +75,6 @@ function Test-PortInUse {
   return $false
 }
 
-function Set-PortablePythonEnv {
-  param([string]$PythonExe)
-  Set-PortablePythonHome -PythonExe $PythonExe
-}
-
 function Start-HuokeDesktopBackend {
   $DataDir = Resolve-HuokeDataDir
   $SourceBundleDir = Resolve-HuokeBundleDir
@@ -136,7 +131,7 @@ function Start-HuokeDesktopBackend {
 
   if ($PortablePython) {
     Set-PortablePythonEnv -PythonExe $Python
-    Write-Log "Python: $Python (PYTHONHOME=$($env:PYTHONHOME))"
+    Write-Log "Python: $Python (portable root=$(Get-PortablePythonRoot -PythonExe $Python))"
   } else {
     Write-Log "Python: $Python"
   }
@@ -193,7 +188,9 @@ function Start-HuokeDesktopBackend {
 
   Invoke-PythonStep -Label "python version" -PythonExe $Python -Code "import sys; print(sys.version)"
   Invoke-PythonStep -Label "import uvicorn" -PythonExe $Python -Code "import uvicorn; print('uvicorn ok')"
+  Invoke-PythonStep -Label "import greenlet" -PythonExe $Python -Code "import greenlet; from greenlet._greenlet import _C_API; print('greenlet ok')"
   Invoke-PythonStep -Label "import bootstrap" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; print('bootstrap import ok')"
+  Invoke-PythonStep -Label "import playwright" -PythonExe $Python -Code "from playwright.async_api import async_playwright; print('playwright ok')"
   Invoke-PythonStep -Label "import app.main" -PythonExe $Python -Code "from app.main import app; print('app.main ok')"
   Invoke-PythonStep -Label "ensure_database_schema" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')"
 

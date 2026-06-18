@@ -19,6 +19,48 @@ function Find-PortablePythonExe {
   return $null
 }
 
+function Write-PortablePythonSitecustomize {
+  param([Parameter(Mandatory = $true)][string]$PythonRoot)
+  $sitecustomize = Join-Path $PythonRoot "Lib\sitecustomize.py"
+  @'
+"""Huoke portable Python: register DLL directories for native extensions on Windows."""
+import os
+import sys
+
+
+def _register_windows_dll_dirs() -> None:
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return
+    base = os.path.dirname(os.path.abspath(sys.executable))
+    for name in ("", "DLLs"):
+        candidate = os.path.join(base, name) if name else base
+        if os.path.isdir(candidate):
+            try:
+                os.add_dll_directory(candidate)
+            except OSError:
+                pass
+
+
+_register_windows_dll_dirs()
+'@ | Set-Content -Path $sitecustomize -Encoding UTF8
+}
+
+function Set-PortablePythonEnvForExe {
+  param([Parameter(Mandatory = $true)][string]$PythonExe)
+  $pythonRoot = Split-Path $PythonExe -Parent
+  if ((Split-Path $pythonRoot -Leaf) -eq "bin") {
+    $pythonRoot = Split-Path $pythonRoot -Parent
+  }
+  Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
+  $env:PYTHONUTF8 = "1"
+  $dllDirs = @($pythonRoot, (Join-Path $pythonRoot "DLLs"))
+  $prefix = (($dllDirs | Where-Object { Test-Path $_ }) -join ";")
+  if ($prefix) {
+    $env:PATH = "$prefix;$env:PATH"
+  }
+  return $pythonRoot
+}
+
 function Install-HuokePortablePython {
   param(
     [Parameter(Mandatory = $true)][string]$TargetDir,
@@ -69,6 +111,12 @@ function Install-HuokePortablePython {
     throw "python.exe missing after staging: $TargetDir"
   }
 
+  $pythonRoot = Split-Path $pythonExe -Parent
+  if ((Split-Path $pythonRoot -Leaf) -eq "bin") {
+    $pythonRoot = Split-Path $pythonRoot -Parent
+  }
+  Write-PortablePythonSitecustomize -PythonRoot $pythonRoot
+
   Write-Host "Installing pip + backend requirements..."
   # Pipe subprocess stdout away from the success stream so callers can safely capture the return path.
   & $pythonExe -m ensurepip --upgrade 2>&1 | Out-Host
@@ -97,6 +145,10 @@ function Install-HuokePortablePython {
   $verifyScript = Join-Path $PSScriptRoot "verify_playwright_bundle.py"
   & $pythonExe $verifyScript 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
+
+  Set-PortablePythonEnvForExe -PythonExe $pythonExe | Out-Null
+  & $pythonExe -c "import greenlet; from greenlet._greenlet import _C_API; print('greenlet native ok')" 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "greenlet native extension smoke test failed" }
 
   & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "portable python import smoke test failed" }

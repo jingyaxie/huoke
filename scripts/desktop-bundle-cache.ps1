@@ -23,14 +23,27 @@ function Find-PortablePythonExe {
   return $null
 }
 
-function Set-PortablePythonHome {
+function Get-PortablePythonRoot {
   param([Parameter(Mandatory = $true)][string]$PythonExe)
-  $pythonHome = Split-Path $PythonExe -Parent
-  if ((Split-Path $pythonHome -Leaf) -eq "bin") {
-    $pythonHome = Split-Path $pythonHome -Parent
+  $pythonRoot = Split-Path $PythonExe -Parent
+  if ((Split-Path $pythonRoot -Leaf) -eq "bin") {
+    $pythonRoot = Split-Path $pythonRoot -Parent
   }
-  $env:PYTHONHOME = $pythonHome
+  return $pythonRoot
+}
+
+function Set-PortablePythonEnv {
+  param([Parameter(Mandatory = $true)][string]$PythonExe)
+  $pythonRoot = Get-PortablePythonRoot -PythonExe $PythonExe
+  # Do not set PYTHONHOME: with python-build-standalone it can break Windows
+  # DLL lookup for native wheels such as greenlet/playwright.
+  Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   $env:PYTHONUTF8 = "1"
+  $dllDirs = @($pythonRoot, (Join-Path $pythonRoot "DLLs"))
+  $prefix = (($dllDirs | Where-Object { Test-Path $_ }) -join ";")
+  if ($prefix) {
+    $env:PATH = "$prefix;$env:PATH"
+  }
 }
 
 function Invoke-PortablePythonProbe {
@@ -47,11 +60,12 @@ function Invoke-PortablePythonProbe {
   }
 
   $prevPythonPath = $env:PYTHONPATH
+  $prevPath = $env:PATH
   $prevPythonHome = $env:PYTHONHOME
   $prevPythonUtf8 = $env:PYTHONUTF8
   $prevEap = $ErrorActionPreference
   $env:PYTHONPATH = $BackendDir
-  Set-PortablePythonHome -PythonExe $PythonExe
+  Set-PortablePythonEnv -PythonExe $PythonExe
   $ErrorActionPreference = 'Continue'
   try {
     # Do NOT pipe to Out-Null: PowerShell 5.1 loses native $LASTEXITCODE after a pipeline.
@@ -75,6 +89,11 @@ function Invoke-PortablePythonProbe {
       Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
     } else {
       $env:PYTHONUTF8 = $prevPythonUtf8
+    }
+    if ($null -eq $prevPath) {
+      Remove-Item Env:PATH -ErrorAction SilentlyContinue
+    } else {
+      $env:PATH = $prevPath
     }
   }
 }

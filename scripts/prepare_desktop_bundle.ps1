@@ -57,11 +57,13 @@ if (-not $PortablePython) {
   throw "Portable Python binary missing under $PortableDir"
 }
 
-Write-Host "Verifying portable Python can load backend..."
+Write-Host "Verifying portable Python can load backend (production-like env)..."
 $env:PYTHONPATH = $TargetBackend
-& $PortablePython -c "from app.db.bootstrap import ensure_database_schema; print('backend import ok')"
+$null = Set-PortablePythonEnvForExe -PythonExe $PortablePython
+& $PortablePython -c "import greenlet; from greenlet._greenlet import _C_API; from app.main import app; print('backend import ok')"
 if ($LASTEXITCODE -ne 0) { throw "backend import smoke test failed" }
 Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 
 @{
   kind = "huoke-desktop-bundle"
