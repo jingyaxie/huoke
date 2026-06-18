@@ -94,8 +94,11 @@ rm -rf "$browsers_dir"
 mkdir -p "$browsers_dir"
 export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
 
-echo "Installing Playwright Chromium into $browsers_dir (full browser for headed desktop, --no-shell)..."
+echo "Installing Playwright Chromium into $browsers_dir..."
+echo "  - full browser (--no-shell) for headed desktop automation"
 "$python_bin" -m playwright install chromium --no-shell
+echo "  - headless shell (required by Playwright 1.6x for headless launch)"
+"$python_bin" -m playwright install chromium-headless-shell
 
 export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

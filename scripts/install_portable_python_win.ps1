@@ -85,9 +85,13 @@ function Install-HuokePortablePython {
   New-Item -ItemType Directory -Force -Path $BrowsersDir | Out-Null
   $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
 
-  Write-Host "Installing Playwright Chromium into $BrowsersDir (full browser for headed desktop, --no-shell)..."
+  Write-Host "Installing Playwright Chromium into $BrowsersDir..."
+  Write-Host "  - full browser (--no-shell) for headed desktop automation"
   & $pythonExe -m playwright install chromium --no-shell 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed with exit code $LASTEXITCODE" }
+  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium --no-shell failed with exit code $LASTEXITCODE" }
+  Write-Host "  - headless shell (required by Playwright 1.6x for headless launch)"
+  & $pythonExe -m playwright install chromium-headless-shell 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium-headless-shell failed with exit code $LASTEXITCODE" }
 
   $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
   $verifyScript = Join-Path $PSScriptRoot "verify_playwright_bundle.py"
