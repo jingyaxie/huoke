@@ -30,6 +30,7 @@
 const navItems = [
   { path: "/settings/general", label: "通用", hint: "租户与 API" },
   { path: "/settings/model", label: "模型", hint: "LLM 与 API Key" },
+  { path: "/settings/diagnosis", label: "抓取诊断", hint: "挂起分析" },
   { path: "/settings/account", label: "账号", hint: "平台绑定" },
   { path: "/settings/runtime", label: "运行", hint: "浏览器与协议" },
   { path: "/settings/skills", label: "技能", hint: "Skill 管理" },

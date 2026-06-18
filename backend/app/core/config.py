@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     task_job_concurrency: int = 2
     task_scheduler_poll_seconds: int = 30
 
-    # 抓取失败页面诊断（规则 + LLM，best-effort，失败不影响挂起）
+    # 抓取失败页面诊断（由 storage/settings/page_diagnosis.json + 设置页维护，非环境变量）
     page_diagnosis_enabled: bool = True
     page_diagnosis_llm_enabled: bool = True
     page_diagnosis_screenshot_enabled: bool = True
@@ -175,6 +175,8 @@ def get_settings() -> Settings:
     dist = settings.frontend_dist_dir
     settings.frontend_dist_dir = dist.resolve() if dist.is_absolute() else (ROOT_DIR / dist).resolve()
     from app.services.llm_settings_service import bootstrap_llm_settings_from_env_file
+    from app.services.page_diagnosis_settings_service import bootstrap_page_diagnosis_settings
 
     bootstrap_llm_settings_from_env_file(settings)
+    bootstrap_page_diagnosis_settings(settings)
     return settings

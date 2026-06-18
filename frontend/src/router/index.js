@@ -23,6 +23,7 @@ import SettingsRulesSection from "../views/settings/SettingsRulesSection.vue";
 import SettingsExperiencesSection from "../views/settings/SettingsExperiencesSection.vue";
 import SettingsAgentsSection from "../views/settings/SettingsAgentsSection.vue";
 import SettingsModelSection from "../views/settings/SettingsModelSection.vue";
+import SettingsDiagnosisSection from "../views/settings/SettingsDiagnosisSection.vue";
 import PortalLoginView from "../views/PortalLoginView.vue";
 import { buildCloudRoutes } from "../config/cloudNav";
 import { isPortalAuthenticated, isPortalEnabled } from "../utils/portalShell";
@@ -72,6 +73,7 @@ const routes = [
         children: [
           { path: "general", name: "settings-general", component: SettingsGeneralSection },
           { path: "model", name: "settings-model", component: SettingsModelSection },
+          { path: "diagnosis", name: "settings-diagnosis", component: SettingsDiagnosisSection },
           { path: "account", name: "settings-account", component: SettingsAccountSection },
           { path: "runtime", name: "settings-runtime", component: SettingsRuntimeSection },
           { path: "skills", name: "settings-skills", component: SettingsSkillsSection },
