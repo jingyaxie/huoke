@@ -57,6 +57,8 @@ if (cd "$BACKEND" && "$PY" -m pytest \
   tests/test_task_planned_execution_simulation.py \
   tests/test_orchestration_resilience_scale.py \
   tests/test_page_diagnosis.py \
+  tests/test_page_diagnosis_settings_service.py \
+  tests/test_page_diagnosis_settings_api.py \
   -q --tb=line); then
   ok "pytest 全部通过"
 else
