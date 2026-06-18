@@ -270,7 +270,7 @@ fn verify_desktop_frontend(
         return Err(format!(
             "获客界面不可用 (HTTP {})。请查看日志: {}",
             resp.status(),
-            desktop_log_hint
+            log_hint
         ));
     }
     let content_type = resp
