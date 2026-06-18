@@ -45,9 +45,13 @@ function Test-PortablePythonRunnable {
   $prevPythonUtf8 = $env:PYTHONUTF8
   $env:PYTHONPATH = $BackendDir
   Set-PortablePythonHome -PythonExe $PythonExe
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   try {
     & $PythonExe -c "import uvicorn; from app.main import app; print('portable python probe ok')" 2>&1 | Out-Null
     return ($LASTEXITCODE -eq 0)
+  } finally {
+    $ErrorActionPreference = $prevEap
   } finally {
     if ($null -eq $prevPythonPath) {
       Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
