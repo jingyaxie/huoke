@@ -23,7 +23,7 @@ function Install-HuokePortablePython {
   param(
     [Parameter(Mandatory = $true)][string]$TargetDir,
     [Parameter(Mandatory = $true)][string]$RequirementsFile,
-    [string]$PythonVersion = "3.12.8",
+    [string]$PythonVersion = "3.12.9",
     [string]$ReleaseTag = "20250205"
   )
 

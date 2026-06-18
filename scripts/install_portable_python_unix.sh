@@ -4,7 +4,7 @@ set -euo pipefail
 
 TARGET_DIR="${1:?target dir required}"
 REQUIREMENTS_FILE="${2:?requirements.txt required}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.12.8}"
+PYTHON_VERSION="${PYTHON_VERSION:-3.12.9}"
 RELEASE_TAG="${PYTHON_STANDALONE_RELEASE:-20250205}"
 
 detect_platform_triple() {
