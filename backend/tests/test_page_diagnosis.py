@@ -1,13 +1,17 @@
 """页面失败诊断：跨平台契约与规则引擎测试。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from app.core.config import Settings
 from app.services.page_diagnosis.contracts import CrawlFailureSignal, PageSnapshot
 from app.services.page_diagnosis.mappers.registry import normalize_failure, normalize_platform
 from app.services.page_diagnosis.reporter import merge_diagnosis_into_suspend_brief, should_diagnose_failure
 from app.services.page_diagnosis.rules import fallback_diagnosis, rule_prefilter
 from app.services.page_diagnosis.service import PageDiagnosisService
+from app.services.page_diagnosis.screenshot_store import resolve_screenshot_path, save_diagnosis_screenshot
 
 
 def test_normalize_platform_defaults_unknown():
@@ -84,7 +88,17 @@ def test_rule_prefilter_captcha_from_guard_probe():
     assert len(diag.user_steps) >= 2
 
 
-def test_service_fallback_when_no_rule_match():
+@pytest.fixture
+def diag_settings(tmp_path):
+    return Settings(
+        storage_root=tmp_path / "storage",
+        deepseek_api_key="test-key",
+        page_diagnosis_llm_enabled=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_fallback_when_no_rule_match(diag_settings):
     signal = CrawlFailureSignal(
         platform="douyin",
         operation="crawl_keyword",
@@ -92,10 +106,78 @@ def test_service_fallback_when_no_rule_match():
         failure_class="unknown",
         message="something odd",
     )
-    diag = PageDiagnosisService().analyze(signal, None)
+    diag = await PageDiagnosisService(diag_settings).analyze(signal, None)
     assert diag.source == "fallback"
     assert diag.issue_type == "unknown"
     assert diag.user_steps
+
+
+@pytest.mark.asyncio
+async def test_service_uses_rule_without_llm(diag_settings):
+    signal = CrawlFailureSignal(
+        platform="douyin",
+        operation="crawl_keyword",
+        implementation="playwright",
+        failure_class="captcha",
+        message="verify",
+        guard_hints={"captcha": True},
+    )
+    snapshot = PageSnapshot(platform="douyin", guard_probe={"captcha": True})
+    diag = await PageDiagnosisService(diag_settings).analyze(signal, snapshot)
+    assert diag.source == "rule"
+    assert diag.issue_type == "captcha_required"
+
+
+def test_screenshot_store_and_resolve(diag_settings):
+    png = b"\x89PNG\r\n\x1a\n"
+    ref = save_diagnosis_screenshot(
+        diag_settings,
+        tenant_id="default",
+        job_id="job-1",
+        png_bytes=png,
+    )
+    assert ref and "diagnosis/job-1" in ref
+    path = resolve_screenshot_path(diag_settings, ref)
+    assert path is not None and path.is_file()
+    assert resolve_screenshot_path(diag_settings, "../etc/passwd") is None
+
+
+@pytest.mark.asyncio
+async def test_llm_enriches_low_confidence_rule(diag_settings, monkeypatch):
+    diag_settings.page_diagnosis_llm_enabled = True
+    diag_settings.page_diagnosis_rule_confidence_skip_llm = 0.99
+
+    async def fake_analyze(self, signal, snapshot, *, screenshot_bytes=None, rule_guess=None):
+        from app.services.page_diagnosis.contracts import PageDiagnosis
+
+        return PageDiagnosis(
+            issue_type="captcha_required",
+            confidence=0.91,
+            user_title="LLM：需要验证码",
+            user_summary="LLM 判断",
+            user_steps=["步骤1", "步骤2"],
+            platform=signal.platform,
+            failure_class=signal.failure_class,
+            source="llm",
+        )
+
+    monkeypatch.setattr(
+        "app.services.page_diagnosis.llm_analyzer.PageDiagnosisLlmAnalyzer.analyze",
+        fake_analyze,
+    )
+
+    signal = CrawlFailureSignal(
+        platform="douyin",
+        operation="crawl_keyword",
+        implementation="playwright",
+        failure_class="captcha",
+        message="verify",
+        guard_hints={"captcha": True},
+    )
+    snapshot = PageSnapshot(platform="douyin", guard_probe={"captcha": True})
+    diag = await PageDiagnosisService(diag_settings).analyze(signal, snapshot)
+    assert diag.source == "llm"
+    assert "验证码" in diag.user_title
 
 
 def test_merge_diagnosis_into_suspend_brief():

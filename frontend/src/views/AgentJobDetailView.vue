@@ -76,6 +76,9 @@
             <ul v-if="suspendEvidence.length" class="suspend-evidence">
               <li v-for="(line, idx) in suspendEvidence" :key="idx">{{ line }}</li>
             </ul>
+            <div v-if="diagnosisScreenshotUrl" class="suspend-screenshot-wrap">
+              <img :src="diagnosisScreenshotUrl" alt="诊断截图" class="suspend-screenshot" />
+            </div>
             <p v-if="suspendBrief.resume_at_display">
               <strong>自动恢复时间：</strong>{{ suspendBrief.resume_at_display }}
             </p>
@@ -457,6 +460,8 @@ import {
   fetchAgentJob,
   updateAgentJobConfig,
 } from "../api/agent";
+import http from "../api/http";
+import { getJobDiagnosisScreenshotPath } from "../utils/acquisitionJobs";
 
 const route = useRoute();
 const router = useRouter();
@@ -532,6 +537,7 @@ const suspendBrief = computed(() => {
       next_action: state.next_action || "点击「继续执行」从当前进度继续",
       evidence: fromDiag?.evidence || [],
       issue_type: fromDiag?.issue_type || null,
+      screenshot_ref: fromDiag?.screenshot_ref || null,
       manual_resume: "您也可随时点击「继续执行」跳过等待，立即恢复运行",
     };
   }
@@ -542,6 +548,31 @@ const suspendEvidence = computed(() => {
   const rows = suspendBrief.value?.evidence;
   return Array.isArray(rows) ? rows.filter(Boolean) : [];
 });
+
+const diagnosisScreenshotUrl = ref("");
+
+function revokeDiagnosisScreenshot() {
+  if (diagnosisScreenshotUrl.value) {
+    URL.revokeObjectURL(diagnosisScreenshotUrl.value);
+    diagnosisScreenshotUrl.value = "";
+  }
+}
+
+async function loadDiagnosisScreenshot() {
+  revokeDiagnosisScreenshot();
+  const id = jobId.value;
+  const ref = suspendBrief.value?.screenshot_ref;
+  if (!id || !ref) return;
+  try {
+    const resp = await http.get(getJobDiagnosisScreenshotPath(id), { responseType: "blob" });
+    diagnosisScreenshotUrl.value = URL.createObjectURL(resp.data);
+  } catch {
+    diagnosisScreenshotUrl.value = "";
+  }
+}
+
+watch([jobId, () => suspendBrief.value?.screenshot_ref], loadDiagnosisScreenshot);
+onUnmounted(revokeDiagnosisScreenshot);
 
 function formatResumeAt(iso) {
   if (!iso) return null;
@@ -1575,6 +1606,19 @@ onUnmounted(() => {
   padding-left: 18px;
   color: #64748b;
   font-size: 12px;
+}
+
+.suspend-screenshot-wrap {
+  margin-top: 10px;
+}
+
+.suspend-screenshot {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
 }
 
 .suspend-hint {

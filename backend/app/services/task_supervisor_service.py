@@ -1545,6 +1545,8 @@ class TaskSupervisorService:
                 implementation=implementation,
                 page=page,
                 settings=self.settings,
+                tenant_id=self.tenant_id,
+                job_id=str(state.get("job_id") or "").strip() or None,
             )
             reporter = CrawlFailureReporter(self.settings, self.tenant_id)
             diagnosis = await reporter.report(
@@ -1553,6 +1555,7 @@ class TaskSupervisorService:
                 skill_result=skill_result,
                 snapshot_provider=provider,
                 page=page,
+                job_id=str(state.get("job_id") or "").strip() or None,
             )
             if diagnosis is not None and diagnosis.confidence >= 0.65:
                 apply_diagnosis_to_state(state, diagnosis)

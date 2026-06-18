@@ -5,6 +5,7 @@ from typing import Any, Protocol
 from app.services.page_diagnosis.contracts import PageSnapshot, Platform
 from app.services.page_diagnosis.mappers.common import sanitize_body_excerpt
 from app.services.page_diagnosis.mappers.registry import normalize_platform, probe_platform_page
+from app.services.page_diagnosis.screenshot_store import capture_page_screenshot, save_diagnosis_screenshot
 
 
 class PageSnapshotProvider(Protocol):
@@ -20,10 +21,20 @@ class NullSnapshotProvider:
 
 
 class PlaywrightPageSnapshotProvider:
-    def __init__(self, *, platform: str | None, page: Any, settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        platform: str | None,
+        page: Any,
+        settings: Any,
+        tenant_id: str = "default",
+        job_id: str | None = None,
+    ) -> None:
         self._platform = normalize_platform(platform)
         self._page = page
         self._settings = settings
+        self._tenant_id = tenant_id
+        self._job_id = job_id
 
     async def collect_safe(self, *, timeout: float = 3.0) -> PageSnapshot | None:
         page = self._page
@@ -55,6 +66,21 @@ class PlaywrightPageSnapshotProvider:
             except Exception:
                 pass
             guard_probe = await probe_platform_page(self._platform, page)
+
+            screenshot_ref = None
+            if (
+                getattr(self._settings, "page_diagnosis_screenshot_enabled", True)
+                and self._job_id
+            ):
+                png = await capture_page_screenshot(page)
+                if png:
+                    screenshot_ref = save_diagnosis_screenshot(
+                        self._settings,
+                        tenant_id=self._tenant_id,
+                        job_id=self._job_id,
+                        png_bytes=png,
+                    )
+
             return PageSnapshot(
                 platform=self._platform,
                 url=url or None,
@@ -64,6 +90,7 @@ class PlaywrightPageSnapshotProvider:
                 interactive_summary=foreground[:30],
                 overlays=overlays[:5],
                 guard_probe=guard_probe,
+                screenshot_ref=screenshot_ref,
                 collected_via="playwright",
             )
         except Exception:
@@ -76,7 +103,15 @@ def build_snapshot_provider(
     implementation: str,
     page: Any | None,
     settings: Any,
+    tenant_id: str = "default",
+    job_id: str | None = None,
 ) -> PageSnapshotProvider:
     if page is not None and implementation not in {"unknown", "cache", "dry_run", "sidecar"}:
-        return PlaywrightPageSnapshotProvider(platform=platform, page=page, settings=settings)
+        return PlaywrightPageSnapshotProvider(
+            platform=platform,
+            page=page,
+            settings=settings,
+            tenant_id=tenant_id,
+            job_id=job_id,
+        )
     return NullSnapshotProvider(platform)

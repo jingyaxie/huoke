@@ -240,6 +240,22 @@ export function formatResumeAt(iso) {
   }
 }
 
+function _diagnosisExtras(source = {}) {
+  return {
+    screenshot_ref: source.screenshot_ref || null,
+    diagnosis_source: source.diagnosis_source || source.source || null,
+    user_summary: String(source.user_summary || "").trim(),
+    issue_type: source.issue_type || null,
+    evidence: Array.isArray(source.evidence) ? source.evidence : [],
+  };
+}
+
+export function getJobDiagnosisScreenshotPath(jobId) {
+  const id = String(jobId || "").trim();
+  if (!id) return "";
+  return `/agent/jobs/${id}/diagnosis/screenshot`;
+}
+
 export function getJobSuspendReason(job) {
   if (!isJobSuspended(job)) return "";
   const brief = getJobSuspendBrief(job);
@@ -253,13 +269,11 @@ export function getJobSuspendBrief(job) {
   if (syncBrief && typeof syncBrief === "object" && syncBrief.reason) {
     return {
       reason: String(syncBrief.reason || "").trim(),
-      user_summary: String(syncBrief.user_summary || "").trim(),
       resume_at: syncBrief.resume_at || null,
       resume_at_display: syncBrief.resume_at_display || formatResumeAt(syncBrief.resume_at),
       next_action: String(syncBrief.next_action || "").trim(),
-      issue_type: syncBrief.issue_type || null,
-      evidence: Array.isArray(syncBrief.evidence) ? syncBrief.evidence : [],
       manual_resume: syncBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+      ..._diagnosisExtras(syncBrief),
     };
   }
 
@@ -272,17 +286,16 @@ export function getJobSuspendBrief(job) {
   if (orchBrief && typeof orchBrief === "object" && orchBrief.reason) {
     return {
       reason: String(orchBrief.reason || "").trim(),
-      user_summary: String(orchBrief.user_summary || "").trim(),
       resume_at: orchBrief.resume_at || null,
       resume_at_display: orchBrief.resume_at_display || formatResumeAt(orchBrief.resume_at),
       next_action: String(orchBrief.next_action || "").trim(),
-      issue_type: orchBrief.issue_type || null,
-      evidence: Array.isArray(orchBrief.evidence) ? orchBrief.evidence : [],
       manual_resume: orchBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+      ..._diagnosisExtras(orchBrief),
     };
   }
 
   const state = job?.result?.supervisor_state || {};
+  const pageDiag = state.page_diagnosis || job?.result?.page_diagnosis || {};
   const progress = job?.sync?.progress && typeof job.sync.progress === "object" ? job.sync.progress : {};
   const wake = String(
     state.wake_reason
@@ -304,11 +317,12 @@ export function getJobSuspendBrief(job) {
   const nextAction = String(state.next_action || progress.next_action || "").trim()
     || "点击「继续执行」从当前进度继续";
   return {
-    reason,
+    reason: String(pageDiag.user_title || reason).trim(),
     resume_at: resumeAt,
     resume_at_display: formatResumeAt(resumeAt),
     next_action: nextAction,
     manual_resume: "您也可随时点击「继续执行」跳过等待，立即恢复运行",
+    ..._diagnosisExtras({ ...pageDiag, user_summary: pageDiag.user_summary }),
   };
 }
 

@@ -579,6 +579,51 @@ async def get_agent_job(
     return _async_job_out(job, settings, db_session=session)
 
 
+@router.get("/jobs/{job_id}/diagnosis")
+async def get_agent_job_diagnosis(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    from app.services.page_diagnosis.reporter import extract_page_diagnosis
+
+    svc = AgentAsyncJobService.get(settings)
+    job = svc.get_job(tenant_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    diagnosis = extract_page_diagnosis(job.result if isinstance(job.result, dict) else {})
+    if not diagnosis:
+        raise HTTPException(status_code=404, detail="暂无页面诊断")
+    return {"job_id": job_id, "diagnosis": diagnosis}
+
+
+@router.get("/jobs/{job_id}/diagnosis/screenshot")
+async def get_agent_job_diagnosis_screenshot(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    settings: Settings = Depends(get_settings),
+):
+    from fastapi.responses import FileResponse
+
+    from app.services.page_diagnosis.reporter import extract_page_diagnosis
+    from app.services.page_diagnosis.screenshot_store import resolve_screenshot_path
+
+    svc = AgentAsyncJobService.get(settings)
+    job = svc.get_job(tenant_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    diagnosis = extract_page_diagnosis(job.result if isinstance(job.result, dict) else {})
+    if not diagnosis:
+        raise HTTPException(status_code=404, detail="暂无页面诊断")
+    screenshot_ref = str(diagnosis.get("screenshot_ref") or "").strip()
+    if not screenshot_ref:
+        raise HTTPException(status_code=404, detail="暂无诊断截图")
+    path = resolve_screenshot_path(settings, screenshot_ref)
+    if path is None:
+        raise HTTPException(status_code=404, detail="截图不存在或已过期")
+    return FileResponse(path, media_type="image/png", filename=path.name)
+
+
 @router.get("/jobs", response_model=list[AgentAsyncJobOut])
 async def list_agent_jobs(
     tenant_id: str = Depends(get_authenticated_tenant_id),

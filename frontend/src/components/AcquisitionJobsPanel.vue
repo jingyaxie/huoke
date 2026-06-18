@@ -187,6 +187,7 @@
     <TaskSuspendModal
       v-model="suspendOpen"
       :brief="suspendBrief"
+      :job-id="suspendJobId"
       @resume="resumeSuspendedJob"
     />
   </div>

@@ -133,8 +133,14 @@ class Settings(BaseSettings):
     task_job_concurrency: int = 2
     task_scheduler_poll_seconds: int = 30
 
-    # 抓取失败页面诊断（规则引擎，best-effort，失败不影响挂起）
+    # 抓取失败页面诊断（规则 + LLM，best-effort，失败不影响挂起）
     page_diagnosis_enabled: bool = True
+    page_diagnosis_llm_enabled: bool = True
+    page_diagnosis_screenshot_enabled: bool = True
+    page_diagnosis_llm_timeout_seconds: int = 8
+    page_diagnosis_rule_confidence_skip_llm: float = 0.92
+    page_diagnosis_screenshot_max_bytes: int = 800_000
+    page_diagnosis_body_excerpt_chars: int = 2000
 
     # V3 TikHub compat layer (AISales acquisition router)
     compat_enabled: bool = True
