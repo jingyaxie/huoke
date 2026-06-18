@@ -577,6 +577,14 @@ class TaskSupervisorService:
                     and not state.get("crawl_done")
                     and self._crawl_failure_should_suspend(brief, state)
                 ):
+                    await self._maybe_run_page_diagnosis(
+                        state=state,
+                        brief=brief,
+                        action=action,
+                        skill_result=skill_result,
+                        session=session,
+                        dry_run=dry_run,
+                    )
                     reason = str(state.get("last_crawl_error") or "").strip()
                     if not reason:
                         reason = "抓取失败，挂起避免重复搜索触发风控"
@@ -591,7 +599,7 @@ class TaskSupervisorService:
                     )
                     cycles.append(self._cycle_record(cycle_idx + 1, suspend_decision, {"status": "suspended"}))
                     final_status = "suspended"
-                    final_summary = reason
+                    final_summary = str(state.get("wake_reason") or reason)
                     break
 
                 await asyncio.sleep(MIN_CYCLE_INTERVAL_SEC)
@@ -1468,6 +1476,9 @@ class TaskSupervisorService:
         resume_at: str | None = None,
         completion_outcome: str | None = None,
     ) -> None:
+        diag = state.get("page_diagnosis")
+        if isinstance(diag, dict) and str(diag.get("user_title") or "").strip():
+            reason = str(diag["user_title"]).strip()
         apply_suspend_state(
             state,
             brief,
@@ -1475,6 +1486,78 @@ class TaskSupervisorService:
             resume_at=resume_at,
             completion_outcome=completion_outcome,
         )
+        if isinstance(diag, dict):
+            steps = diag.get("user_steps")
+            if isinstance(steps, list) and steps:
+                state["next_action"] = "\n".join(
+                    f"{idx + 1}. {step}" for idx, step in enumerate(steps) if str(step).strip()
+                )
+            summary = str(diag.get("user_summary") or "").strip()
+            if summary and not str(state.get("wake_reason") or "").strip():
+                state["wake_reason"] = summary
+
+    async def _maybe_run_page_diagnosis(
+        self,
+        *,
+        state: dict[str, Any],
+        brief: TaskBrief,
+        action: str,
+        skill_result: dict[str, Any],
+        session: Any | None,
+        dry_run: bool,
+    ) -> None:
+        if dry_run or not getattr(self.settings, "page_diagnosis_enabled", True):
+            return
+        if state.get("page_diagnosis"):
+            return
+        try:
+            from app.services.page_diagnosis.mappers.registry import infer_implementation, normalize_failure
+            from app.services.page_diagnosis.providers import build_snapshot_provider
+            from app.services.page_diagnosis.reporter import (
+                CrawlFailureReporter,
+                apply_diagnosis_to_state,
+                should_diagnose_failure,
+            )
+
+            page = None
+            if session is not None:
+                with contextlib.suppress(Exception):
+                    await session.ensure_started()
+                    page = getattr(session, "page", None)
+
+            implementation = infer_implementation(skill_result, has_page=page is not None)
+            signal = normalize_failure(
+                platform=brief.platform or self.platform,
+                operation=action,
+                implementation=implementation,
+                skill_result=skill_result,
+            )
+            if not should_diagnose_failure(
+                skill_result=skill_result,
+                signal=signal,
+                state=state,
+                action=action,
+            ):
+                return
+
+            provider = build_snapshot_provider(
+                platform=brief.platform or self.platform,
+                implementation=implementation,
+                page=page,
+                settings=self.settings,
+            )
+            reporter = CrawlFailureReporter(self.settings, self.tenant_id)
+            diagnosis = await reporter.report(
+                platform=brief.platform or self.platform,
+                operation=action,
+                skill_result=skill_result,
+                snapshot_provider=provider,
+                page=page,
+            )
+            if diagnosis is not None and diagnosis.confidence >= 0.65:
+                apply_diagnosis_to_state(state, diagnosis)
+        except Exception:
+            return
 
     def _make_suspend_decision(
         self,

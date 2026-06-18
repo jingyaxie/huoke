@@ -253,9 +253,12 @@ export function getJobSuspendBrief(job) {
   if (syncBrief && typeof syncBrief === "object" && syncBrief.reason) {
     return {
       reason: String(syncBrief.reason || "").trim(),
+      user_summary: String(syncBrief.user_summary || "").trim(),
       resume_at: syncBrief.resume_at || null,
       resume_at_display: syncBrief.resume_at_display || formatResumeAt(syncBrief.resume_at),
       next_action: String(syncBrief.next_action || "").trim(),
+      issue_type: syncBrief.issue_type || null,
+      evidence: Array.isArray(syncBrief.evidence) ? syncBrief.evidence : [],
       manual_resume: syncBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
     };
   }
@@ -269,9 +272,12 @@ export function getJobSuspendBrief(job) {
   if (orchBrief && typeof orchBrief === "object" && orchBrief.reason) {
     return {
       reason: String(orchBrief.reason || "").trim(),
+      user_summary: String(orchBrief.user_summary || "").trim(),
       resume_at: orchBrief.resume_at || null,
       resume_at_display: orchBrief.resume_at_display || formatResumeAt(orchBrief.resume_at),
       next_action: String(orchBrief.next_action || "").trim(),
+      issue_type: orchBrief.issue_type || null,
+      evidence: Array.isArray(orchBrief.evidence) ? orchBrief.evidence : [],
       manual_resume: orchBrief.manual_resume || "您也可随时点击「继续执行」跳过等待，立即恢复运行",
     };
   }

@@ -874,13 +874,20 @@ def build_suspend_brief(
         next_action = infer_suspend_next_action(reason, supervisor_state, brief)
     resume_display = format_resume_at_display(resume_at)
     manual_resume = "您也可随时点击「继续执行」跳过等待，立即恢复运行"
-    return {
+    brief = {
         "reason": reason,
         "resume_at": resume_at,
         "resume_at_display": resume_display,
         "next_action": next_action,
         "manual_resume": manual_resume,
     }
+    try:
+        from app.services.page_diagnosis.reporter import merge_diagnosis_into_suspend_brief
+
+        brief = merge_diagnosis_into_suspend_brief(brief, supervisor_state)
+    except Exception:
+        pass
+    return brief
 
 
 def build_execution_note(

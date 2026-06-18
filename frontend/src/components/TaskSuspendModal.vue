@@ -10,7 +10,11 @@
     <div v-if="brief" class="suspend-body">
       <div class="suspend-section">
         <div class="section-label">当前原因</div>
+        <p v-if="brief.user_summary" class="section-summary">{{ brief.user_summary }}</p>
         <p class="section-text">{{ brief.reason }}</p>
+        <ul v-if="evidenceLines.length" class="evidence-list">
+          <li v-for="(line, idx) in evidenceLines" :key="idx">{{ line }}</li>
+        </ul>
       </div>
 
       <div class="suspend-section">
@@ -52,6 +56,11 @@ const visible = computed({
   set: (value) => emit("update:modelValue", value),
 });
 
+const evidenceLines = computed(() => {
+  const rows = props.brief?.evidence;
+  return Array.isArray(rows) ? rows.filter(Boolean) : [];
+});
+
 function onResume() {
   emit("resume");
   visible.value = false;
@@ -77,6 +86,21 @@ function onResume() {
   font-weight: 600;
   color: #b45309;
   margin-bottom: 6px;
+}
+
+.section-summary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.evidence-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
 }
 
 .section-text {

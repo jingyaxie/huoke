@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     task_job_concurrency: int = 2
     task_scheduler_poll_seconds: int = 30
 
+    # 抓取失败页面诊断（规则引擎，best-effort，失败不影响挂起）
+    page_diagnosis_enabled: bool = True
+
     # V3 TikHub compat layer (AISales acquisition router)
     compat_enabled: bool = True
     compat_max_concurrent: int = 3

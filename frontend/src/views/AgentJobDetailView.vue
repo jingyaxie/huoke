@@ -71,7 +71,11 @@
         >
           <template #title>任务已暂停</template>
           <div class="suspend-brief">
+            <p v-if="suspendBrief.user_summary" class="suspend-summary">{{ suspendBrief.user_summary }}</p>
             <p><strong>原因：</strong>{{ suspendBrief.reason }}</p>
+            <ul v-if="suspendEvidence.length" class="suspend-evidence">
+              <li v-for="(line, idx) in suspendEvidence" :key="idx">{{ line }}</li>
+            </ul>
             <p v-if="suspendBrief.resume_at_display">
               <strong>自动恢复时间：</strong>{{ suspendBrief.resume_at_display }}
             </p>
@@ -516,17 +520,27 @@ const suspendBrief = computed(() => {
   const brief = orchestration.value?.suspend_brief;
   if (brief && typeof brief === "object") return brief;
   const state = job.value?.result?.supervisor_state;
+  const diag = state?.page_diagnosis;
   if (job.value?.status === "pending" && state?.suspended) {
     const reason = state.wake_reason || job.value?.result?.summary || "任务已挂起";
+    const fromDiag = diag && typeof diag === "object" ? diag : null;
     return {
-      reason,
+      reason: fromDiag?.user_title || reason,
+      user_summary: fromDiag?.user_summary || "",
       resume_at: state.resume_at || null,
       resume_at_display: formatResumeAt(state.resume_at),
       next_action: state.next_action || "点击「继续执行」从当前进度继续",
+      evidence: fromDiag?.evidence || [],
+      issue_type: fromDiag?.issue_type || null,
       manual_resume: "您也可随时点击「继续执行」跳过等待，立即恢复运行",
     };
   }
   return null;
+});
+
+const suspendEvidence = computed(() => {
+  const rows = suspendBrief.value?.evidence;
+  return Array.isArray(rows) ? rows.filter(Boolean) : [];
 });
 
 function formatResumeAt(iso) {
@@ -1550,6 +1564,17 @@ onUnmounted(() => {
 
 .suspend-brief p {
   margin: 6px 0 0;
+}
+
+.suspend-summary {
+  color: #64748b;
+}
+
+.suspend-evidence {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .suspend-hint {

@@ -52,7 +52,12 @@ if (cd "$BACKEND" && "$PY" -m pytest \
   tests/test_agent_job_plan.py \
   tests/test_agent_orchestration_job.py \
   tests/test_task_supervisor_service.py \
-  -q --tb=short); then
+  tests/test_task_form_orchestration_audit.py \
+  tests/test_full_create_orchestrate_simulate_pipeline.py \
+  tests/test_task_planned_execution_simulation.py \
+  tests/test_orchestration_resilience_scale.py \
+  tests/test_page_diagnosis.py \
+  -q --tb=line); then
   ok "pytest 全部通过"
 else
   bad "pytest 失败"

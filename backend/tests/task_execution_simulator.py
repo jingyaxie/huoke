@@ -34,11 +34,23 @@ class SimulationStep:
 
 
 @dataclass
+class FaultProfile:
+    """故障注入：指定动作前 N 次返回失败（模拟可恢复/终端错误）。"""
+
+    fail_first_n: dict[str, int] = field(default_factory=dict)
+    error_message: str = "模拟步骤超时"
+    terminal_actions: frozenset[str] = frozenset()  # 失败即挂起类（如 login_required）
+
+
+@dataclass
 class SimulationResult:
     trace: list[SimulationStep] = field(default_factory=list)
     state: dict[str, Any] = field(default_factory=dict)
     terminal: str | None = None
     completion_outcome: str | None = None
+    failure_events: list[dict[str, Any]] = field(default_factory=list)
+    recovered_actions: list[str] = field(default_factory=list)
+    progressed_after_failure: bool = False
 
     @property
     def actions(self) -> list[str]:
@@ -99,12 +111,23 @@ def mock_interaction_stats(
     }
 
 
+def make_failure_result(message: str = "模拟步骤超时") -> dict[str, Any]:
+    return {"status": "failed", "error": message}
+
+
 def mock_skill_result(
     action: str,
     brief: TaskBrief,
     state: dict[str, Any],
     stats: dict[str, Any],
+    *,
+    fault_profile: FaultProfile | None = None,
+    fail_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    if fault_profile and fail_counts is not None:
+        remaining = int(fault_profile.fail_first_n.get(action) or 0) - int(fail_counts.get(action) or 0)
+        if remaining > 0:
+            return make_failure_result(fault_profile.error_message)
     target = effective_target_leads(brief, state) or int(brief.goals.get("target_leads") or 0)
     if action == "crawl_keyword":
         return {
@@ -164,6 +187,8 @@ def simulate_planned_execution(
     max_cycles: int = 120,
     simulate_until: set[str] | None = None,
     run_to_completion: bool = True,
+    fault_profile: FaultProfile | None = None,
+    initial_state: dict[str, Any] | None = None,
 ) -> SimulationResult:
     """按 execution_plan 逐步决策并 dry-run 更新状态。"""
     platform = str(brief.platform or "douyin")
@@ -173,11 +198,18 @@ def simulate_planned_execution(
         "execution_plan": execution_plan,
         "job_id": "sim-job",
     }
+    if initial_state:
+        state.update(copy.deepcopy(initial_state))
+        state["execution_plan"] = execution_plan
     stats = mock_interaction_stats(brief)
     trace: list[SimulationStep] = []
     terminal: str | None = None
     completion_outcome: str | None = None
     seen: set[str] = set()
+    failure_events: list[dict[str, Any]] = []
+    recovered_actions: list[str] = []
+    fail_counts: dict[str, int] = {}
+    progressed_after_failure = False
 
     for cycle in range(1, max_cycles + 1):
         live_stats = state.get("last_stats") if isinstance(state.get("last_stats"), dict) else stats
@@ -219,8 +251,36 @@ def simulate_planned_execution(
         if action == "crawl_content_url":
             state["_last_video_url"] = params.get("video_url")
 
-        skill_result = mock_skill_result(action, brief, state, stats)
+        skill_result = mock_skill_result(
+            action,
+            brief,
+            state,
+            stats,
+            fault_profile=fault_profile,
+            fail_counts=fail_counts,
+        )
         ok = not skill_result.get("error") and str(skill_result.get("status", "")).lower() != "failed"
+        if not ok:
+            fail_counts[action] = int(fail_counts.get(action) or 0) + 1
+            failure_events.append(
+                {
+                    "cycle": cycle,
+                    "action": action,
+                    "error": skill_result.get("error"),
+                    "fail_count": fail_counts[action],
+                }
+            )
+            if fault_profile and action in fault_profile.terminal_actions:
+                terminal = "suspend"
+                state["suspended"] = True
+                state["last_crawl_error"] = str(skill_result.get("error") or "")
+                if action.startswith("crawl"):
+                    state["crawl_failures"] = int(state.get("crawl_failures") or 0) + 1
+                break
+        elif fail_counts.get(action):
+            recovered_actions.append(action)
+        if ok and failure_events:
+            progressed_after_failure = True
         svc._update_state(
             state,
             action,
@@ -265,4 +325,7 @@ def simulate_planned_execution(
         state=state,
         terminal=terminal,
         completion_outcome=completion_outcome,
+        failure_events=failure_events,
+        recovered_actions=recovered_actions,
+        progressed_after_failure=progressed_after_failure,
     )
