@@ -72,13 +72,6 @@ if [[ -z "${PYTHON:-}" || ! -x "$PYTHON" ]]; then
   exit 1
 fi
 
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-if [[ ! -x "$CHROME" ]]; then
-  echo "WARN: 未找到 Google Chrome。应用可启动，但执行获客自动化前请安装 Chrome。" >&2
-else
-  echo "Chrome: $($CHROME --version 2>/dev/null || true)"
-fi
-
 if lsof -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -P -n 2>/dev/null | grep -qv '^COMMAND'; then
   echo "桌面版端口 ${BACKEND_PORT} 已被占用，无法启动内置后端。" >&2
   lsof -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -P -n 2>/dev/null || true
@@ -112,6 +105,15 @@ fi
 export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
 export STORAGE_ROOT="$STORAGE_DIR"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
+
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [[ ! -x "$CHROME" ]]; then
+  echo "未安装 Google Chrome，将使用内置 Playwright Chromium 执行浏览器自动化"
+  export ANTIBOT_BROWSER_CHANNEL=""
+  export ANTIBOT_PLAYWRIGHT_FALLBACK=true
+else
+  echo "Chrome: $($CHROME --version 2>/dev/null || true)"
+fi
 
 echo "初始化数据库..."
 "$PYTHON" - <<'PY'

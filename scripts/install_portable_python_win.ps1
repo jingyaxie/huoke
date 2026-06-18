@@ -78,6 +78,10 @@ function Install-HuokePortablePython {
   & $pythonExe -m pip install --disable-pip-version-check -r $RequirementsFile 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "pip install requirements failed with exit code $LASTEXITCODE" }
 
+  Write-Host "Installing Playwright Chromium (bundled browser, Chrome not required)..."
+  & $pythonExe -m playwright install chromium 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed with exit code $LASTEXITCODE" }
+
   & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "portable python import smoke test failed" }
 

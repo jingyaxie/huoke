@@ -202,7 +202,7 @@ fn wait_backend_ready(timeout: Duration, child: &mut Child) -> Result<(), String
     }
 
     Err(format!(
-        "后端启动超时。请检查 Google Chrome 是否可用，并查看日志:\n{log_hint}"
+        "后端启动超时。请查看日志:\n{log_hint}"
     ))
 }
 
@@ -220,7 +220,7 @@ fn show_startup_error(app: &AppHandle, message: &str) {
         <style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px;line-height:1.6;color:#222}}
         h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px}}</style></head>
         <body><h1>获客平台启动失败</h1><pre>{message}</pre>
-        <p>排查：1) 查看日志目录  2) 执行获客任务前安装 Google Chrome</p></body></html>`);document.close();"#
+        <p>排查：1) 查看日志目录  2) 确认端口 {DESKTOP_PORT} 未被占用  3) 重启应用</p></body></html>`);document.close();"#
     );
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval(&html);

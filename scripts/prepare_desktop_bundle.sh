@@ -64,7 +64,7 @@ cat > "$BUNDLE_DIR/BUNDLE_MANIFEST.json" <<EOF
   "python": "runtime/python",
   "backend": "backend",
   "frontend": "frontend-dist",
-  "notes": "Self-contained desktop runtime. Customer only needs Google Chrome for browser automation."
+  "notes": "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."
 }
 EOF
 

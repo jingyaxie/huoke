@@ -68,7 +68,7 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
   python = "runtime/python"
   backend = "backend"
   frontend = "frontend-dist"
-  notes = "Self-contained desktop runtime. Customer only needs Google Chrome for browser automation."
+  notes = "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."
 } | ConvertTo-Json | Set-Content -Path (Join-Path $BundleDir "BUNDLE_MANIFEST.json") -Encoding UTF8
 
 Write-Host "Bundle ready: $BundleDir"

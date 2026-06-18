@@ -112,13 +112,6 @@ if (-not $Python -or -not (Test-Path $Python)) {
   Write-Error "未找到可用的 Python 3.11+ 运行时"
 }
 
-$Chrome = Find-ChromePath
-if (-not $Chrome) {
-  Write-Log "WARN: 未找到 Google Chrome。应用可启动，但执行获客自动化前请安装 Chrome: https://www.google.com/chrome/"
-} else {
-  Write-Log "Chrome: $Chrome"
-}
-
 if (Test-PortInUse $BackendPort) {
   Write-Error "桌面版端口 $BackendPort 已被占用，无法启动内置后端。请关闭占用该端口的进程后重开应用。"
 }
@@ -153,6 +146,15 @@ if (Test-Path $EnvFile) {
 $env:DESKTOP_MODE = "true"
 $env:FRONTEND_ORIGIN = "http://127.0.0.1:$BackendPort"
 $env:ANTIBOT_FINGERPRINT_PLATFORM = "win"
+
+$Chrome = Find-ChromePath
+if (-not $Chrome) {
+  Write-Log "未安装 Google Chrome，将使用内置 Playwright Chromium 执行浏览器自动化"
+  $env:ANTIBOT_BROWSER_CHANNEL = ""
+  $env:ANTIBOT_PLAYWRIGHT_FALLBACK = "true"
+} else {
+  Write-Log "Chrome: $Chrome"
+}
 
 Write-Host "初始化数据库..."
 & $Python -c "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('数据库 schema 已就绪')"

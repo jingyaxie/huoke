@@ -89,6 +89,8 @@ echo "Installing pip + backend requirements into portable Python..."
 "$python_bin" -m ensurepip --upgrade
 "$python_bin" -m pip install --disable-pip-version-check -U pip setuptools wheel
 "$python_bin" -m pip install --disable-pip-version-check -r "$REQUIREMENTS_FILE"
+echo "Installing Playwright Chromium (bundled browser, Chrome not required)..."
+"$python_bin" -m playwright install chromium
 "$python_bin" -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
 
 echo "Portable Python ready: $python_bin"

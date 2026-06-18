@@ -73,7 +73,8 @@ try {
   Write-Host "First build may take 10-20 minutes (deps + Rust compile + Python packages)..."
   Write-Host ""
 
-  npm run build
+  # NSIS only — MSI (WiX light.exe) needs VBScript, which is often missing on CI runners.
+  npm run build -- --bundles nsis
   if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
 } finally {
   Pop-Location
