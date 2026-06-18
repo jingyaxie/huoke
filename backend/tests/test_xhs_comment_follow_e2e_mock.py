@@ -100,24 +100,6 @@ def _skill(handler: str) -> SkillOut:
 
 
 @pytest.mark.asyncio
-async def test_patch_comment_post_body():
-    from app.services.social_roam.human.xiaohongshu.reply_warm_publish import _patch_comment_post_body
-
-    raw = '{"note_id":"old","target_comment_id":"wrong","content":"hi"}'
-    patched = _patch_comment_post_body(
-        raw,
-        note_id=NOTE_ID,
-        comment_id=COMMENT_ID,
-        reply_text=REPLY_TEXT,
-    )
-    body = json.loads(patched)
-    assert body["note_id"] == NOTE_ID
-    assert body["target_comment_id"] == COMMENT_ID
-    assert body["content"] == REPLY_TEXT
-    assert body["at_users"] == []
-
-
-@pytest.mark.asyncio
 async def test_warm_publish_reply_comment_dry_run(xhs_settings):
     page = make_mock_page(url=NOTE_URL)
 
@@ -131,7 +113,7 @@ async def test_warm_publish_reply_comment_dry_run(xhs_settings):
             AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_visible_comment",
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_target_comment",
             AsyncMock(return_value=True),
         ),
         patch(
@@ -171,7 +153,7 @@ async def test_warm_publish_reply_comment_publishes_via_api(xhs_settings):
             AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_visible_comment",
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_target_comment",
             AsyncMock(return_value=True),
         ),
         patch(
@@ -197,7 +179,7 @@ async def test_warm_publish_reply_comment_publishes_via_api(xhs_settings):
     assert result["ok"] is True
     assert result["capture_method"] == CAPTURE_METHOD
     assert result["publish"]["ok"] is True
-    assert result["would_publish"]["intercept"] == "comment/post route patch target_comment_id"
+    assert result["would_publish"]["submit"] == "native_ui_comment_post"
 
 
 @pytest.mark.asyncio

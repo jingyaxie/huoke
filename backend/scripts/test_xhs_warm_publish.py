@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""测试小红书 warm_publish：浏览评论区 → 随便点回复 → 拦截 comment/post 替换目标 ID。"""
+"""测试小红书 warm_publish：定位目标评论 → 点回复 → 原生 comment/post。"""
 from __future__ import annotations
 
 import argparse

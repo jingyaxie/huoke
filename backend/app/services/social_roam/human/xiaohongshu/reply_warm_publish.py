@@ -1,4 +1,4 @@
-"""小红书评论回复：UI 暖场 → 随机点可见评论「回复」→ 拦截 comment/post 替换 target_comment_id。"""
+"""小红书评论回复：UI 暖场 → 定位目标评论点「回复」→ 弹层输入 → 原生 comment/post（不 patch body）。"""
 from __future__ import annotations
 
 import asyncio
@@ -327,27 +327,6 @@ async def _locate_send_in_popup(page):
     return None
 
 
-async def _pick_random_comment_item(page):
-    """任取一条可见评论（只选 .comment-item，避免多 selector 重复）。"""
-    loc = page.locator(".comment-item")
-    try:
-        count = await loc.count()
-    except Exception:
-        return None
-    if count <= 0:
-        return None
-    indices = list(range(min(count, 12)))
-    random.shuffle(indices)
-    for idx in indices:
-        item = loc.nth(idx)
-        try:
-            if await item.count() and await item.is_visible():
-                return item
-        except Exception:
-            continue
-    return None
-
-
 async def _click_reply_on_comment_item(page, item) -> bool:
     """只对指定评论点一次「回复」，不切换其他用户。"""
     with contextlib.suppress(Exception):
@@ -371,13 +350,87 @@ async def _click_reply_on_comment_item(page, item) -> bool:
     return False
 
 
-async def _click_reply_on_visible_comment(
+async def _find_target_comment_item(
+    page,
+    *,
+    comment_id: str,
+    comment_text: str = "",
+):
+    """定位入库目标评论（优先 #comment-{id}，其次评论文本）。"""
+    cid = str(comment_id or "").strip()
+    if cid:
+        for selector in (
+            f".comment-item:has(#comment-{cid})",
+            f".parent-comment:has(#comment-{cid})",
+            f"#comment-{cid}",
+        ):
+            loc = page.locator(selector).first
+            try:
+                if not await loc.count():
+                    continue
+                if selector.startswith("#comment-"):
+                    with contextlib.suppress(Exception):
+                        await loc.scroll_into_view_if_needed(timeout=5000)
+                    wrapped = page.locator(f".comment-item:has(#comment-{cid})").first
+                    if await wrapped.count() and await wrapped.is_visible():
+                        return wrapped
+                    parent = page.locator(f".parent-comment:has(#comment-{cid})").first
+                    if await parent.count() and await parent.is_visible():
+                        return parent
+                    if await loc.is_visible():
+                        return loc
+                    continue
+                if await loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+
+    text_hint = str(comment_text or "").strip()
+    if not text_hint:
+        return None
+    async for item in _iter_comment_items(page, max_scan=24):
+        try:
+            inner = (await item.inner_text() or "").strip()
+            if text_hint in inner:
+                return item
+        except Exception:
+            continue
+    return None
+
+
+async def _scroll_until_target_comment(
     page,
     settings: Settings,
     *,
     tenant_id: str,
+    comment_id: str,
+    comment_text: str = "",
+    max_rounds: int = 12,
+):
+    for round_idx in range(max_rounds):
+        item = await _find_target_comment_item(
+            page,
+            comment_id=comment_id,
+            comment_text=comment_text,
+        )
+        if item is not None:
+            return item
+        if round_idx + 1 >= max_rounds:
+            break
+        await scroll_comment_list_in_detail(page, settings, tenant_id=tenant_id, rounds=1)
+        await _human_pause(min_s=0.6, max_s=1.1)
+    return None
+
+
+async def _click_reply_on_target_comment(
+    page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    comment_id: str,
+    comment_text: str = "",
 ) -> bool:
-    """打开评论区 → 只点一条可见评论的「回复」→ 等 pop 出现（不轮流点多个用户）。"""
+    """打开评论区 → 滚动定位目标评论 → 点「回复」→ 等 pop 出现。"""
     await _human_pause(min_s=0.8, max_s=1.4)
     await trigger_comment_panel(page, settings, tenant_id=tenant_id)
     if not await _wait_comment_panel_ready(page, timeout_s=10.0):
@@ -387,7 +440,13 @@ async def _click_reply_on_visible_comment(
     await scroll_comment_list_in_detail(page, settings, tenant_id=tenant_id, rounds=1)
     await _human_pause(min_s=0.5, max_s=0.9)
 
-    item = await _pick_random_comment_item(page)
+    item = await _scroll_until_target_comment(
+        page,
+        settings,
+        tenant_id=tenant_id,
+        comment_id=comment_id,
+        comment_text=comment_text,
+    )
     if item is None:
         return False
 
@@ -482,49 +541,15 @@ async def _type_into_reply_input(
     return True
 
 
-def _patch_comment_post_body(
-    post_data: str,
-    *,
-    note_id: str,
-    comment_id: str,
-    reply_text: str,
-) -> str:
-    """拦截 comment/post 时把 target_comment_id/content 替换为入库目标（类比抖音 publish route patch）。"""
-    try:
-        body = json.loads(post_data or "{}")
-    except json.JSONDecodeError:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    body["note_id"] = note_id
-    body["target_comment_id"] = comment_id
-    body["content"] = reply_text
-    body.setdefault("at_users", [])
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+async def _install_dry_run_comment_post_guard(page, *, dry_run: bool) -> None:
+    if not dry_run:
+        return
 
-
-async def _install_comment_post_interceptor(
-    page,
-    *,
-    dry_run: bool,
-    note_id: str,
-    comment_id: str,
-    reply_text: str,
-) -> None:
     async def _handle(route) -> None:
-        if "/comment/post" not in (route.request.url or ""):
-            await route.continue_()
-            return
-        if dry_run:
+        if "/comment/post" in (route.request.url or ""):
             await route.abort("blockedbyclient")
             return
-        patched = _patch_comment_post_body(
-            route.request.post_data or "",
-            note_id=note_id,
-            comment_id=comment_id,
-            reply_text=reply_text,
-        )
-        await route.continue_(post_data=patched)
+        await route.continue_()
 
     await page.route("**/*", _handle)
 
@@ -585,10 +610,11 @@ async def warm_publish_reply_comment(
     comment_id: str,
     reply_text: str,
     note_id: str = "",
+    comment_text: str = "",
     dry_run: bool = False,
     note_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """UI 暖场 → 点回复打开 pop → 弹层输入框 focus → 逐字输入 → Enter 发送；route 拦截 comment/post。"""
+    """定位目标评论 → 点回复 → 弹层输入 → 原生 comment/post（UI 与签名参数一致）。"""
     text = str(reply_text or "").strip()
     target_cid = str(comment_id or "").strip()
     if not target_cid:
@@ -633,13 +659,7 @@ async def warm_publish_reply_comment(
             )
 
     page.on("response", on_response)
-    await _install_comment_post_interceptor(
-        page,
-        dry_run=dry_run,
-        note_id=resolved_note,
-        comment_id=target_cid,
-        reply_text=text,
-    )
+    await _install_dry_run_comment_post_guard(page, dry_run=dry_run)
     steps: list[str] = []
     try:
         if not await _ensure_note_url_loaded(page, content_url=content_url, note_id=resolved_note):
@@ -654,14 +674,20 @@ async def warm_publish_reply_comment(
         await assert_xhs_human_ready(page, settings, tenant_id=tenant_id, stage="note")
         await _human_pause(min_s=0.8, max_s=1.2)
 
-        if not await _click_reply_on_visible_comment(page, settings, tenant_id=tenant_id):
+        if not await _click_reply_on_target_comment(
+            page,
+            settings,
+            tenant_id=tenant_id,
+            comment_id=target_cid,
+            comment_text=str(comment_text or "").strip(),
+        ):
             return {
                 "ok": False,
-                "error": "未能点击评论回复并打开回复弹层",
+                "error": "未能定位目标评论或打开回复弹层",
                 "capture_method": CAPTURE_METHOD_DRY if dry_run else CAPTURE_METHOD,
                 "steps": steps,
             }
-        steps.append("input=reply_button")
+        steps.append("input=target_reply_button")
 
         if not await _type_into_reply_input(
             page, settings, tenant_id=tenant_id, reply_text=text
@@ -678,8 +704,8 @@ async def warm_publish_reply_comment(
             "note_id": resolved_note,
             "target_comment_id": target_cid,
             "text_preview": text[:120],
-            "intercept": "comment/post route patch target_comment_id",
-            "submit": "Enter（失败再点弹层发送）",
+            "submit": "native_ui_comment_post",
+            "method": "Enter（失败再点弹层发送）",
         }
 
         if dry_run:

@@ -432,6 +432,7 @@ class CommentReplyService:
                 tenant_id=self.tenant_id,
                 content_url=target.content_url,
                 comment_id=target.comment_id,
+                comment_text=target.comment_text,
                 reply_text=reply_text,
                 note_id=note_id,
                 dry_run=dry_run,
