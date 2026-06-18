@@ -433,6 +433,7 @@ class CommentReplyService:
                 content_url=target.content_url,
                 comment_id=target.comment_id,
                 comment_text=target.comment_text,
+                parent_comment_id=target.parent_comment_id or "",
                 reply_text=reply_text,
                 note_id=note_id,
                 dry_run=dry_run,

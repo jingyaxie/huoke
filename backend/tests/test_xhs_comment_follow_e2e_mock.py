@@ -17,6 +17,7 @@ from app.services.skill_executor import SkillExecutor
 from app.services.social_roam.human.xiaohongshu.reply_warm_publish import (
     CAPTURE_METHOD,
     CAPTURE_METHOD_DRY,
+    CAPTURE_METHOD_FALLBACK,
     warm_publish_reply_comment,
 )
 from app.services.social_roam.human.xiaohongshu.warm_outreach_profile import (
@@ -100,21 +101,35 @@ def _skill(handler: str) -> SkillOut:
 
 
 @pytest.mark.asyncio
+async def test_patch_comment_post_body_fallback():
+    from app.services.social_roam.human.xiaohongshu.reply_warm_publish import _patch_comment_post_body
+
+    raw = '{"note_id":"old","target_comment_id":"wrong","content":"hi"}'
+    patched = _patch_comment_post_body(
+        raw,
+        note_id=NOTE_ID,
+        comment_id=COMMENT_ID,
+        reply_text=REPLY_TEXT,
+        parent_comment_id="parent123",
+    )
+    body = json.loads(patched)
+    assert body["note_id"] == NOTE_ID
+    assert body["target_comment_id"] == COMMENT_ID
+    assert body["content"] == REPLY_TEXT
+
+
+@pytest.mark.asyncio
 async def test_warm_publish_reply_comment_dry_run(xhs_settings):
     page = make_mock_page(url=NOTE_URL)
 
     with (
         patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._ensure_on_note_page",
-            AsyncMock(return_value="note_ready"),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._warmup_note_page",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_target_comment",
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._ensure_note_url_loaded",
             AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._try_open_reply_compose",
+            AsyncMock(return_value="target"),
         ),
         patch(
             "app.services.social_roam.human.xiaohongshu.reply_warm_publish._type_into_reply_input",
@@ -135,8 +150,43 @@ async def test_warm_publish_reply_comment_dry_run(xhs_settings):
     assert result["ok"] is True
     assert result["dry_run"] is True
     assert result["capture_method"] == CAPTURE_METHOD_DRY
+    assert result["reply_mode"] == "target"
     assert result["would_publish"]["target_comment_id"] == COMMENT_ID
     assert "typed" in result["steps"]
+
+
+@pytest.mark.asyncio
+async def test_warm_publish_fallback_dry_run(xhs_settings):
+    page = make_mock_page(url=NOTE_URL)
+
+    with (
+        patch(
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._ensure_note_url_loaded",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._try_open_reply_compose",
+            AsyncMock(return_value="fallback_patch"),
+        ),
+        patch(
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._type_into_reply_input",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        result = await warm_publish_reply_comment(
+            page,
+            xhs_settings,
+            tenant_id="default",
+            content_url=NOTE_URL,
+            comment_id=COMMENT_ID,
+            reply_text=REPLY_TEXT,
+            note_id=NOTE_ID,
+            dry_run=True,
+        )
+
+    assert result["ok"] is True
+    assert result["reply_mode"] == "fallback_patch"
+    assert "input=fallback_random_reply_button" in result["steps"]
 
 
 @pytest.mark.asyncio
@@ -145,16 +195,12 @@ async def test_warm_publish_reply_comment_publishes_via_api(xhs_settings):
 
     with (
         patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._ensure_on_note_page",
-            AsyncMock(return_value="note_ready"),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._warmup_note_page",
-            AsyncMock(return_value=None),
-        ),
-        patch(
-            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._click_reply_on_target_comment",
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._ensure_note_url_loaded",
             AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.social_roam.human.xiaohongshu.reply_warm_publish._try_open_reply_compose",
+            AsyncMock(return_value="target"),
         ),
         patch(
             "app.services.social_roam.human.xiaohongshu.reply_warm_publish._type_into_reply_input",
