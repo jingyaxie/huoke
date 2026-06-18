@@ -25,7 +25,26 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "请按需编辑 API Key 后重启应用。"
 fi
 
-if [[ -d "$BUNDLE_DIR/runtime/.venv" ]]; then
+resolve_portable_python() {
+  local bundle_dir="$1"
+  local candidate
+  for candidate in \
+    "$bundle_dir/runtime/python/bin/python3.12" \
+    "$bundle_dir/runtime/python/bin/python3" \
+    "$bundle_dir/runtime/python/python.exe"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PORTABLE_PYTHON=""
+if PORTABLE_PYTHON="$(resolve_portable_python "$BUNDLE_DIR" 2>/dev/null || true)" && [[ -n "$PORTABLE_PYTHON" ]]; then
+  BACKEND_DIR="$BUNDLE_DIR/backend"
+  PYTHON="$PORTABLE_PYTHON"
+elif [[ -d "$BUNDLE_DIR/runtime/.venv" ]]; then
   BACKEND_DIR="$BUNDLE_DIR/backend"
   PYTHON="$BUNDLE_DIR/runtime/.venv/bin/python"
 else
@@ -55,9 +74,9 @@ fi
 
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 if [[ ! -x "$CHROME" ]]; then
-  echo "未找到 Google Chrome: $CHROME" >&2
-  echo "桌面版依赖系统 Chrome 驱动 Playwright。" >&2
-  exit 1
+  echo "WARN: 未找到 Google Chrome。应用可启动，但执行获客自动化前请安装 Chrome。" >&2
+else
+  echo "Chrome: $($CHROME --version 2>/dev/null || true)"
 fi
 
 if lsof -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -P -n 2>/dev/null | grep -qv '^COMMAND'; then

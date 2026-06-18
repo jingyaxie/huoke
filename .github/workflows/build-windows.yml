@@ -22,28 +22,6 @@ jobs:
             desktop/package-lock.json
             frontend/package-lock.json
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Verify Python
-        shell: pwsh
-        run: |
-          python --version
-          Write-Host "pythonLocation=$env:pythonLocation"
-
-      - name: Pin Python for bundling
-        shell: pwsh
-        run: |
-          $py = (Get-Command python -ErrorAction Stop).Source
-          if ($py -match 'WindowsApps\\python(\.exe)?$') {
-            throw "Resolved Windows Store python stub instead of setup-python: $py"
-          }
-          "PYTHON=$py" >> $env:GITHUB_ENV
-          "HUOKE_PYTHON=$py" >> $env:GITHUB_ENV
-          Write-Host "Pinned PYTHON=$py"
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,6 +38,19 @@ jobs:
       - name: Build Windows NSIS installer
         shell: pwsh
         run: ./scripts/build_native_win.ps1
+
+      - name: Verify portable Python bundle
+        shell: pwsh
+        run: |
+          $py = @(
+            "desktop/bundle/runtime/python/python.exe",
+            "desktop/bundle/runtime/python/bin/python.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $py) {
+            throw "Missing portable Python runtime under desktop/bundle/runtime/python"
+          }
+          $env:PYTHONPATH = (Resolve-Path "desktop/bundle/backend").Path
+          & $py -c "import uvicorn; from app.main import app; print('bundle verify ok')"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

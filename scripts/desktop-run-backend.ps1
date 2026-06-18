@@ -75,8 +75,24 @@ if (-not (Test-Path $EnvFile)) {
   }
 }
 
+$PortablePython = ""
+foreach ($candidate in @(
+    (Join-Path $BundleDir "runtime/python/python.exe"),
+    (Join-Path $BundleDir "runtime/python/bin/python.exe"),
+    (Join-Path $BundleDir "runtime/python/bin/python3.exe"),
+    (Join-Path $BundleDir "runtime/python/bin/python3.12.exe")
+  )) {
+  if (Test-Path $candidate) {
+    $PortablePython = $candidate
+    break
+  }
+}
+
 $VenvPython = Join-Path $BundleDir "runtime/.venv/Scripts/python.exe"
-if (Test-Path $VenvPython) {
+if ($PortablePython) {
+  $BackendDir = Join-Path $BundleDir "backend"
+  $Python = $PortablePython
+} elseif (Test-Path $VenvPython) {
   $BackendDir = Join-Path $BundleDir "backend"
   $Python = $VenvPython
 } else {
@@ -98,11 +114,9 @@ if (-not $Python -or -not (Test-Path $Python)) {
 
 $Chrome = Find-ChromePath
 if (-not $Chrome) {
-  Write-Error @"
-未找到 Google Chrome。
-桌面版依赖系统 Chrome 驱动 Playwright，请先安装 Chrome：
-https://www.google.com/chrome/
-"@
+  Write-Log "WARN: 未找到 Google Chrome。应用可启动，但执行获客自动化前请安装 Chrome: https://www.google.com/chrome/"
+} else {
+  Write-Log "Chrome: $Chrome"
 }
 
 if (Test-PortInUse $BackendPort) {

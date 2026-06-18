@@ -193,8 +193,9 @@ fn wait_backend_ready(timeout: Duration, child: &mut Child) -> Result<(), String
             }
         }
         if let Ok(Some(status)) = child.try_wait() {
+            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| status.to_string());
             return Err(format!(
-                "后端进程异常退出 (code={status})。\n日志: {log_hint}"
+                "后端进程异常退出 (code={code})。\n日志: {log_hint}"
             ));
         }
         thread::sleep(Duration::from_millis(500));
@@ -219,7 +220,7 @@ fn show_startup_error(app: &AppHandle, message: &str) {
         <style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px;line-height:1.6;color:#222}}
         h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px}}</style></head>
         <body><h1>获客平台启动失败</h1><pre>{message}</pre>
-        <p>排查：1) 安装 Google Chrome  2) 查看日志目录</p></body></html>`);document.close();"#
+        <p>排查：1) 查看日志目录  2) 执行获客任务前安装 Google Chrome</p></body></html>`);document.close();"#
     );
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval(&html);

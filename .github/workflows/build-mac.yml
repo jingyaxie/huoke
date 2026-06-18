@@ -22,18 +22,6 @@ jobs:
             desktop/package-lock.json
             frontend/package-lock.json
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Verify Python
-        run: |
-          python --version
-          which python
-          echo "PYTHON=$(which python)" >> "$GITHUB_ENV"
-          echo "HUOKE_PYTHON=$(which python)" >> "$GITHUB_ENV"
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -47,6 +35,15 @@ jobs:
 
       - name: Build macOS DMG
         run: ./scripts/build_native_mac.sh
+
+      - name: Verify portable Python bundle
+        run: |
+          py="$(find desktop/bundle/runtime/python -type f \( -name 'python3.12' -o -name 'python3' \) | head -n1)"
+          if [[ -z "$py" ]]; then
+            echo "Missing portable Python runtime under desktop/bundle/runtime/python" >&2
+            exit 1
+          fi
+          PYTHONPATH="$(pwd)/desktop/bundle/backend" "$py" -c "import uvicorn; from app.main import app; print('bundle verify ok')"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

@@ -1,25 +1,12 @@
 # Prepare desktop bundle before Tauri build (frontend dist + Python backend)
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/_python_win.ps1"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $FrontendDir = Join-Path $Root "frontend"
 $BundleDir = Join-Path $Root "desktop/bundle"
 $BackendSrc = Join-Path $Root "backend"
 $RuntimeDir = Join-Path $BundleDir "runtime"
-$VenvDir = Join-Path $RuntimeDir ".venv"
 $TargetBackend = Join-Path $BundleDir "backend"
-
-function Invoke-Checked {
-  param(
-    [Parameter(Mandatory = $true)][string]$Label,
-    [Parameter(Mandatory = $true)][scriptblock]$Command
-  )
-  & $Command
-  if ($LASTEXITCODE -ne 0) {
-    throw "$Label failed with exit code $LASTEXITCODE"
-  }
-}
 
 Write-Host "==> Preparing desktop bundle"
 Write-Host "Building frontend (same-origin /api)..."
@@ -39,14 +26,6 @@ try {
 } finally {
   Pop-Location
 }
-
-$Python = Find-HuokePython
-if (-not $Python) {
-  Write-HuokePythonDiagnostics
-  throw "Python 3.11+ not found. Install Python 3.11 or 3.12 to prepare the desktop bundle."
-}
-$PythonExe = Set-HuokePythonEnv $Python
-Write-Host "Python: $PythonExe"
 
 Write-Host "Cleaning old bundle..."
 if (Test-Path $BundleDir) {
@@ -69,20 +48,23 @@ $TargetFrontend = Join-Path $BundleDir "frontend-dist"
 robocopy $FrontendDist $TargetFrontend /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "Frontend dist copy failed" }
 
-Write-Host "Creating virtualenv..."
-& $PythonExe -m venv $VenvDir
-if ($LASTEXITCODE -ne 0) { throw "venv creation failed with exit code $LASTEXITCODE" }
+$PortableDir = Join-Path $RuntimeDir "python"
+$RequirementsFile = Join-Path $TargetBackend "requirements.txt"
+. "$PSScriptRoot/install_portable_python_win.ps1"
+$PortablePython = Install-HuokePortablePython -TargetDir $PortableDir -RequirementsFile $RequirementsFile
 
-$PipPython = Join-Path $VenvDir "Scripts/python.exe"
-if (-not (Test-Path $PipPython)) {
-  throw "Bundled venv python not found: $PipPython"
-}
+Write-Host "Verifying portable Python can load backend..."
+$env:PYTHONPATH = $TargetBackend
+& $PortablePython -c "from app.db.bootstrap import ensure_database_schema; print('backend import ok')"
+if ($LASTEXITCODE -ne 0) { throw "backend import smoke test failed" }
+Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 
-Invoke-Checked "pip upgrade" {
-  & $PipPython -m pip install --disable-pip-version-check -U pip setuptools wheel
-}
-Invoke-Checked "pip install requirements" {
-  & $PipPython -m pip install --disable-pip-version-check -r (Join-Path $TargetBackend "requirements.txt")
-}
+@{
+  kind = "huoke-desktop-bundle"
+  python = "runtime/python"
+  backend = "backend"
+  frontend = "frontend-dist"
+  notes = "Self-contained desktop runtime. Customer only needs Google Chrome for browser automation."
+} | ConvertTo-Json | Set-Content -Path (Join-Path $BundleDir "BUNDLE_MANIFEST.json") -Encoding UTF8
 
 Write-Host "Bundle ready: $BundleDir"

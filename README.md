@@ -157,14 +157,32 @@ bash scripts/test_orchestration.sh
 
 使用 **Tauri 2** 将前后端打包为可安装的 `.app` / `.dmg`，启动后自动拉起 Python 后端（SQLite），在原生窗口中打开管理界面。
 
-### 前置依赖
+### 客户安装包（完整包）
+
+安装包内已自带，**客户电脑无需**预装 Node / Python / Rust：
+
+| 内置 | 说明 |
+|------|------|
+| Tauri 桌面壳 | 原生窗口 |
+| 前端静态资源 | Vue 构建产物 |
+| Python 3.12 运行时 | 可移植完整 Python + 全部后端依赖 |
+| FastAPI 后端 + SQLite | 数据与任务本地存储 |
+
+客户仅需额外安装：
 
 | 依赖 | 说明 |
 |------|------|
-| Google Chrome | Playwright 使用系统浏览器（可见窗口扫码登录） |
+| **Google Chrome** | 执行抖音/小红书获客自动化时使用（打开界面不强制） |
+
+构建机仍需 Node.js 20+、Rust/Cargo；Python 在打包时自动下载进安装包。
+
+### 开发机构建依赖
+
+| 依赖 | 说明 |
+|------|------|
+| Google Chrome | 本地调试浏览器自动化 |
 | Node.js 20+ | 构建前端 |
 | Rust / Cargo | 构建 Tauri 壳 |
-| Python 3.11+ | 构建时打入 bundle（运行时自带 venv） |
 
 ### 一键打包
 

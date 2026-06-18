@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tauri 打包前准备：构建前端静态资源 + 打入 Python 后端 bundle
+# Tauri 打包前准备：构建前端静态资源 + 打入完整 Python 后端 bundle（客户机无需预装 Python）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,47 +7,19 @@ FRONTEND_DIR="$ROOT/frontend"
 BUNDLE_DIR="$ROOT/desktop/bundle"
 BACKEND_SRC="$ROOT/backend"
 RUNTIME_DIR="$BUNDLE_DIR/runtime"
-VENV_DIR="$RUNTIME_DIR/.venv"
 TARGET_BACKEND="$BUNDLE_DIR/backend"
+PORTABLE_DIR="$RUNTIME_DIR/python"
 
 echo "构建前端 (desktop /api 同源)..."
 cd "$FRONTEND_DIR"
 if [[ ! -d node_modules ]]; then
-  npm install
+  if [[ -f package-lock.json ]]; then
+    npm ci
+  else
+    npm install
+  fi
 fi
 VITE_API_BASE_URL=/api npm run build
-
-PYTHON=""
-if [[ -n "${HUOKE_PYTHON:-}" ]] && command -v "$HUOKE_PYTHON" >/dev/null 2>&1; then
-  PYTHON="$HUOKE_PYTHON"
-elif [[ -n "${PYTHON:-}" ]] && command -v "$PYTHON" >/dev/null 2>&1; then
-  PYTHON="$PYTHON"
-fi
-
-if [[ -z "$PYTHON" ]]; then
-  for candidate in \
-    /opt/homebrew/bin/python3.12 \
-    /opt/homebrew/bin/python3.11 \
-    /usr/local/bin/python3.12 \
-    /usr/local/bin/python3.11 \
-    python3.12 \
-    python3.11; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      ver="$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-      major="${ver%%.*}"
-      minor="${ver#*.}"
-      if (( major >= 3 && minor >= 11 )); then
-        PYTHON="$candidate"
-        break
-      fi
-    fi
-  done
-fi
-
-if [[ -z "$PYTHON" ]]; then
-  echo "未找到 Python 3.11+，无法准备桌面 bundle" >&2
-  exit 1
-fi
 
 echo "清理旧 bundle..."
 rm -rf "$BUNDLE_DIR"
@@ -67,11 +39,33 @@ if [[ -d "$FRONTEND_DIR/dist" ]]; then
   rsync -a "$FRONTEND_DIR/dist/" "$BUNDLE_DIR/frontend-dist/"
 fi
 
-echo "创建虚拟环境 ($PYTHON)..."
-"$PYTHON" -m venv "$VENV_DIR"
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-pip install -U pip setuptools wheel
-pip install -r "$TARGET_BACKEND/requirements.txt"
+bash "$ROOT/scripts/install_portable_python_unix.sh" "$PORTABLE_DIR" "$TARGET_BACKEND/requirements.txt"
+
+PYTHON_BIN=""
+for candidate in \
+  "$PORTABLE_DIR/bin/python3.12" \
+  "$PORTABLE_DIR/bin/python3"; do
+  if [[ -x "$candidate" ]]; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "portable python binary missing under $PORTABLE_DIR" >&2
+  exit 1
+fi
+
+echo "验证 portable Python 可加载后端..."
+PYTHONPATH="$TARGET_BACKEND" "$PYTHON_BIN" -c "from app.db.bootstrap import ensure_database_schema; print('backend import ok')"
+
+cat > "$BUNDLE_DIR/BUNDLE_MANIFEST.json" <<EOF
+{
+  "kind": "huoke-desktop-bundle",
+  "python": "runtime/python",
+  "backend": "backend",
+  "frontend": "frontend-dist",
+  "notes": "Self-contained desktop runtime. Customer only needs Google Chrome for browser automation."
+}
+EOF
 
 echo "bundle 就绪: $BUNDLE_DIR"

@@ -48,14 +48,14 @@ if (-not $Chrome) {
 }
 
 $Python = Find-HuokePython
-if (-not $Python) {
-  Write-HuokePythonDiagnostics
-  throw "Python 3.11+ is required for bundling."
+if ($Python) {
+  $PythonExe = Set-HuokePythonEnv $Python
+  Write-Host "Python: $PythonExe"
+  & $PythonExe --version
+  if ($LASTEXITCODE -ne 0) { throw "Python executable is not runnable: $PythonExe" }
+} else {
+  Write-Host "System Python not required for packaging; portable runtime will be downloaded into the bundle."
 }
-$PythonExe = Set-HuokePythonEnv $Python
-Write-Host "Python: $PythonExe"
-& $PythonExe --version
-if ($LASTEXITCODE -ne 0) { throw "Python executable is not runnable: $PythonExe" }
 
 Push-Location $DesktopDir
 try {
