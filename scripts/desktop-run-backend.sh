@@ -92,6 +92,12 @@ export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 export PYTHONPATH="$BACKEND_DIR"
 
+PW_BROWSERS="$BUNDLE_DIR/runtime/playwright-browsers"
+if [[ -d "$PW_BROWSERS" ]]; then
+  export PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS"
+  echo "Playwright browsers: $PW_BROWSERS"
+fi
+
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"

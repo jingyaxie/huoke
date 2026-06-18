@@ -132,6 +132,12 @@ $env:DOUYIN_PROFILE_DIR = Join-Path $StorageDir "douyin/profile"
 $env:PYTHONPATH = $BackendDir
 $env:ANTIBOT_FINGERPRINT_PLATFORM = "win"
 
+$PwBrowsers = Join-Path $BundleDir "runtime/playwright-browsers"
+if (Test-Path $PwBrowsers) {
+  $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
+  Write-Log "Playwright browsers: $PwBrowsers"
+}
+
 if (Test-Path $EnvFile) {
   Get-Content $EnvFile | ForEach-Object {
     $line = $_.Trim()

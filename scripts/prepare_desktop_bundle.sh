@@ -62,6 +62,7 @@ cat > "$BUNDLE_DIR/BUNDLE_MANIFEST.json" <<EOF
 {
   "kind": "huoke-desktop-bundle",
   "python": "runtime/python",
+  "playwright_browsers": "runtime/playwright-browsers",
   "backend": "backend",
   "frontend": "frontend-dist",
   "notes": "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."

@@ -89,8 +89,17 @@ echo "Installing pip + backend requirements into portable Python..."
 "$python_bin" -m ensurepip --upgrade
 "$python_bin" -m pip install --disable-pip-version-check -U pip setuptools wheel
 "$python_bin" -m pip install --disable-pip-version-check -r "$REQUIREMENTS_FILE"
-echo "Installing Playwright Chromium (bundled browser, Chrome not required)..."
+browsers_dir="$(cd "$(dirname "$TARGET_DIR")" && pwd)/playwright-browsers"
+rm -rf "$browsers_dir"
+mkdir -p "$browsers_dir"
+export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
+
+echo "Installing Playwright Chromium into $browsers_dir (bundled browser, Chrome not required)..."
 "$python_bin" -m playwright install chromium
+if ! find "$browsers_dir" -type f \( -name "chrome" -o -name "Chromium" -o -name "chrome.exe" \) 2>/dev/null | head -n1 | grep -q .; then
+  echo "Playwright Chromium not found under $browsers_dir after install" >&2
+  exit 1
+fi
 "$python_bin" -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
 
 echo "Portable Python ready: $python_bin"

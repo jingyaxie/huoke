@@ -66,6 +66,7 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 @{
   kind = "huoke-desktop-bundle"
   python = "runtime/python"
+  playwright_browsers = "runtime/playwright-browsers"
   backend = "backend"
   frontend = "frontend-dist"
   notes = "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."

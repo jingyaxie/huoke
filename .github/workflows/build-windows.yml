@@ -52,6 +52,63 @@ jobs:
           $env:PYTHONPATH = (Resolve-Path "desktop/bundle/backend").Path
           & $py -c "import uvicorn; from app.main import app; print('bundle verify ok')"
 
+          if (-not (Test-Path "scripts/_python_win.ps1")) {
+            throw "Missing scripts/_python_win.ps1 (required by desktop-run-backend.ps1)"
+          }
+          $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          if (-not $config.bundle.resources.'../../scripts/_python_win.ps1') {
+            throw "_python_win.ps1 not listed in tauri.conf.json bundle.resources"
+          }
+
+          $pwBrowsers = "desktop/bundle/runtime/playwright-browsers"
+          if (-not (Test-Path $pwBrowsers)) {
+            throw "Missing bundled Playwright browsers: $pwBrowsers"
+          }
+          $chrome = Get-ChildItem -Path $pwBrowsers -Recurse -Filter "chrome.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $chrome) {
+            throw "No chrome.exe under $pwBrowsers"
+          }
+          Write-Host "Bundled Chromium: $($chrome.FullName)"
+
+      - name: Startup chain smoke test
+        shell: pwsh
+        run: |
+          $env:HUOKE_ROOT = (Get-Location).Path
+          $env:HUOKE_BUNDLE_DIR = (Resolve-Path "desktop/bundle").Path
+          $env:HUOKE_DATA_DIR = Join-Path $env:TEMP "huoke-ci-smoke-$([guid]::NewGuid().ToString('N'))"
+          New-Item -ItemType Directory -Force -Path $env:HUOKE_DATA_DIR | Out-Null
+
+          $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/desktop-run-backend.ps1"
+          ) -PassThru -WindowStyle Hidden
+
+          try {
+            $deadline = (Get-Date).AddSeconds(90)
+            $ok = $false
+            while ((Get-Date) -lt $deadline) {
+              if ($proc.HasExited) {
+                throw "backend process exited early with code $($proc.ExitCode)"
+              }
+              try {
+                $r = Invoke-WebRequest -Uri "http://127.0.0.1:18765/api/health" -TimeoutSec 2 -UseBasicParsing
+                if ($r.StatusCode -eq 200) {
+                  $ok = $true
+                  break
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ok) {
+              throw "backend health check timed out after 90s"
+            }
+            Write-Host "startup smoke test ok"
+          } finally {
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

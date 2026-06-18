@@ -37,6 +37,10 @@ DEFAULT_LINUX_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+DEFAULT_WIN_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 DEFAULT_USER_AGENT = DEFAULT_MAC_USER_AGENT
 
 STEALTH_VERSION = "v4"
@@ -385,15 +389,25 @@ def launch_kwargs(settings: Settings, *, headless: bool) -> dict:
 def fingerprint_platform(settings: Settings) -> str:
     mode = (settings.antibot_fingerprint_platform or "mac").strip().lower()
     if mode == "auto":
-        return "mac" if py_platform.system() == "Darwin" else "linux"
+        system = py_platform.system()
+        if system == "Darwin":
+            return "mac"
+        if system == "Windows":
+            return "win"
+        return "linux"
     if mode in {"mac", "darwin", "macos"}:
         return "mac"
+    if mode in {"win", "windows"}:
+        return "win"
     return "linux"
 
 
 def default_user_agent_for_settings(settings: Settings) -> str:
-    if fingerprint_platform(settings) == "mac":
+    platform = fingerprint_platform(settings)
+    if platform == "mac":
         return DEFAULT_MAC_USER_AGENT
+    if platform == "win":
+        return DEFAULT_WIN_USER_AGENT
     return DEFAULT_LINUX_USER_AGENT
 
 
