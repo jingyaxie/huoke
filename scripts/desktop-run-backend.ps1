@@ -1,9 +1,37 @@
 # Windows 桌面版：启动内置 FastAPI 后端
 $ErrorActionPreference = "Stop"
-. "$PSScriptRoot/_python_win.ps1"
+
+function Resolve-HuokeDataDir {
+  if ($env:HUOKE_DATA_DIR) { return $env:HUOKE_DATA_DIR }
+  $appData = [Environment]::GetFolderPath("ApplicationData")
+  return Join-Path $appData "com.huoke.desktop"
+}
+
+$DataDir = Resolve-HuokeDataDir
+$LogFile = Join-Path $DataDir "logs/desktop-backend.log"
+New-Item -ItemType Directory -Force -Path (Split-Path $LogFile -Parent) | Out-Null
+
+function Write-Log([string]$Message) {
+  $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+  Add-Content -Path $LogFile -Value $line -Encoding UTF8
+  Write-Output $line
+}
+
+trap {
+  $err = $_.Exception.Message
+  if ($_.ScriptStackTrace) { $err += "`n$($_.ScriptStackTrace)" }
+  Write-Log "FATAL: $err"
+  Write-Host "LOG_FILE=$LogFile" -ForegroundColor Red
+  Write-Error $err
+}
+
+Write-Log "desktop-run-backend starting"
+Write-Host "LOG_FILE=$LogFile"
 
 $ScriptDir = $PSScriptRoot
 $Root = if ($env:HUOKE_ROOT) { $env:HUOKE_ROOT } else { Split-Path -Parent $ScriptDir }
+
+. (Join-Path $ScriptDir "desktop-bundle-cache.ps1")
 
 function Resolve-HuokeBundleDir {
   if ($env:HUOKE_BUNDLE_DIR -and (Test-Path (Join-Path $env:HUOKE_BUNDLE_DIR "runtime"))) {
@@ -16,13 +44,7 @@ function Resolve-HuokeBundleDir {
   foreach ($dir in $candidates) {
     if (Test-Path (Join-Path $dir "runtime")) { return $dir }
   }
-  return $Root
-}
-
-function Resolve-HuokeDataDir {
-  if ($env:HUOKE_DATA_DIR) { return $env:HUOKE_DATA_DIR }
-  $appData = [Environment]::GetFolderPath("ApplicationData")
-  return Join-Path $appData "com.huoke.desktop"
+  throw "未找到桌面 bundle（缺少 runtime 目录）。HUOKE_ROOT=$Root"
 }
 
 function Find-ChromePath {
@@ -38,27 +60,36 @@ function Find-ChromePath {
 }
 
 function Test-PortInUse([int]$Port) {
-  $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  return [bool]$conn
+  try {
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if ($conn) { return $true }
+  } catch {}
+  try {
+    $matches = netstat -ano | Select-String -Pattern ":[ ]*$Port[ ].*LISTENING"
+    return [bool]$matches
+  } catch {}
+  return $false
 }
 
-$BundleDir = Resolve-HuokeBundleDir
-$DataDir = Resolve-HuokeDataDir
+function Set-PortablePythonEnv {
+  param([Parameter(Mandatory = $true)][string]$PythonExe)
+  $pythonHome = Split-Path $PythonExe -Parent
+  if ((Split-Path $pythonHome -Leaf) -eq "bin") {
+    $pythonHome = Split-Path $pythonHome -Parent
+  }
+  $env:PYTHONHOME = $pythonHome
+  $env:PYTHONUTF8 = "1"
+}
+
+$SourceBundleDir = Resolve-HuokeBundleDir
+$BundleDir = Sync-HuokeBundleCache -SourceBundleDir $SourceBundleDir -DataDir $DataDir -Root $Root
 $BackendPort = if ($env:BACKEND_PORT) { [int]$env:BACKEND_PORT } else { 18765 }
 $StorageDir = Join-Path $DataDir "storage"
 $EnvFile = Join-Path $DataDir ".env.desktop"
-$LogFile = Join-Path $DataDir "logs/desktop-backend.log"
 $DbFile = Join-Path $StorageDir "huoke_desktop.db"
 
-New-Item -ItemType Directory -Force -Path $DataDir, $StorageDir, (Join-Path $StorageDir "douyin/profile"), (Join-Path $DataDir "logs") | Out-Null
-
-function Write-Log([string]$Message) {
-  $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
-  Add-Content -Path $LogFile -Value $line
-  Write-Output $line
-}
-
-Write-Log "desktop-run-backend root=$Root bundle=$BundleDir"
+New-Item -ItemType Directory -Force -Path $DataDir, $StorageDir, (Join-Path $StorageDir "douyin/profile") | Out-Null
+Write-Log "desktop-run-backend root=$Root sourceBundle=$SourceBundleDir bundle=$BundleDir"
 
 $ExampleEnv = Join-Path $Root ".env.desktop.example"
 if (-not (Test-Path $ExampleEnv)) {
@@ -68,26 +99,14 @@ if (-not (Test-Path $EnvFile)) {
   if (Test-Path $ExampleEnv) {
     Copy-Item $ExampleEnv $EnvFile
     Add-Content $EnvFile "`nANTIBOT_FINGERPRINT_PLATFORM=win"
+    Write-Log "已创建桌面配置: $EnvFile"
     Write-Host "已创建桌面配置: $EnvFile"
-    Write-Host "请按需编辑 API Key 后重启应用。"
   } else {
-    Write-Warning "未找到 .env.desktop.example，将使用默认环境变量。"
+    Write-Log "WARN: 未找到 .env.desktop.example，将使用默认环境变量。"
   }
 }
 
-$PortablePython = ""
-foreach ($candidate in @(
-    (Join-Path $BundleDir "runtime/python/python.exe"),
-    (Join-Path $BundleDir "runtime/python/bin/python.exe"),
-    (Join-Path $BundleDir "runtime/python/bin/python3.exe"),
-    (Join-Path $BundleDir "runtime/python/bin/python3.12.exe")
-  )) {
-  if (Test-Path $candidate) {
-    $PortablePython = $candidate
-    break
-  }
-}
-
+$PortablePython = Find-PortablePythonExe -BundleDir $BundleDir
 $VenvPython = Join-Path $BundleDir "runtime/.venv/Scripts/python.exe"
 if ($PortablePython) {
   $BackendDir = Join-Path $BundleDir "backend"
@@ -96,6 +115,7 @@ if ($PortablePython) {
   $BackendDir = Join-Path $BundleDir "backend"
   $Python = $VenvPython
 } else {
+  . (Join-Path $ScriptDir "_python_win.ps1")
   $BackendDir = Join-Path $Root "backend"
   $DevVenv = Join-Path $BackendDir ".venv/Scripts/python.exe"
   if (Test-Path $DevVenv) {
@@ -109,11 +129,18 @@ if ($PortablePython) {
 }
 
 if (-not $Python -or -not (Test-Path $Python)) {
-  Write-Error "未找到可用的 Python 3.11+ 运行时"
+  throw "未找到可用的 Python 3.11+ 运行时 (bundle=$BundleDir)"
+}
+
+if ($PortablePython) {
+  Set-PortablePythonEnv -PythonExe $Python
+  Write-Log "Python: $Python (PYTHONHOME=$($env:PYTHONHOME))"
+} else {
+  Write-Log "Python: $Python"
 }
 
 if (Test-PortInUse $BackendPort) {
-  Write-Error "桌面版端口 $BackendPort 已被占用，无法启动内置后端。请关闭占用该端口的进程后重开应用。"
+  throw "桌面版端口 $BackendPort 已被占用，无法启动内置后端。请关闭占用该端口的进程后重开应用。"
 }
 
 Set-Location $BackendDir
@@ -162,9 +189,10 @@ if (-not $Chrome) {
   Write-Log "Chrome: $Chrome"
 }
 
-Write-Host "初始化数据库..."
+Write-Log "初始化数据库..."
 & $Python -c "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('数据库 schema 已就绪')"
 if ($LASTEXITCODE -ne 0) { throw "数据库初始化失败" }
 
+Write-Log "启动后端: $Python (port $BackendPort, SQLite)"
 Write-Host "启动后端: $Python (port $BackendPort, SQLite)"
 & $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort

@@ -60,6 +60,10 @@ jobs:
             throw "_python_win.ps1 not listed in tauri.conf.json bundle.resources"
           }
 
+          if (-not $config.bundle.resources.'../../scripts/desktop-bundle-cache.ps1') {
+            throw "desktop-bundle-cache.ps1 not listed in tauri.conf.json bundle.resources"
+          }
+
           $pwBrowsers = "desktop/bundle/runtime/playwright-browsers"
           if (-not (Test-Path $pwBrowsers)) {
             throw "Missing bundled Playwright browsers: $pwBrowsers"
@@ -68,6 +72,14 @@ jobs:
           & $py (Resolve-Path "scripts/verify_playwright_bundle.py").Path
           if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch verify failed" }
           Write-Host "Bundled Playwright browsers verified under $pwBrowsers"
+
+      - name: Installed layout startup smoke (ASCII + Unicode)
+        shell: pwsh
+        run: |
+          $asciiRoot = Join-Path $env:TEMP "huoke-smoke-ascii"
+          $unicodeRoot = Join-Path $env:TEMP "huoke-smoke-unicode-盈小蚁"
+          ./scripts/verify_installed_startup.ps1 -RepoRoot (Get-Location) -InstallRoot $asciiRoot -BackendPort 18766
+          ./scripts/verify_installed_startup.ps1 -RepoRoot (Get-Location) -InstallRoot $unicodeRoot -BackendPort 18767
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
