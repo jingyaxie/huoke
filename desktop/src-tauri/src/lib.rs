@@ -56,19 +56,33 @@ fn normalize_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn desktop_log_hint() -> String {
-    if cfg!(windows) {
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            return format!(
-                r"{app_data}\com.huoke.desktop\logs\desktop-backend.log"
-            );
-        }
-        return r"%APPDATA%\com.huoke.desktop\logs\desktop-backend.log".into();
-    }
-    if cfg!(target_os = "macos") {
-        return "~/Library/Application Support/com.huoke.desktop/logs/desktop-backend.log".into();
-    }
-    "~/.local/share/huoke/logs/desktop-backend.log".into()
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn resolve_app_log_file(app: &AppHandle) -> Result<PathBuf, String> {
+    let log_dir = app.path().app_log_dir().map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&log_dir).map_err(|err| err.to_string())?;
+    let file_name = app
+        .config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| "huoke".to_string());
+    Ok(log_dir.join(format!("{file_name}.log")))
+}
+
+fn desktop_log_hint(app: &AppHandle) -> String {
+    resolve_app_log_file(app)
+        .map(|path| display_path(&path))
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "%LOCALAPPDATA%/com.huoke.desktop/logs/盈小蚁客户前端.log".into()
+            } else if cfg!(target_os = "macos") {
+                "~/Library/Logs/com.huoke.desktop/盈小蚁客户前端.log".into()
+            } else {
+                "~/.local/share/com.huoke.desktop/logs/盈小蚁客户前端.log".into()
+            }
+        })
 }
 
 fn find_launch_root(base: &Path) -> Option<PathBuf> {
@@ -195,7 +209,11 @@ where
     }
 }
 
-fn start_backend(root: &PathBuf, log_state: Arc<BackendLogState>) -> Result<Child, String> {
+fn start_backend(
+    root: &PathBuf,
+    log_file: &Path,
+    log_state: Arc<BackendLogState>,
+) -> Result<Child, String> {
     let root = normalize_path(root);
     let script = root.join("scripts").join(backend_script_name());
     if !script.is_file() {
@@ -223,6 +241,7 @@ fn start_backend(root: &PathBuf, log_state: Arc<BackendLogState>) -> Result<Chil
     if let Some(data_dir) = windows_data_dir() {
         command.env("HUOKE_DATA_DIR", data_dir);
     }
+    command.env("HUOKE_LOG_FILE", log_file);
 
     let mut child = command
         .current_dir(&root)
@@ -239,7 +258,10 @@ fn start_backend(root: &PathBuf, log_state: Arc<BackendLogState>) -> Result<Chil
     Ok(child)
 }
 
-fn verify_desktop_frontend(client: &reqwest::blocking::Client) -> Result<(), String> {
+fn verify_desktop_frontend(
+    client: &reqwest::blocking::Client,
+    log_hint: &str,
+) -> Result<(), String> {
     let resp = client
         .get(APP_HOME_URL)
         .send()
@@ -248,7 +270,7 @@ fn verify_desktop_frontend(client: &reqwest::blocking::Client) -> Result<(), Str
         return Err(format!(
             "获客界面不可用 (HTTP {})。请查看日志: {}",
             resp.status(),
-            desktop_log_hint()
+            desktop_log_hint
         ));
     }
     let content_type = resp
@@ -277,17 +299,17 @@ fn wait_backend_ready(
     timeout: Duration,
     child: &mut Child,
     log_state: &BackendLogState,
+    log_hint: &str,
 ) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|err| err.to_string())?;
     let deadline = Instant::now() + timeout;
-    let log_hint = desktop_log_hint();
 
     while Instant::now() < deadline {
         if let Ok(resp) = client.get(HEALTH_URL).send() {
-            if resp.status().is_success() && verify_desktop_frontend(&client).is_ok() {
+            if resp.status().is_success() && verify_desktop_frontend(&client, log_hint).is_ok() {
                 return Ok(());
             }
         }
@@ -315,14 +337,16 @@ fn stop_backend(state: &ServiceState) {
 }
 
 fn show_startup_error(app: &AppHandle, message: &str) {
-    let log_hint = desktop_log_hint();
+    let log_hint = desktop_log_hint(app);
+    let message_js = serde_json::to_string(message).unwrap_or_else(|_| "\"启动失败\"".into());
+    let log_hint_js = serde_json::to_string(&log_hint).unwrap_or_else(|_| "\"\"".into());
     let html = format!(
-        r#"document.open();document.write(`<!doctype html><html><head><meta charset="utf-8"><title>启动失败</title>
+        r#"document.open();document.write('<!doctype html><html><head><meta charset="utf-8"><title>启动失败</title>
         <style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px;line-height:1.6;color:#222}}
         h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px}}</style></head>
-        <body><h1>获客平台启动失败</h1><pre>{message}</pre>
-        <p>日志: {log_hint}</p>
-        <p>应用日志中搜索 [backend] 行；端口 {DESKTOP_PORT} 未被占用后重试。</p></body></html>`);document.close();"#
+        <body><h1>获客平台启动失败</h1><pre>' + {message_js} + '</pre>
+        <p>日志: ' + {log_hint_js} + '</p>
+        <p>应用日志中搜索 [backend] 行；端口 {DESKTOP_PORT} 未被占用后重试。</p></body></html>');document.close();"#
     );
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval(&html);
@@ -343,10 +367,13 @@ fn open_app_home(app: &AppHandle) -> Result<(), String> {
 
 fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), String> {
     let root = repo_root(app)?;
+    let log_file = resolve_app_log_file(app)?;
+    let log_hint = display_path(&log_file);
     log::info!("Huoke root: {}", root.display());
+    log::info!("Unified log file: {log_hint}");
 
-    let mut backend = start_backend(&root, Arc::clone(&log_state))?;
-    wait_backend_ready(Duration::from_secs(120), &mut backend, &log_state)?;
+    let mut backend = start_backend(&root, &log_file, Arc::clone(&log_state))?;
+    wait_backend_ready(Duration::from_secs(120), &mut backend, &log_state, &log_hint)?;
 
     app.state::<ServiceState>()
         .backend

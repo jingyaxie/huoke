@@ -83,7 +83,10 @@ try {
       if (Test-Path $stdoutFile) { Get-Content $stdoutFile -Tail 80 | ForEach-Object { Write-Host $_ } }
       Write-Host "--- backend stderr ---"
       if (Test-Path $stderrFile) { Get-Content $stderrFile -Tail 80 | ForEach-Object { Write-Host $_ } }
-      $logFile = Join-Path $dataDir "logs/desktop-backend.log"
+      $logFile = Join-Path $dataDir "logs/盈小蚁客户前端.log"
+      if (-not (Test-Path $logFile)) {
+        $logFile = Join-Path $dataDir "logs/desktop-backend.log"
+      }
       if (Test-Path $logFile) {
         Write-Host "--- desktop-backend.log ---"
         Get-Content $logFile -Tail 80 | ForEach-Object { Write-Host $_ }

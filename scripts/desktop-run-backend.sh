@@ -12,12 +12,11 @@ DATA_DIR="$(resolve_huoke_data_dir)"
 BACKEND_PORT="${BACKEND_PORT:-$HUOKE_DESKTOP_PORT}"
 STORAGE_DIR="$DATA_DIR/storage"
 ENV_FILE="$DATA_DIR/.env.desktop"
-LOG_FILE="$DATA_DIR/logs/desktop-backend.log"
+LOG_FILE="${HUOKE_LOG_FILE:-$DATA_DIR/logs/盈小蚁客户前端.log}"
 DB_FILE="$STORAGE_DIR/huoke_desktop.db"
-
-mkdir -p "$DATA_DIR" "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile" "$DATA_DIR/logs"
+mkdir -p "$DATA_DIR" "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile" "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE") 2>&1
-echo "[$(date '+%F %T')] desktop-run-backend root=$ROOT bundle=$BUNDLE_DIR"
+echo "[backend] [$(date '+%F %T')] desktop-run-backend root=$ROOT bundle=$BUNDLE_DIR log=$LOG_FILE"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ROOT/.env.desktop.example" "$ENV_FILE"

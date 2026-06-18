@@ -7,12 +7,25 @@ function Resolve-HuokeDataDir {
   return Join-Path $appData "com.huoke.desktop"
 }
 
+function Resolve-HuokeLogFile {
+  if ($env:HUOKE_LOG_FILE) { return $env:HUOKE_LOG_FILE }
+  $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+  $candidates = @(
+    (Join-Path $localAppData "com.huoke.desktop/logs/盈小蚁客户前端.log"),
+    (Join-Path $localAppData "盈小蚁客户前端/logs/盈小蚁客户前端.log")
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-Path (Split-Path $candidate -Parent)) { return $candidate }
+  }
+  return $candidates[0]
+}
+
 $DataDir = Resolve-HuokeDataDir
-$LogFile = Join-Path $DataDir "logs/desktop-backend.log"
+$LogFile = Resolve-HuokeLogFile
 New-Item -ItemType Directory -Force -Path (Split-Path $LogFile -Parent) | Out-Null
 
 function Write-Log([string]$Message) {
-  $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+  $line = "[backend] [$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
   Add-Content -Path $LogFile -Value $line -Encoding UTF8
   Write-Output $line
 }
