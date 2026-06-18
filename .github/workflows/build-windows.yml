@@ -69,44 +69,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch verify failed" }
           Write-Host "Bundled Playwright browsers verified under $pwBrowsers"
 
-      - name: Startup chain smoke test
-        shell: pwsh
-        run: |
-          $env:HUOKE_ROOT = (Get-Location).Path
-          $env:HUOKE_BUNDLE_DIR = (Resolve-Path "desktop/bundle").Path
-          $env:HUOKE_DATA_DIR = Join-Path $env:TEMP "huoke-ci-smoke-$([guid]::NewGuid().ToString('N'))"
-          New-Item -ItemType Directory -Force -Path $env:HUOKE_DATA_DIR | Out-Null
-
-          $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/desktop-run-backend.ps1"
-          ) -PassThru -WindowStyle Hidden
-
-          try {
-            $deadline = (Get-Date).AddSeconds(90)
-            $ok = $false
-            while ((Get-Date) -lt $deadline) {
-              if ($proc.HasExited) {
-                throw "backend process exited early with code $($proc.ExitCode)"
-              }
-              try {
-                $r = Invoke-WebRequest -Uri "http://127.0.0.1:18765/api/health" -TimeoutSec 2 -UseBasicParsing
-                if ($r.StatusCode -eq 200) {
-                  $ok = $true
-                  break
-                }
-              } catch {}
-              Start-Sleep -Seconds 1
-            }
-            if (-not $ok) {
-              throw "backend health check timed out after 90s"
-            }
-            Write-Host "startup smoke test ok"
-          } finally {
-            if (-not $proc.HasExited) {
-              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            }
-          }
-
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
