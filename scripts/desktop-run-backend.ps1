@@ -7,39 +7,37 @@ function Resolve-HuokeDataDir {
   return Join-Path $appData "com.huoke.desktop"
 }
 
-function Resolve-HuokeLogFile {
-  if ($env:HUOKE_LOG_FILE) { return $env:HUOKE_LOG_FILE }
-  $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
-  $candidates = @(
-    (Join-Path $localAppData "com.huoke.desktop/logs/盈小蚁客户前端.log"),
-    (Join-Path $localAppData "盈小蚁客户前端/logs/盈小蚁客户前端.log")
-  )
-  foreach ($candidate in $candidates) {
-    if (Test-Path (Split-Path $candidate -Parent)) { return $candidate }
-  }
-  return $candidates[0]
-}
-
-$DataDir = Resolve-HuokeDataDir
-$LogFile = Resolve-HuokeLogFile
-New-Item -ItemType Directory -Force -Path (Split-Path $LogFile -Parent) | Out-Null
-
 function Write-Log([string]$Message) {
   $line = "[backend] [$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
-  Add-Content -Path $LogFile -Value $line -Encoding UTF8
   Write-Output $line
+}
+
+function Invoke-PythonStep {
+  param(
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string]$Code
+  )
+  Write-Log "preflight: $Label"
+  $output = & $PythonExe -c $Code 2>&1
+  if ($output) {
+    foreach ($line in @($output)) {
+      Write-Output "[backend] $line"
+    }
+  }
+  if ($LASTEXITCODE -ne 0) {
+    throw "preflight failed at '$Label' (exit $LASTEXITCODE)"
+  }
 }
 
 trap {
   $err = $_.Exception.Message
   if ($_.ScriptStackTrace) { $err += "`n$($_.ScriptStackTrace)" }
   Write-Log "FATAL: $err"
-  Write-Host "LOG_FILE=$LogFile" -ForegroundColor Red
-  Write-Error $err
+  exit 1
 }
 
 Write-Log "desktop-run-backend starting"
-Write-Host "LOG_FILE=$LogFile"
 
 $ScriptDir = $PSScriptRoot
 $Root = if ($env:HUOKE_ROOT) { $env:HUOKE_ROOT } else { Split-Path -Parent $ScriptDir }
@@ -89,6 +87,7 @@ function Set-PortablePythonEnv {
   Set-PortablePythonHome -PythonExe $PythonExe
 }
 
+$DataDir = Resolve-HuokeDataDir
 $SourceBundleDir = Resolve-HuokeBundleDir
 $BundleDir = Sync-HuokeBundleCache -SourceBundleDir $SourceBundleDir -DataDir $DataDir -Root $Root
 $BackendPort = if ($env:BACKEND_PORT) { [int]$env:BACKEND_PORT } else { 18765 }
@@ -97,7 +96,7 @@ $EnvFile = Join-Path $DataDir ".env.desktop"
 $DbFile = Join-Path $StorageDir "huoke_desktop.db"
 
 New-Item -ItemType Directory -Force -Path $DataDir, $StorageDir, (Join-Path $StorageDir "douyin/profile") | Out-Null
-Write-Log "desktop-run-backend root=$Root sourceBundle=$SourceBundleDir bundle=$BundleDir"
+Write-Log "root=$Root sourceBundle=$SourceBundleDir bundle=$BundleDir"
 
 $ExampleEnv = Join-Path $Root ".env.desktop.example"
 if (-not (Test-Path $ExampleEnv)) {
@@ -108,7 +107,6 @@ if (-not (Test-Path $EnvFile)) {
     Copy-Item $ExampleEnv $EnvFile
     Add-Content $EnvFile "`nANTIBOT_FINGERPRINT_PLATFORM=win"
     Write-Log "已创建桌面配置: $EnvFile"
-    Write-Host "已创建桌面配置: $EnvFile"
   } else {
     Write-Log "WARN: 未找到 .env.desktop.example，将使用默认环境变量。"
   }
@@ -197,10 +195,16 @@ if (-not $Chrome) {
   Write-Log "Chrome: $Chrome"
 }
 
-Write-Log "初始化数据库..."
-& $Python -c "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('数据库 schema 已就绪')"
-if ($LASTEXITCODE -ne 0) { throw "数据库初始化失败" }
+Invoke-PythonStep -Label "python version" -PythonExe $Python -Code "import sys; print(sys.version)"
+Invoke-PythonStep -Label "import uvicorn" -PythonExe $Python -Code "import uvicorn; print('uvicorn ok')"
+Invoke-PythonStep -Label "import bootstrap" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; print('bootstrap import ok')"
+Invoke-PythonStep -Label "import app.main" -PythonExe $Python -Code "from app.main import app; print('app.main ok')"
+Invoke-PythonStep -Label "ensure_database_schema" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')"
 
 Write-Log "启动后端: $Python (port $BackendPort, SQLite)"
-Write-Host "启动后端: $Python (port $BackendPort, SQLite)"
-& $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort
+& $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort 2>&1 | ForEach-Object {
+  Write-Output "[backend] $_"
+}
+if ($LASTEXITCODE -ne 0) {
+  throw "uvicorn exited with code $LASTEXITCODE"
+}

@@ -81,7 +81,6 @@ jobs:
           if-no-files-found: error
 
       - name: Installed layout startup smoke (ASCII + Unicode)
-        continue-on-error: true
         shell: pwsh
         run: |
           $asciiRoot = Join-Path $env:TEMP "huoke-smoke-ascii"

@@ -46,7 +46,7 @@ function Test-PortablePythonRunnable {
   $env:PYTHONPATH = $BackendDir
   Set-PortablePythonHome -PythonExe $PythonExe
   try {
-    & $PythonExe -c "import uvicorn; print('portable python probe ok')" 2>$null | Out-Null
+    & $PythonExe -c "import uvicorn; from app.main import app; print('portable python probe ok')" 2>&1 | Out-Null
     return ($LASTEXITCODE -eq 0)
   } finally {
     if ($null -eq $prevPythonPath) {

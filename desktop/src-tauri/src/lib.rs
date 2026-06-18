@@ -1,8 +1,9 @@
-use std::io::{BufRead, BufReader, Read};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
@@ -38,6 +39,11 @@ impl BackendLogState {
         let start = guard.len().saturating_sub(max_lines);
         guard[start..].join("\n")
     }
+}
+
+struct BackendProcess {
+    child: Child,
+    log_readers: Vec<JoinHandle<()>>,
 }
 
 fn backend_script_name() -> &'static str {
@@ -83,6 +89,13 @@ fn desktop_log_hint(app: &AppHandle) -> String {
                 "~/.local/share/com.huoke.desktop/logs/盈小蚁客户前端.log".into()
             }
         })
+}
+
+fn append_unified_log(log_file: &Path, line: &str) {
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_file) else {
+        return;
+    };
+    let _ = writeln!(file, "{line}");
 }
 
 fn find_launch_root(base: &Path) -> Option<PathBuf> {
@@ -192,20 +205,29 @@ fn windows_data_dir() -> Option<String> {
         .map(|app_data| format!(r"{app_data}\com.huoke.desktop"))
 }
 
-fn spawn_log_reader<R>(stream: Option<R>, prefix: &'static str, log_state: Option<Arc<BackendLogState>>)
+fn spawn_log_reader<R>(
+    stream: Option<R>,
+    log_file: Arc<PathBuf>,
+    log_state: Arc<BackendLogState>,
+) -> Option<JoinHandle<()>>
 where
-    R: Read + Send + 'static,
+    R: std::io::Read + Send + 'static,
 {
-    if let Some(stream) = stream {
+    stream.map(|stream| {
         thread::spawn(move || {
             let reader = BufReader::new(stream);
             for line in reader.lines().map_while(Result::ok) {
-                log::info!("[{prefix}] {line}");
-                if let Some(state) = &log_state {
-                    state.push_line(line);
-                }
+                append_unified_log(&log_file, &line);
+                log::info!("[backend] {line}");
+                log_state.push_line(line);
             }
-        });
+        })
+    })
+}
+
+fn drain_log_readers(handles: Vec<JoinHandle<()>>) {
+    for handle in handles {
+        let _ = handle.join();
     }
 }
 
@@ -213,7 +235,7 @@ fn start_backend(
     root: &PathBuf,
     log_file: &Path,
     log_state: Arc<BackendLogState>,
-) -> Result<Child, String> {
+) -> Result<BackendProcess, String> {
     let root = normalize_path(root);
     let script = root.join("scripts").join(backend_script_name());
     if !script.is_file() {
@@ -221,6 +243,7 @@ fn start_backend(
     }
 
     let bundle_dir = resolve_bundle_dir(&root)?;
+    let log_file = Arc::new(log_file.to_path_buf());
 
     let mut command = if cfg!(windows) {
         let mut cmd = Command::new("powershell");
@@ -241,7 +264,7 @@ fn start_backend(
     if let Some(data_dir) = windows_data_dir() {
         command.env("HUOKE_DATA_DIR", data_dir);
     }
-    command.env("HUOKE_LOG_FILE", log_file);
+    command.env("HUOKE_LOG_FILE", log_file.as_path());
 
     let mut child = command
         .current_dir(&root)
@@ -252,10 +275,19 @@ fn start_backend(
         .spawn()
         .map_err(|err| format!("启动后端失败: {err}"))?;
 
-    spawn_log_reader(child.stdout.take(), "backend", Some(Arc::clone(&log_state)));
-    spawn_log_reader(child.stderr.take(), "backend", Some(log_state));
+    let mut log_readers = Vec::new();
+    if let Some(handle) = spawn_log_reader(
+        child.stdout.take(),
+        Arc::clone(&log_file),
+        Arc::clone(&log_state),
+    ) {
+        log_readers.push(handle);
+    }
+    if let Some(handle) = spawn_log_reader(child.stderr.take(), log_file, log_state) {
+        log_readers.push(handle);
+    }
 
-    Ok(child)
+    Ok(BackendProcess { child, log_readers })
 }
 
 fn verify_desktop_frontend(
@@ -297,7 +329,7 @@ fn format_backend_failure(base: &str, log_state: &BackendLogState) -> String {
 
 fn wait_backend_ready(
     timeout: Duration,
-    child: &mut Child,
+    backend: &mut BackendProcess,
     log_state: &BackendLogState,
     log_hint: &str,
 ) -> Result<(), String> {
@@ -307,13 +339,21 @@ fn wait_backend_ready(
         .map_err(|err| err.to_string())?;
     let deadline = Instant::now() + timeout;
 
-    while Instant::now() < deadline {
+    loop {
+        if Instant::now() >= deadline {
+            drain_log_readers(std::mem::take(&mut backend.log_readers));
+            let base = format!("后端启动超时。请查看日志:\n{log_hint}");
+            return Err(format_backend_failure(&base, log_state));
+        }
+
         if let Ok(resp) = client.get(HEALTH_URL).send() {
             if resp.status().is_success() && verify_desktop_frontend(&client, log_hint).is_ok() {
                 return Ok(());
             }
         }
-        if let Ok(Some(status)) = child.try_wait() {
+
+        if let Ok(Some(status)) = backend.child.try_wait() {
+            drain_log_readers(std::mem::take(&mut backend.log_readers));
             let code = status
                 .code()
                 .map(|c| c.to_string())
@@ -321,11 +361,9 @@ fn wait_backend_ready(
             let base = format!("后端进程异常退出 (code={code})。\n日志: {log_hint}");
             return Err(format_backend_failure(&base, log_state));
         }
+
         thread::sleep(Duration::from_millis(500));
     }
-
-    let base = format!("后端启动超时。请查看日志:\n{log_hint}");
-    Err(format_backend_failure(&base, log_state))
 }
 
 fn stop_backend(state: &ServiceState) {
@@ -336,6 +374,16 @@ fn stop_backend(state: &ServiceState) {
     }
 }
 
+fn show_startup_loading(app: &AppHandle) {
+    let html = r#"document.open();document.write('<!doctype html><html><head><meta charset="utf-8"><title>启动中</title>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:48px;text-align:center;color:#444}
+        h1{font-size:22px;font-weight:600}p{margin-top:12px;color:#666}</style></head>
+        <body><h1>正在启动获客平台…</h1><p>首次启动可能需要 1-2 分钟，请稍候。</p></body></html>');document.close();"#;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval(html);
+    }
+}
+
 fn show_startup_error(app: &AppHandle, message: &str) {
     let log_hint = desktop_log_hint(app);
     let message_js = serde_json::to_string(message).unwrap_or_else(|_| "\"启动失败\"".into());
@@ -343,10 +391,10 @@ fn show_startup_error(app: &AppHandle, message: &str) {
     let html = format!(
         r#"document.open();document.write('<!doctype html><html><head><meta charset="utf-8"><title>启动失败</title>
         <style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px;line-height:1.6;color:#222}}
-        h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px}}</style></head>
+        h1{{color:#c0392b}}pre{{white-space:pre-wrap;background:#f6f6f6;padding:16px;border-radius:8px;font-size:13px}}</style></head>
         <body><h1>获客平台启动失败</h1><pre>' + {message_js} + '</pre>
-        <p>日志: ' + {log_hint_js} + '</p>
-        <p>应用日志中搜索 [backend] 行；端口 {DESKTOP_PORT} 未被占用后重试。</p></body></html>');document.close();"#
+        <p>日志文件: ' + {log_hint_js} + '</p>
+        <p>请打开上述日志，搜索 <code>[backend]</code> 或 <code>FATAL</code> 查看详情；确认端口 {DESKTOP_PORT} 未被占用后重试。</p></body></html>');document.close();"#
     );
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.eval(&html);
@@ -366,6 +414,8 @@ fn open_app_home(app: &AppHandle) -> Result<(), String> {
 }
 
 fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), String> {
+    show_startup_loading(app);
+
     let root = repo_root(app)?;
     let log_file = resolve_app_log_file(app)?;
     let log_hint = display_path(&log_file);
@@ -373,13 +423,21 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
     log::info!("Unified log file: {log_hint}");
 
     let mut backend = start_backend(&root, &log_file, Arc::clone(&log_state))?;
-    wait_backend_ready(Duration::from_secs(120), &mut backend, &log_state, &log_hint)?;
+    wait_backend_ready(
+        Duration::from_secs(120),
+        &mut backend,
+        &log_state,
+        &log_hint,
+    )?;
+
+    let BackendProcess { child, log_readers } = backend;
+    drain_log_readers(log_readers);
 
     app.state::<ServiceState>()
         .backend
         .lock()
         .expect("backend lock")
-        .replace(backend);
+        .replace(child);
 
     open_app_home(app)?;
     log::info!("Huoke backend ready at {APP_HOME_URL}");

@@ -39,6 +39,21 @@ function Wait-BackendHealth {
   throw "health check timed out for port $Port"
 }
 
+function Show-SmokeFailureLogs {
+  param(
+    [string]$StdoutFile,
+    [string]$StderrFile
+  )
+  Write-Host "--- backend stdout ---"
+  if (Test-Path $StdoutFile) {
+    Get-Content $StdoutFile -Tail 80 | ForEach-Object { Write-Host $_ }
+  }
+  Write-Host "--- backend stderr ---"
+  if (Test-Path $StderrFile) {
+    Get-Content $StderrFile -Tail 80 | ForEach-Object { Write-Host $_ }
+  }
+}
+
 Copy-InstalledLayout -SourceRoot $RepoRoot -TargetRoot $InstallRoot
 
 $dataDir = Join-Path $env:TEMP "huoke-smoke-data-$([guid]::NewGuid().ToString('N'))"
@@ -78,25 +93,23 @@ try {
   }
 
   if (-not $healthy) {
+    Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
     if ($proc.HasExited) {
-      Write-Host "--- backend stdout ---"
-      if (Test-Path $stdoutFile) { Get-Content $stdoutFile -Tail 80 | ForEach-Object { Write-Host $_ } }
-      Write-Host "--- backend stderr ---"
-      if (Test-Path $stderrFile) { Get-Content $stderrFile -Tail 80 | ForEach-Object { Write-Host $_ } }
-      $logFile = Join-Path $dataDir "logs/盈小蚁客户前端.log"
-      if (-not (Test-Path $logFile)) {
-        $logFile = Join-Path $dataDir "logs/desktop-backend.log"
-      }
-      if (Test-Path $logFile) {
-        Write-Host "--- desktop-backend.log ---"
-        Get-Content $logFile -Tail 80 | ForEach-Object { Write-Host $_ }
-      }
       throw "backend exited early with code $($proc.ExitCode) for install root: $InstallRoot"
     }
     throw "backend startup timed out for install root: $InstallRoot"
   }
 
-  Write-Host "startup smoke ok: $InstallRoot"
+  if (-not (Test-Path $stdoutFile)) {
+    throw "missing backend stdout log for install root: $InstallRoot"
+  }
+  $backendLines = Get-Content $stdoutFile | Where-Object { $_ -match '\[backend\]' }
+  if (-not $backendLines -or $backendLines.Count -lt 1) {
+    Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
+    throw "backend stdout missing [backend] log lines for install root: $InstallRoot"
+  }
+
+  Write-Host "startup smoke ok: $InstallRoot ($($backendLines.Count) [backend] lines)"
 } finally {
   if (-not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import json
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +35,7 @@ from app.desktop_static import mount_desktop_frontend
 
 
 settings = get_settings()
+_lifespan_logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -57,10 +59,21 @@ async def lifespan(app: FastAPI):
     finally:
         session.close()
 
-    await AgentSessionManager.get_instance().sync_browser_render_epoch()
-    await PlaywrightPool.get().sync_browser_render_epoch()
-    await ensure_cjk_fonts()
-    AgentAsyncJobService.get(settings)._ensure_workers()
+    try:
+        await AgentSessionManager.get_instance().sync_browser_render_epoch()
+        await PlaywrightPool.get().sync_browser_render_epoch()
+    except Exception as exc:
+        _lifespan_logger.warning("desktop browser pool warmup skipped: %s", exc)
+
+    try:
+        await ensure_cjk_fonts()
+    except Exception as exc:
+        _lifespan_logger.warning("desktop font bootstrap skipped: %s", exc)
+
+    try:
+        AgentAsyncJobService.get(settings)._ensure_workers()
+    except Exception as exc:
+        _lifespan_logger.warning("desktop agent workers skipped: %s", exc)
 
     yield
     await AgentSessionManager.get_instance().shutdown_all()
