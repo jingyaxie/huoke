@@ -37,6 +37,7 @@ const navItems = [
   { path: "/settings/rules", label: "规则", hint: "Rules" },
   { path: "/settings/experiences", label: "经验库", hint: "做梦" },
   { path: "/settings/agents", label: "Agent 档案", hint: "角色配置" },
+  { path: "/settings/maintenance", label: "维护", hint: "修复与诊断" },
 ];
 </script>
 

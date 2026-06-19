@@ -19,12 +19,14 @@ from app.api.tenant_routes import router as tenant_router
 from app.api.user_routes import router as user_router
 from app.api.v1_routes import router
 from app.api.settings_routes import router as settings_router
+from app.api.desktop_routes import router as desktop_router
 from app.api.v3_tikhub_compat_routes import router as v3_compat_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.bootstrap import ensure_database_schema
 from app.db.session import SessionLocal
 from app.models import *  # noqa: F401,F403
+from app.services.desktop_storage_bootstrap import bootstrap_desktop_storage
 from app.services.agent_browser_session import AgentSessionManager
 from app.services.playwright_pool import PlaywrightPool
 from app.services.agent_async_job_service import AgentAsyncJobService
@@ -42,6 +44,8 @@ _lifespan_logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     configure_logging()
     ensure_database_schema()
+    for warning in bootstrap_desktop_storage(settings):
+        _lifespan_logger.warning(warning)
     session = SessionLocal()
     try:
         if ensure_bootstrap_admin(session, settings):
@@ -116,4 +120,5 @@ app.include_router(agent_ws_router)
 app.include_router(v3_compat_router)
 
 if settings.desktop_mode:
+    app.include_router(desktop_router)
     mount_desktop_frontend(app, settings.frontend_dist_dir)

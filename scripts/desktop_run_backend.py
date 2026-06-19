@@ -17,9 +17,8 @@ configure_desktop_stdio()
 from desktop_bundle_runtime import (
     find_portable_python_exe,
     portable_python_root,
+    prepare_desktop_work_bundle,
     set_portable_python_env,
-    sync_bundle_cache,
-    sync_runtime_workdir,
 )
 
 
@@ -145,6 +144,7 @@ def setup_process_env(
 
     os.environ["DESKTOP_MODE"] = "true"
     os.environ["HUOKE_BUNDLE_DIR"] = str(bundle_dir)
+    os.environ["HUOKE_DATA_DIR"] = str(data_dir)
     os.environ["HUOKE_PYTHON_EXE"] = str(python_exe)
     backend_path = str(backend_dir)
     os.environ["PYTHONPATH"] = backend_path
@@ -157,10 +157,14 @@ def setup_process_env(
     os.environ["DOUYIN_PROFILE_DIR"] = str(storage_dir / "douyin/profile")
 
     frontend_dist = bundle_dir / "frontend-dist"
-    if frontend_dist.is_dir():
-        os.environ["FRONTEND_DIST_DIR"] = str(frontend_dist)
-    else:
-        os.environ["FRONTEND_DIST_DIR"] = str(root / "frontend/dist")
+    index_file = frontend_dist / "index.html"
+    if not index_file.is_file():
+        raise RuntimeError(
+            "桌面前端资源缺失，无法启动（frontend-dist/index.html）。"
+            "请完全退出应用后重试；若仍失败，请删除 "
+            f"{data_dir / 'runtime-work'} 后重新打开。"
+        )
+    os.environ["FRONTEND_DIST_DIR"] = str(frontend_dist)
 
     load_env_file(env_file)
     os.environ["DESKTOP_MODE"] = "true"
@@ -241,9 +245,7 @@ def run_launcher(port: int, *, check_only: bool = False) -> int:
 
 def _prepare_runtime_bundle(source_bundle: Path, data_dir: Path, root: Path) -> tuple[Path, Path]:
     try:
-        cached_bundle = sync_bundle_cache(source_bundle, data_dir, root)
-        work_bundle = sync_runtime_workdir(cached_bundle, data_dir)
-        return cached_bundle, work_bundle
+        return prepare_desktop_work_bundle(source_bundle, data_dir, root)
     except OSError as exc:
         if getattr(exc, "errno", None) in {22, 28, 112}:
             raise RuntimeError(

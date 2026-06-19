@@ -43,6 +43,9 @@
       </nav>
 
       <div class="sidebar-foot">
+        <router-link to="/settings/maintenance" class="settings-link" active-class="active">
+          设置
+        </router-link>
         <div class="foot-meta">v{{ appVersion }} · {{ portalEnabled ? "云端+本机" : "本地独立运行" }}</div>
       </div>
     </aside>
@@ -408,6 +411,25 @@ onUnmounted(() => {
 .sidebar-foot {
   padding: 14px 20px 18px;
   border-top: 1px solid var(--sidebar-border);
+}
+
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.settings-link:hover,
+.settings-link.active {
+  background: var(--sidebar-accent-soft);
+  color: #fff;
 }
 
 .foot-meta {

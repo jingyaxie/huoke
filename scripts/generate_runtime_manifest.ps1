@@ -64,6 +64,9 @@ function New-HuokeRuntimeManifest {
 
   foreach ($rel in @(
       "BUNDLE_MANIFEST.json",
+      "backend/app/main.py",
+      "backend/storage/skills/global.json",
+      "frontend-dist/index.html",
       "runtime/python/python.exe",
       "runtime/python/python312.dll",
       "runtime/python/vcruntime140.dll",

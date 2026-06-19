@@ -103,6 +103,40 @@ def copy_bundle_components(source_bundle: Path, target_bundle: Path) -> None:
             shutil.copy2(src, target_bundle / name)
 
 
+CORE_BUNDLE_RELATIVE_PATHS: tuple[str, ...] = (
+    "runtime/python/python.exe",
+    "backend/app/main.py",
+    "backend/storage/skills/global.json",
+    "frontend-dist/index.html",
+)
+
+
+def collect_bundle_integrity_issues(bundle_dir: Path) -> list[str]:
+    """检查桌面 bundle 是否包含 API、前端、内置 Skill 与 Python 运行时。"""
+    issues: list[str] = []
+    for rel in CORE_BUNDLE_RELATIVE_PATHS:
+        path = bundle_dir / rel.replace("/", os.sep)
+        if not path.is_file():
+            issues.append(f"missing: {rel}")
+    backend_root = bundle_dir / "backend"
+    if backend_root.is_dir():
+        backend_files = sum(1 for _ in backend_root.rglob("*") if _.is_file())
+        if backend_files < 10:
+            issues.append(f"backend incomplete: only {backend_files} file(s)")
+    return issues
+
+
+def runtime_workdir_backend_ready(work_bundle: Path) -> bool:
+    """runtime-work 必须包含可运行的 backend、前端与内置 Skill。"""
+    return not collect_bundle_integrity_issues(work_bundle)
+
+
+def clear_runtime_workdir(data_dir: Path) -> None:
+    work_root = data_dir / "runtime-work"
+    if work_root.exists():
+        shutil.rmtree(work_root, ignore_errors=True)
+
+
 def file_fingerprint(path: Path) -> dict[str, object]:
     data = path.read_bytes()
     return {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -147,6 +181,11 @@ def sync_bundle_cache(source_bundle_dir: Path, data_dir: Path, root: Path) -> Pa
         raise RuntimeError(f"Source bundle missing runtime: {source_bundle_dir}")
 
     if not path_has_non_ascii(str(root)) and not path_has_non_ascii(str(source_bundle_dir)):
+        issues = collect_bundle_integrity_issues(source_bundle_dir)
+        if issues:
+            raise RuntimeError(
+                "安装包 runtime bundle 不完整: " + "; ".join(issues)
+            )
         return source_bundle_dir
 
     python_exe = find_portable_python_exe(source_bundle_dir)
@@ -164,12 +203,19 @@ def sync_bundle_cache(source_bundle_dir: Path, data_dir: Path, root: Path) -> Pa
         try:
             existing = json.loads(manifest_file.read_text(encoding="utf-8"))
             if existing.get("fingerprint") == fingerprint and (cache_bundle / "runtime").is_dir():
+                cache_issues = collect_bundle_integrity_issues(cache_bundle)
                 cached_python = find_portable_python_exe(cache_bundle)
-                if cached_python is not None:
+                if not cache_issues and cached_python is not None:
                     ok, _ = probe_portable_python(cached_python, cache_bundle / "backend")
                     if ok:
                         print(f"Reusing bundle cache: {cache_bundle}", flush=True)
                         return cache_bundle
+                if cache_issues:
+                    print(
+                        "WARN: bundle cache incomplete, resyncing: "
+                        + "; ".join(cache_issues),
+                        flush=True,
+                    )
         except Exception:
             pass
 
@@ -178,6 +224,13 @@ def sync_bundle_cache(source_bundle_dir: Path, data_dir: Path, root: Path) -> Pa
         shutil.rmtree(cache_bundle, ignore_errors=True)
     cache_bundle.mkdir(parents=True, exist_ok=True)
     copy_bundle_components(source_bundle_dir, cache_bundle)
+    cache_issues = collect_bundle_integrity_issues(cache_bundle)
+    if cache_issues:
+        clear_bundle_cache(data_dir)
+        raise RuntimeError(
+            "Bundle cache sync completed but bundle is incomplete: "
+            + "; ".join(cache_issues)
+        )
 
     manifest_file.write_text(
         json.dumps(
@@ -218,7 +271,7 @@ def sync_runtime_workdir(source_bundle_dir: Path, data_dir: Path, *, force: bool
     if not force and state_file.is_file() and (work_bundle / "runtime").is_dir():
         try:
             state = json.loads(state_file.read_text(encoding="utf-8"))
-            if state.get("fingerprint") == fingerprint:
+            if state.get("fingerprint") == fingerprint and runtime_workdir_backend_ready(work_bundle):
                 work_ok, _ = verify_runtime_manifest(work_bundle, strict=False)
                 if work_ok:
                     print(f"Reusing runtime-work: {work_bundle}", flush=True)
@@ -231,6 +284,12 @@ def sync_runtime_workdir(source_bundle_dir: Path, data_dir: Path, *, force: bool
         shutil.rmtree(work_bundle, ignore_errors=True)
     work_bundle.mkdir(parents=True, exist_ok=True)
     copy_bundle_components(source_bundle_dir, work_bundle)
+    if not runtime_workdir_backend_ready(work_bundle):
+        issues = collect_bundle_integrity_issues(work_bundle)
+        raise RuntimeError(
+            "runtime-work sync completed but bundle is incomplete: "
+            + ("; ".join(issues) if issues else "unknown")
+        )
 
     work_ok, work_issues = verify_runtime_manifest(work_bundle, strict=False)
     if not work_ok:
@@ -259,3 +318,58 @@ def sync_runtime_workdir(source_bundle_dir: Path, data_dir: Path, *, force: bool
     )
     print(f"runtime-work synced: {work_bundle}", flush=True)
     return work_bundle
+
+
+def prepare_desktop_work_bundle(
+    source_bundle_dir: Path,
+    data_dir: Path,
+    root: Path,
+) -> tuple[Path, Path]:
+    """同步 bundle-cache 与 runtime-work；发现残缺目录时自动清除并重试。"""
+    source_issues = collect_bundle_integrity_issues(source_bundle_dir)
+    if source_issues:
+        raise RuntimeError(
+            "安装包 runtime bundle 不完整，请重新安装应用: "
+            + "; ".join(source_issues)
+        )
+
+    last_error: RuntimeError | None = None
+    for attempt in range(3):
+        if attempt == 1:
+            print("desktop bundle self-heal: clearing runtime-work", flush=True)
+            clear_runtime_workdir(data_dir)
+        elif attempt == 2:
+            print("desktop bundle self-heal: clearing bundle-cache and runtime-work", flush=True)
+            clear_bundle_cache(data_dir)
+            clear_runtime_workdir(data_dir)
+
+        try:
+            cached_bundle = sync_bundle_cache(source_bundle_dir, data_dir, root)
+            cache_issues = collect_bundle_integrity_issues(cached_bundle)
+            if cache_issues:
+                raise RuntimeError(
+                    "bundle cache incomplete: " + "; ".join(cache_issues)
+                )
+
+            force = attempt > 0
+            work_bundle = sync_runtime_workdir(
+                cached_bundle,
+                data_dir,
+                force=force,
+            )
+            work_issues = collect_bundle_integrity_issues(work_bundle)
+            if work_issues:
+                raise RuntimeError(
+                    "runtime-work incomplete: " + "; ".join(work_issues)
+                )
+            return cached_bundle, work_bundle
+        except RuntimeError as exc:
+            last_error = exc
+            print(f"WARN: desktop bundle prepare failed: {exc}", flush=True)
+
+    raise RuntimeError(
+        "无法准备桌面运行时目录（已尝试自动修复）。"
+        "请完全退出应用后删除 "
+        f"{data_dir / 'runtime-work'} 与 {data_dir / 'bundle-cache'} 再重试。"
+        + (f" 最后错误: {last_error}" if last_error else "")
+    )

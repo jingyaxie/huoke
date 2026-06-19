@@ -24,6 +24,7 @@ import SettingsExperiencesSection from "../views/settings/SettingsExperiencesSec
 import SettingsAgentsSection from "../views/settings/SettingsAgentsSection.vue";
 import SettingsModelSection from "../views/settings/SettingsModelSection.vue";
 import SettingsDiagnosisSection from "../views/settings/SettingsDiagnosisSection.vue";
+import SettingsMaintenanceSection from "../views/settings/SettingsMaintenanceSection.vue";
 import PortalLoginView from "../views/PortalLoginView.vue";
 import { buildCloudRoutes } from "../config/cloudNav";
 import { isPortalAuthenticated, isPortalEnabled, requiresPortalAuth } from "../utils/portalShell";
@@ -80,6 +81,7 @@ const routes = [
           { path: "rules", name: "settings-rules", component: SettingsRulesSection },
           { path: "experiences", name: "settings-experiences", component: SettingsExperiencesSection },
           { path: "agents", name: "settings-agents", component: SettingsAgentsSection },
+          { path: "maintenance", name: "settings-maintenance", component: SettingsMaintenanceSection, meta: { title: "维护", section: "设置" } },
         ],
       },
       { path: "login", redirect: "/account-settings" },

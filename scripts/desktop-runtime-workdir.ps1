@@ -94,6 +94,25 @@ function Get-HuokeBundleFingerprint {
   return $item.LastWriteTimeUtc.Ticks.ToString()
 }
 
+function Test-HuokeRuntimeWorkBackendReady {
+  param([Parameter(Mandatory = $true)][string]$WorkBundle)
+  foreach ($rel in @(
+      "backend/app/main.py",
+      "backend/storage/skills/global.json",
+      "frontend-dist/index.html",
+      "runtime/python/python.exe"
+    )) {
+    if (-not (Test-Path (Join-Path $WorkBundle $rel))) {
+      return $false
+    }
+  }
+  $backendFiles = @(Get-ChildItem (Join-Path $WorkBundle "backend") -Recurse -File -ErrorAction SilentlyContinue)
+  if ($backendFiles.Count -lt 10) {
+    return $false
+  }
+  return $true
+}
+
 function Sync-HuokeRuntimeWorkdir {
   param(
     [Parameter(Mandatory = $true)][string]$SourceBundleDir,
@@ -120,7 +139,7 @@ function Sync-HuokeRuntimeWorkdir {
   if (-not $Force -and (Test-Path $stateFile) -and (Test-Path (Join-Path $workBundle "runtime"))) {
     try {
       $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-      if ($state.fingerprint -eq $fingerprint) {
+      if ($state.fingerprint -eq $fingerprint -and (Test-HuokeRuntimeWorkBackendReady -WorkBundle $workBundle)) {
         $workCheck = Test-HuokeRuntimeManifest -BundleDir $workBundle
         if ($workCheck.Ok) {
           Write-Host "Reusing runtime-work: $workBundle"
@@ -149,6 +168,10 @@ function Sync-HuokeRuntimeWorkdir {
     if (Test-Path $src) {
       Copy-Item $src (Join-Path $workBundle $name) -Force
     }
+  }
+
+  if (-not (Test-HuokeRuntimeWorkBackendReady -WorkBundle $workBundle)) {
+    throw "runtime-work sync completed but backend/frontend bundle is incomplete under $workBundle"
   }
 
   Unblock-HuokeDirectory -Path $workBundle

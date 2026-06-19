@@ -510,6 +510,12 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+fn restart_desktop_app(app: AppHandle) -> Result<(), String> {
+    stop_backend(&*app.state::<ServiceState>());
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -524,6 +530,7 @@ pub fn run() {
         .manage(Arc::new(BackendLogState {
             lines: Mutex::new(Vec::new()),
         }))
+        .invoke_handler(tauri::generate_handler![restart_desktop_app])
         .setup(|app| {
             let handle = app.handle().clone();
             let log_state = {

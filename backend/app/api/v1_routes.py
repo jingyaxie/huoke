@@ -15,8 +15,11 @@ router = APIRouter(prefix="/api")
 def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
     index_file = settings.frontend_dist_dir / "index.html"
     frontend_available = settings.desktop_mode and index_file.is_file()
+    status = "ok"
+    if settings.desktop_mode and not frontend_available:
+        status = "degraded"
     return HealthResponse(
-        status="ok",
+        status=status,
         storage_root=str(settings.storage_root),
         desktop_mode=settings.desktop_mode,
         frontend_available=frontend_available,

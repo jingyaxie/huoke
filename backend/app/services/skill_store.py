@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,10 +24,37 @@ def _utc_now() -> datetime:
 
 
 
+def _bundled_skill_bootstrap_paths() -> list[Path]:
+    """桌面版 bootstrap 候选路径（runtime-work 可能缺 backend/storage）。"""
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            return
+        seen.add(key)
+        paths.append(path)
+
+    backend_root = Path(__file__).resolve().parents[2]
+    add(backend_root / "storage" / "skills" / "global.json")
+
+    bundle_dir = os.environ.get("HUOKE_BUNDLE_DIR", "").strip()
+    if bundle_dir:
+        add(Path(bundle_dir) / "backend" / "storage" / "skills" / "global.json")
+
+    data_dir = os.environ.get("HUOKE_DATA_DIR", "").strip()
+    if data_dir:
+        add(Path(data_dir) / "bundle-cache" / "current" / "backend" / "storage" / "skills" / "global.json")
+
+    return paths
+
+
 def _bootstrap_default_skills() -> list[dict]:
     """从 backend/storage/skills/global.json 加载默认 Skill 定义（单一数据源）。"""
-    bootstrap_path = Path(__file__).resolve().parents[2] / "storage" / "skills" / "global.json"
-    if bootstrap_path.exists():
+    for bootstrap_path in _bundled_skill_bootstrap_paths():
+        if not bootstrap_path.exists():
+            continue
         payload = json.loads(bootstrap_path.read_text(encoding="utf-8"))
         skills = payload.get("skills")
         if isinstance(skills, list) and skills:

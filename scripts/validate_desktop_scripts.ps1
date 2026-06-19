@@ -108,7 +108,19 @@ try {
 
       $workData = Join-Path $env:TEMP ("huoke-validate-work-{0}" -f ([guid]::NewGuid().ToString('N')))
       try {
+        foreach ($rel in @(
+            "backend/app/main.py",
+            "backend/storage/skills/global.json",
+            "frontend-dist/index.html"
+          )) {
+          if (-not (Test-Path (Join-Path $bundleDir $rel))) {
+            throw "bundle missing $rel (run prepare_desktop_bundle.ps1)"
+          }
+        }
         $workBundle = Sync-HuokeRuntimeWorkdir -SourceBundleDir $bundleDir -DataDir $workData
+        if (-not (Test-HuokeRuntimeWorkBackendReady -WorkBundle $workBundle)) {
+          throw "runtime-work bundle incomplete after sync"
+        }
         $workCheck = Test-HuokeRuntimeManifest -BundleDir $workBundle
         if (-not $workCheck.Ok) {
           throw ("runtime-work manifest failed: " + ($workCheck.Issues -join "; "))
