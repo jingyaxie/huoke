@@ -106,7 +106,7 @@ class ExternalTaskIntentSpec(BaseModel):
 
 class ExternalTaskCapabilitiesOut(BaseModel):
     schema_version: str = "huoke.external_task.v1"
-    platforms: list[str] = Field(default_factory=lambda: ["douyin", "xiaohongshu", "kuaishou"])
+    platforms: list[str] = Field(default_factory=lambda: ["douyin", "xiaohongshu"])
     sync_schema: str = "huoke.agent_job_sync.v1"
     intents: list[ExternalTaskIntentSpec] = Field(default_factory=list)
     field_options: dict[str, list[ExternalTaskFieldOption]] = Field(default_factory=dict)

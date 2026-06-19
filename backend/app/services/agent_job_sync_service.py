@@ -56,6 +56,43 @@ def verify_sync_signature(payload: dict[str, Any], secret: str, timestamp: str, 
     return hmac.compare_digest(expected, signature)
 
 
+def _nickname_from_dict(row: dict[str, Any]) -> str:
+    for key in ("nickname", "username", "user_name", "nick_name"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    user = row.get("user")
+    if isinstance(user, dict):
+        for key in ("nickname", "unique_id", "uid"):
+            value = str(user.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _comment_text_from_dict(row: dict[str, Any]) -> str:
+    return str(row.get("comment") or row.get("text") or row.get("comment_text") or "").strip()
+
+
+def _avatar_from_dict(row: dict[str, Any]) -> str:
+    for key in ("avatar", "avatar_url", "author_avatar", "author_avatar_url"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    user = row.get("user")
+    if isinstance(user, dict):
+        for key in ("avatar", "avatar_url"):
+            value = str(user.get(key) or "").strip()
+            if value:
+                return value
+        avatar = user.get("avatar_larger") or user.get("avatar_medium") or user.get("avatar_thumb")
+        if isinstance(avatar, dict):
+            url_list = avatar.get("url_list") or []
+            if url_list:
+                return str(url_list[0] or "").strip()
+    return ""
+
+
 class AgentJobSyncService:
     """Build the stable external synchronization contract for async jobs."""
 
@@ -187,6 +224,16 @@ class AgentJobSyncService:
             limit=500,
         )
         record_map = {str(row.comment_id): row for row in records}
+        content_ids = self._job_content_ids(job, supervisor_state)
+        task_keyword = self._task_keyword(job)
+        snapshot_map = self._load_comment_snapshots_from_reports(
+            tenant_id=job.tenant_id,
+            platform=platform,
+            comment_ids=scoped_comment_ids,
+            content_ids=content_ids,
+            job_id=str(job.job_id or "").strip(),
+            task_keyword=task_keyword,
+        )
         rows: list[dict[str, Any]] = []
         for comment_id in sorted(scoped_comment_ids):
             evaluation = evaluation_cache.get(comment_id)
@@ -197,6 +244,7 @@ class AgentJobSyncService:
                     str(comment_id),
                     evaluation,
                     record=record_map.get(str(comment_id)),
+                    snapshot=snapshot_map.get(str(comment_id)),
                     outreach=outreach_by_comment.get(str(comment_id), {}),
                     eval_spec=eval_spec,
                 )
@@ -225,25 +273,19 @@ class AgentJobSyncService:
         return outreach_by_comment
 
     @staticmethod
-    def _comment_avatar_url(record: Any | None) -> str:
-        if record is None:
-            return ""
-        raw = record.raw_data if isinstance(record.raw_data, dict) else {}
-        for key in ("avatar", "avatar_url", "author_avatar", "author_avatar_url"):
-            value = str(raw.get(key) or "").strip()
-            if value:
-                return value
-        user = raw.get("user")
-        if isinstance(user, dict):
-            for key in ("avatar", "avatar_url"):
-                value = str(user.get(key) or "").strip()
-                if value:
-                    return value
-            avatar = user.get("avatar_larger") or user.get("avatar_medium") or user.get("avatar_thumb")
-            if isinstance(avatar, dict):
-                url_list = avatar.get("url_list") or []
-                if url_list:
-                    return str(url_list[0] or "").strip()
+    def _comment_avatar_url(record: Any | None, snapshot: dict[str, Any] | None = None) -> str:
+        if record is not None:
+            raw = record.raw_data if isinstance(record.raw_data, dict) else {}
+            avatar = _avatar_from_dict(raw)
+            if avatar:
+                return avatar
+        if isinstance(snapshot, dict):
+            avatar = str(snapshot.get("avatar") or "").strip()
+            if avatar:
+                return avatar
+            raw = snapshot.get("raw_data")
+            if isinstance(raw, dict):
+                return _avatar_from_dict(raw)
         return ""
 
     @staticmethod
@@ -252,31 +294,51 @@ class AgentJobSyncService:
         evaluation: dict[str, Any],
         *,
         record: Any | None,
+        snapshot: dict[str, Any] | None = None,
         outreach: dict[str, Any],
         eval_spec: dict[str, Any],
     ) -> dict[str, Any]:
+        nickname = str(record.nickname or "").strip() if record is not None else ""
+        comment_text = str(record.comment_text or "").strip() if record is not None else ""
         create_time = record.create_time if record is not None else None
+        content_url = str(record.content_url or "").strip() if record is not None else ""
+        content_id = str(record.content_id or "").strip() if record is not None else ""
+        video_title = ""
+
+        if isinstance(snapshot, dict):
+            if not nickname:
+                nickname = str(snapshot.get("nickname") or "").strip()
+            if not comment_text:
+                comment_text = str(snapshot.get("comment_text") or "").strip()
+            if create_time is None:
+                create_time = snapshot.get("create_time")
+            if not content_url:
+                content_url = str(snapshot.get("video_url") or "").strip()
+            if not content_id:
+                content_id = str(snapshot.get("content_id") or "").strip()
+            video_title = str(snapshot.get("video_title") or "").strip()
+
         comment_at = ""
-        if create_time:
+        if create_time is not None:
             try:
                 comment_at = datetime.fromtimestamp(int(create_time), tz=timezone.utc).isoformat()
             except (TypeError, ValueError, OSError):
                 comment_at = ""
         elif record is not None and record.last_seen_at:
             comment_at = record.last_seen_at.isoformat()
-        avatar_url = AgentJobSyncService._comment_avatar_url(record)
+
+        avatar_url = AgentJobSyncService._comment_avatar_url(record, snapshot)
         return {
             "id": str(comment_id),
             "comment_id": str(comment_id),
-            "nickname": (record.nickname if record is not None else None) or "—",
+            "nickname": nickname or "—",
             "avatar": avatar_url,
             "avatar_url": avatar_url,
-            "comment_content": (record.comment_text if record is not None else None)
-            or str(evaluation.get("reason") or ""),
+            "comment_content": comment_text,
             "comment_at": comment_at,
-            "video_title": "",
-            "video_url": (record.content_url if record is not None else None) or "",
-            "content_id": (record.content_id if record is not None else None) or "",
+            "video_title": video_title,
+            "video_url": content_url,
+            "content_id": content_id,
             "is_precise": accept_evaluation_result(evaluation, eval_spec) if eval_spec else bool(
                 evaluation.get("worth_outreach")
             ),
@@ -286,6 +348,211 @@ class AgentJobSyncService:
             "dm_content": outreach.get("dm_content") or "",
             "executed_at": outreach.get("executed_at") or "",
         }
+
+    def _load_comment_snapshots_from_reports(
+        self,
+        *,
+        tenant_id: str,
+        platform: str,
+        comment_ids: set[str],
+        content_ids: set[str],
+        job_id: str = "",
+        task_keyword: str = "",
+    ) -> dict[str, dict[str, Any]]:
+        if not comment_ids:
+            return {}
+
+        root = self.settings.report_output_dir
+        if not root.exists():
+            return {}
+
+        pending = {str(comment_id).strip() for comment_id in comment_ids if str(comment_id).strip()}
+        index: dict[str, dict[str, Any]] = {}
+
+        def ingest_payload(data: dict[str, Any]) -> None:
+            if not pending:
+                return
+            if not self._report_payload_belongs_to_job(
+                data,
+                job_id=job_id,
+                content_ids=content_ids,
+                task_keyword=task_keyword,
+            ):
+                return
+            video_url = str(data.get("video_url") or data.get("note_url") or "").strip()
+            file_content_id = str(
+                data.get("content_id") or data.get("aweme_id") or data.get("note_id") or ""
+            ).strip()
+            keyword_ctx = data.get("keyword_context") if isinstance(data.get("keyword_context"), dict) else {}
+            keyword = str(keyword_ctx.get("keyword") or "").strip()
+            video_title = str(data.get("title") or data.get("desc") or keyword or "").strip()
+            if not video_title and file_content_id:
+                video_title = f"视频 {file_content_id[-8:]}"
+            for row in data.get("comments") or []:
+                if not isinstance(row, dict):
+                    continue
+                if not self._comment_row_belongs_to_job(row, job_id=job_id, file_belongs=True):
+                    continue
+                cid = str(row.get("comment_id") or "").strip()
+                if cid not in pending:
+                    continue
+                index[cid] = {
+                    "nickname": _nickname_from_dict(row),
+                    "comment_text": _comment_text_from_dict(row),
+                    "create_time": row.get("create_time"),
+                    "avatar": _avatar_from_dict(row),
+                    "content_id": file_content_id,
+                    "video_url": video_url,
+                    "video_title": video_title,
+                    "raw_data": row,
+                }
+                pending.discard(cid)
+
+        for content_id in content_ids:
+            if not pending:
+                break
+            canonical = root / f"comments_{platform}_{tenant_id}_{content_id}.json"
+            if not canonical.is_file():
+                continue
+            try:
+                ingest_payload(json.loads(canonical.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+        if pending:
+            pattern = f"comments_{platform}_{tenant_id}_*.json"
+            files = sorted(root.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in files:
+                if not pending:
+                    break
+                try:
+                    ingest_payload(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, json.JSONDecodeError):
+                    continue
+
+        return index
+
+    @staticmethod
+    def _task_keyword(job: AgentAsyncJob) -> str:
+        message = job.message
+        if isinstance(message, str) and message.strip().startswith("{"):
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                keyword = str(payload.get("keyword") or "").strip()
+                if keyword:
+                    return keyword
+
+        result = job.result if isinstance(job.result, dict) else {}
+        orchestration = result.get("orchestration") if isinstance(result.get("orchestration"), dict) else {}
+        brief = orchestration.get("task_brief") if isinstance(orchestration.get("task_brief"), dict) else {}
+        keyword = str(brief.get("keyword") or "").strip()
+        if keyword:
+            return keyword
+
+        constraints = brief.get("constraints") if isinstance(brief.get("constraints"), dict) else {}
+        lead_evaluation = constraints.get("lead_evaluation") if isinstance(constraints.get("lead_evaluation"), dict) else {}
+        business_context = (
+            lead_evaluation.get("business_context")
+            if isinstance(lead_evaluation.get("business_context"), dict)
+            else {}
+        )
+        keyword = str(business_context.get("keyword") or "").strip()
+        if keyword:
+            return keyword
+
+        if isinstance(message, str):
+            plain = message.strip()
+            if plain and not plain.startswith("{") and len(plain) <= 64 and "\n" not in plain:
+                return plain
+        return ""
+
+    @staticmethod
+    def _comment_row_belongs_to_job(row: dict[str, Any], *, job_id: str, file_belongs: bool) -> bool:
+        if not file_belongs:
+            return False
+        if not job_id:
+            return True
+        meta = row.get("_agent_meta") if isinstance(row.get("_agent_meta"), dict) else {}
+        stored_job_id = str(meta.get("source_job_id") or "").strip()
+        if stored_job_id:
+            return stored_job_id == job_id
+        return True
+
+    @staticmethod
+    def _report_payload_belongs_to_job(
+        data: dict[str, Any],
+        *,
+        job_id: str,
+        content_ids: set[str],
+        task_keyword: str,
+    ) -> bool:
+        file_content_id = str(
+            data.get("content_id") or data.get("aweme_id") or data.get("note_id") or ""
+        ).strip()
+        if content_ids and file_content_id and file_content_id in content_ids:
+            return True
+
+        keyword_ctx = data.get("keyword_context") if isinstance(data.get("keyword_context"), dict) else {}
+        file_keyword = str(keyword_ctx.get("keyword") or "").strip()
+        if task_keyword and file_keyword == task_keyword:
+            return True
+
+        if not job_id:
+            return False
+        for row in data.get("comments") or []:
+            if not isinstance(row, dict):
+                continue
+            meta = row.get("_agent_meta") if isinstance(row.get("_agent_meta"), dict) else {}
+            if str(meta.get("source_job_id") or "").strip() == job_id:
+                return True
+        return False
+
+    def _comment_ids_from_reports_for_job(
+        self,
+        *,
+        tenant_id: str,
+        platform: str,
+        job_id: str,
+        content_ids: set[str],
+        task_keyword: str,
+        candidate_ids: set[str] | None = None,
+    ) -> set[str]:
+        root = self.settings.report_output_dir
+        if not root.exists():
+            return set()
+
+        scoped: set[str] = set()
+        pattern = f"comments_{platform}_{tenant_id}_*.json"
+        for path in sorted(root.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            file_belongs = self._report_payload_belongs_to_job(
+                data,
+                job_id=job_id,
+                content_ids=content_ids,
+                task_keyword=task_keyword,
+            )
+            if not file_belongs:
+                continue
+            for row in data.get("comments") or []:
+                if not isinstance(row, dict):
+                    continue
+                if not self._comment_row_belongs_to_job(row, job_id=job_id, file_belongs=True):
+                    continue
+                comment_id = str(row.get("comment_id") or "").strip()
+                if not comment_id:
+                    continue
+                if candidate_ids is not None and comment_id not in candidate_ids:
+                    continue
+                scoped.add(comment_id)
+        return scoped
 
     def _job_content_ids(self, job: AgentAsyncJob, supervisor_state: dict[str, Any]) -> set[str]:
         content_ids = {
@@ -316,29 +583,12 @@ class AgentJobSyncService:
         if isinstance(explicit, list) and explicit:
             return {str(x).strip() for x in explicit if str(x).strip()}
 
-        evaluation_cache = supervisor_state.get("evaluation_cache")
-        if isinstance(evaluation_cache, dict) and evaluation_cache:
-            evaluated_ids = {str(k).strip() for k in evaluation_cache if str(k).strip()}
-            if evaluated_ids:
-                content_ids = self._job_content_ids(job, supervisor_state)
-                if content_ids:
-                    from app.repositories.content_comment_repository import ContentCommentRepository
-
-                    repo = ContentCommentRepository(db_session, job.tenant_id)
-                    rows = repo.list_by_content_ids(
-                        platform=str(job.platform or "douyin"),
-                        content_ids=sorted(content_ids),
-                    )
-                    content_comment_ids = {str(row.comment_id) for row in rows}
-                    scoped = evaluated_ids & content_comment_ids
-                    if scoped:
-                        return scoped
-                return evaluated_ids
-
+        platform = str(job.platform or "douyin")
         content_ids = self._job_content_ids(job, supervisor_state)
+        task_keyword = self._task_keyword(job)
+        job_id = str(job.job_id or "").strip()
 
         scoped: set[str] = set()
-
         for event in outreach_events:
             if not isinstance(event, dict):
                 continue
@@ -346,8 +596,41 @@ class AgentJobSyncService:
             if comment_id:
                 scoped.add(comment_id)
 
+        scoped |= self._comment_ids_from_reports_for_job(
+            tenant_id=job.tenant_id,
+            platform=platform,
+            job_id=job_id,
+            content_ids=content_ids,
+            task_keyword=task_keyword,
+        )
+
+        if content_ids:
+            from app.repositories.content_comment_repository import ContentCommentRepository
+
+            repo = ContentCommentRepository(db_session, job.tenant_id)
+            rows = repo.list_by_content_ids(
+                platform=platform,
+                content_ids=sorted(content_ids),
+            )
+            scoped |= {str(row.comment_id) for row in rows}
+
         if scoped:
             return scoped
+
+        evaluation_cache = supervisor_state.get("evaluation_cache")
+        if isinstance(evaluation_cache, dict) and evaluation_cache:
+            evaluated_ids = {str(k).strip() for k in evaluation_cache if str(k).strip()}
+            report_scoped = self._comment_ids_from_reports_for_job(
+                tenant_id=job.tenant_id,
+                platform=platform,
+                job_id=job_id,
+                content_ids=content_ids,
+                task_keyword=task_keyword,
+                candidate_ids=evaluated_ids,
+            )
+            if report_scoped:
+                return report_scoped
+
         if content_ids:
             return set()
         return None

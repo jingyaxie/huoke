@@ -4,6 +4,8 @@
     :title="dialogTitle"
     width="1180px"
     destroy-on-close
+    align-center
+    modal-class="outreach-dialog-overlay"
     class="outreach-dialog"
     @closed="resetState"
   >
@@ -303,5 +305,19 @@ function resetState() {
 .pager-text {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+</style>
+
+<style>
+/* 弹层挂载在 body，需全局样式；水平居中于侧栏右侧主内容区 */
+.outreach-dialog-overlay.el-overlay .el-overlay-dialog {
+  padding-left: var(--sidebar-width, 240px);
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .outreach-dialog-overlay.el-overlay .el-overlay-dialog {
+    padding-left: 0;
+  }
 }
 </style>

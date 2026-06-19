@@ -42,7 +42,7 @@ export function platformLabel(platform) {
 export function listSupportedPlatforms(capabilities) {
   const platforms = capabilities?.platforms;
   if (Array.isArray(platforms) && platforms.length) {
-    return platforms.filter((item) => ["douyin", "xiaohongshu", "kuaishou"].includes(item));
+    return platforms.filter((item) => ["douyin", "xiaohongshu"].includes(item));
   }
   return ["douyin", "xiaohongshu"];
 }
