@@ -6,6 +6,10 @@ import argparse
 import os
 import sys
 
+from desktop_stdio import configure_desktop_stdio, safe_print
+
+configure_desktop_stdio()
+
 
 def _register_windows_dll_dirs() -> None:
     try:
@@ -53,32 +57,56 @@ def run_lifespan_smoke(app: object) -> None:
 
 def run_preflight(*, include_lifespan: bool = False) -> object:
     _register_windows_dll_dirs()
-    print("preflight: python", sys.version.split()[0], flush=True)
+    safe_print("preflight: python", sys.version.split()[0], flush=True)
 
     import greenlet  # noqa: F401
     from greenlet._greenlet import _C_API  # noqa: F401
 
-    print("greenlet ok", flush=True)
+    safe_print("greenlet ok", flush=True)
     import cryptography  # noqa: F401
 
-    print("cryptography ok", flush=True)
+    safe_print("cryptography ok", flush=True)
     import pydantic_core  # noqa: F401
 
-    print("pydantic_core ok", flush=True)
+    safe_print("pydantic_core ok", flush=True)
     from playwright.async_api import async_playwright  # noqa: F401
 
-    print("playwright ok", flush=True)
+    safe_print("playwright ok", flush=True)
     from app.db.bootstrap import ensure_database_schema
     from app.main import app
 
-    print("app.main ok", flush=True)
+    safe_print("app.main ok", flush=True)
     ensure_database_schema()
-    print("database schema ready", flush=True)
+    safe_print("database schema ready", flush=True)
     if include_lifespan:
         run_lifespan_smoke(app)
-        print("lifespan ok", flush=True)
-    print("preflight unified ok", flush=True)
+        safe_print("lifespan ok", flush=True)
+    safe_print("preflight unified ok", flush=True)
     return app
+
+
+def _uvicorn_log_config() -> dict:
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(levelname)s: %(message)s",
+            },
+        },
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+                "stream": "ext://sys.stderr",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        },
+    }
 
 
 def main() -> int:
@@ -90,10 +118,13 @@ def main() -> int:
     try:
         app = run_preflight(include_lifespan=args.check_only)
     except Exception as exc:
-        print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
-        import traceback
+        safe_print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        try:
+            import traceback
 
-        traceback.print_exc()
+            traceback.print_exc(file=sys.stderr)
+        except OSError:
+            pass
         return 1
 
     if args.check_only:
@@ -101,19 +132,29 @@ def main() -> int:
 
     import uvicorn
 
-    print(f"starting uvicorn on port {args.port}", flush=True)
+    safe_print(f"starting uvicorn on port {args.port}", flush=True)
     try:
-        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=args.port,
+            log_level="info",
+            log_config=_uvicorn_log_config(),
+            use_colors=False,
+        )
     except SystemExit as exc:
         code = exc.code
         if code in (0, None):
             return 0
         return int(code) if isinstance(code, int) else 1
     except Exception as exc:
-        print(f"uvicorn failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
-        import traceback
+        safe_print(f"uvicorn failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        try:
+            import traceback
 
-        traceback.print_exc()
+            traceback.print_exc(file=sys.stderr)
+        except OSError:
+            pass
         return 1
     return 0
 

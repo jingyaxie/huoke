@@ -32,6 +32,8 @@ try {
       "scripts/verify_installed_startup.ps1",
       "scripts/verify_nsis_installed.ps1",
       "scripts/verify_windows_bundle.ps1",
+      "scripts/desktop_run_backend.py",
+      "scripts/desktop_bundle_runtime.py",
       "scripts/_python_win.ps1"
     )) {
     Test-PowerShellScriptSyntax -Path $script
@@ -54,6 +56,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Python syntax error in scripts/desktop_uvicorn_launcher.py"
     }
+    foreach ($extra in @("desktop_run_backend.py", "desktop_bundle_runtime.py", "desktop_stdio.py")) {
+      $path = Join-Path $repoRoot "scripts/$extra"
+      & $py.Source -m py_compile $path
+      if ($LASTEXITCODE -ne 0) {
+        throw "Python syntax error in scripts/$extra"
+      }
+      Write-Host "syntax ok: scripts/$extra"
+    }
     & $py.Source -m py_compile $bootstrap
     if ($LASTEXITCODE -ne 0) {
       throw "Python syntax error in scripts/portable_dll_bootstrap.py"
@@ -72,6 +82,9 @@ try {
       "../../scripts/desktop-runtime-workdir.ps1",
       "../../scripts/diagnose_portable_python.py",
       "../../scripts/desktop_uvicorn_launcher.py",
+      "../../scripts/desktop_run_backend.py",
+      "../../scripts/desktop_bundle_runtime.py",
+      "../../scripts/desktop_stdio.py",
       "../../scripts/portable_dll_bootstrap.py"
     )) {
     if (-not $config.bundle.resources.$required) {

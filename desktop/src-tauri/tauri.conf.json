@@ -49,6 +49,9 @@
       "../../scripts/desktop-runtime-workdir.ps1": "scripts/desktop-runtime-workdir.ps1",
       "../../scripts/diagnose_portable_python.py": "scripts/diagnose_portable_python.py",
       "../../scripts/desktop_uvicorn_launcher.py": "scripts/desktop_uvicorn_launcher.py",
+      "../../scripts/desktop_run_backend.py": "scripts/desktop_run_backend.py",
+      "../../scripts/desktop_bundle_runtime.py": "scripts/desktop_bundle_runtime.py",
+      "../../scripts/desktop_stdio.py": "scripts/desktop_stdio.py",
       "../../scripts/portable_dll_bootstrap.py": "scripts/portable_dll_bootstrap.py",
       "../../scripts/_python_win.ps1": "scripts/_python_win.ps1",
       "../../.env.desktop.example": ".env.desktop.example"
