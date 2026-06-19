@@ -12,6 +12,12 @@ sys.path.insert(0, ROOT)
 
 KEYWORD = sys.argv[1] if len(sys.argv) > 1 else "淋浴房"
 LIMIT = 3
+METHOD_PAUSE_S = 20
+
+
+async def _pause(label: str) -> None:
+    print(f"[节奏] {label}，停顿 {METHOD_PAUSE_S}s …", flush=True)
+    await asyncio.sleep(METHOD_PAUSE_S)
 
 
 async def _method_ui_flow_search(page, settings) -> dict:
@@ -144,29 +150,27 @@ async def main() -> int:
 
     pool = PlaywrightPool.get()
 
-    # 1) 首页就绪
-    async with pool.tenant_context(
+    async with pool.tenant_window(
         "douyin", "default", store, settings, headless=False, account_id="default"
-    ) as (_, page):
-        report["methods"].append(await _method_prepare_only(page, settings))
+    ) as win:
+        tab = await win.open_tab(reuse_main=True)
+        report["methods"].append(await _method_prepare_only(tab, settings))
+        await _pause("prepare done")
+        await win.close_tab(tab)
 
-    # 2) human_type + Enter（任务 Agent 常用路径）
-    async with pool.tenant_context(
-        "douyin", "default", store, settings, headless=False, account_id="default"
-    ) as (_, page):
-        report["methods"].append(await _method_human_type_enter(page, settings))
+        tab = await win.open_tab()
+        report["methods"].append(await _method_human_type_enter(tab, settings))
+        await _pause("human_type done")
+        await win.close_tab(tab)
 
-    # 3) ui_flow 搜索
-    async with pool.tenant_context(
-        "douyin", "default", store, settings, headless=False, account_id="default"
-    ) as (_, page):
-        report["methods"].append(await _method_ui_flow_search(page, settings))
+        tab = await win.open_tab()
+        report["methods"].append(await _method_ui_flow_search(tab, settings))
+        await _pause("ui_flow done")
+        await win.close_tab(tab)
 
-    # 4) SearchTool 关键词搜索（Supervisor crawl_keyword 底层）
-    async with pool.tenant_context(
-        "douyin", "default", store, settings, headless=False, account_id="default"
-    ) as (_, page):
-        report["methods"].append(await _method_keyword_search_tool(page, settings, store))
+        tab = await win.open_tab()
+        report["methods"].append(await _method_keyword_search_tool(tab, settings, store))
+        await win.close_tab(tab)
 
     ok_count = sum(1 for m in report["methods"] if m.get("ok"))
     report["summary"] = f"{ok_count}/{len(report['methods'])} methods ok"

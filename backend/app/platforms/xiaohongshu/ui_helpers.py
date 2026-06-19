@@ -246,12 +246,16 @@ async def activate_session(page: Page) -> dict[str, Any]:
 
 
 async def prepare_logged_in_page(page: Page) -> dict[str, Any]:
-    """关闭登录弹窗并尝试激活会话。"""
-    dismiss = await dismiss_login_overlay(page)
-    activate = await activate_session(page)
-    if dismiss.get("had_modal"):
-        dismiss = await dismiss_login_overlay(page)
+    """已登录时关闭误弹登录窗并激活会话；游客态保留扫码/登录弹窗供用户操作。"""
     user_me = await fetch_user_me(page)
+    dismiss: dict[str, Any] = {"dismissed": False, "had_modal": False, "actions": []}
+    if user_me.get("guest") is False:
+        dismiss = await dismiss_login_overlay(page)
+        if dismiss.get("had_modal"):
+            dismiss = await dismiss_login_overlay(page)
+    activate = await activate_session(page)
+    if user_me.get("guest") is not False:
+        user_me = await fetch_user_me(page)
     return {"dismiss": dismiss, "activate": activate, "user_me": user_me}
 
 

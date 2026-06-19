@@ -572,14 +572,12 @@ def headless_for_platform(settings: Settings, platform: str, headless: bool | No
 
 def context_kwargs(settings: Settings, state: dict | None = None, *, headless: bool = True) -> dict:
     if uses_native_system_chrome(settings, headless=headless):
-        kwargs: dict = {
+        # 系统 Chrome 由 _seed_storage_from_state 手工灌 Cookie；storage_state 参数易与 CDP 冲突。
+        return {
             "locale": settings.antibot_locale,
             "timezone_id": settings.timezone,
             "no_viewport": True,
         }
-        if state:
-            kwargs["storage_state"] = state
-        return kwargs
     kwargs: dict = {
         "viewport": viewport(settings, headless=headless),
         "user_agent": user_agent(settings),
@@ -674,6 +672,102 @@ def _warm_url_for_storage_state(state: dict | None) -> str | None:
     return None
 
 
+def _cookie_url_for_playwright(domain: str, path: str) -> str | None:
+    host = str(domain or "").strip().lstrip(".")
+    if not host:
+        return None
+    normalized_path = str(path or "/") or "/"
+    if host.endswith("douyin.com"):
+        return f"https://www.douyin.com{normalized_path}"
+    if host.endswith("xiaohongshu.com"):
+        return f"https://www.xiaohongshu.com{normalized_path}"
+    if host.endswith("kuaishou.com"):
+        return f"https://www.kuaishou.com{normalized_path}"
+    return f"https://{host}{normalized_path}"
+
+
+def _normalize_storage_cookie_for_add(item: dict) -> dict | None:
+    """Playwright add_cookies 只接受 url 或 domain 其一；storage_state 常两者并存。"""
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    if item.get("value") is None:
+        return None
+
+    cookie: dict = {"name": name, "value": str(item.get("value"))}
+    raw_url = str(item.get("url") or "").strip()
+    domain = str(item.get("domain") or "").strip()
+    path = str(item.get("path") or "/")
+    if raw_url:
+        cookie["url"] = raw_url
+    elif domain:
+        resolved = _cookie_url_for_playwright(domain, path)
+        if not resolved:
+            return None
+        cookie["url"] = resolved
+    else:
+        return None
+
+    for key in ("expires", "httpOnly", "secure"):
+        if key in item:
+            cookie[key] = item[key]
+    same_site = item.get("sameSite")
+    if same_site in {"Lax", "Strict", "None"}:
+        cookie["sameSite"] = same_site
+    elif isinstance(same_site, str):
+        lowered = same_site.lower()
+        if lowered == "none":
+            cookie["sameSite"] = "None"
+        elif lowered == "strict":
+            cookie["sameSite"] = "Strict"
+        elif lowered == "lax":
+            cookie["sameSite"] = "Lax"
+    return cookie
+
+
+async def _context_has_login_markers(context: BrowserContext, *, platform: str) -> bool:
+    cookies = await context.cookies()
+    names = {c.get("name") for c in cookies if isinstance(c, dict) and c.get("name")}
+    if platform == "douyin":
+        from app.platforms.douyin.session import USER_LOGIN_MARKERS
+
+        return bool(names & USER_LOGIN_MARKERS)
+    return bool(names)
+
+
+async def ensure_platform_login_state(
+    context: BrowserContext,
+    page: Page,
+    state: dict | None,
+    settings: Settings,
+    *,
+    platform: str,
+) -> Page:
+    """系统 Chrome：灌 Cookie/localStorage 后校验登录态，登录墙则重灌并刷新。"""
+    if not state or not uses_native_system_chrome(settings, headless=False):
+        return page
+    if platform != "douyin":
+        return page
+
+    from app.platforms.douyin.human_guards import _detect_login_wall
+
+    if context.pages and context.pages[0] is not page and not page.is_closed():
+        page = context.pages[0]
+
+    if not await _context_has_login_markers(context, platform=platform):
+        await _seed_storage_from_state(context, state, replace=True)
+        with contextlib.suppress(Exception):
+            await page.reload(wait_until="domcontentloaded", timeout=45000)
+
+    if await _detect_login_wall(page):
+        await _seed_storage_from_state(context, state, replace=True)
+        with contextlib.suppress(Exception):
+            await page.goto("https://www.douyin.com/jingxuan", wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(800)
+
+    return page
+
+
 async def _seed_cookies_from_state(
     context: BrowserContext,
     state: dict | None,
@@ -687,15 +781,11 @@ async def _seed_cookies_from_state(
         return
     cookies: list[dict] = []
     for item in raw_cookies:
-        if not isinstance(item, dict) or not item.get("name"):
+        if not isinstance(item, dict):
             continue
-        cookie = dict(item)
-        if not cookie.get("url"):
-            domain = str(cookie.get("domain") or "").lstrip(".").strip()
-            path = str(cookie.get("path") or "/")
-            if domain:
-                cookie["url"] = f"https://{domain}{path}"
-        cookies.append(cookie)
+        normalized = _normalize_storage_cookie_for_add(item)
+        if normalized:
+            cookies.append(normalized)
     if not cookies:
         return
     warm_url = _warm_url_for_storage_state(state)
@@ -710,20 +800,21 @@ async def _seed_cookies_from_state(
                 pass
     try:
         if replace:
-            # 持久化 Profile 可能残留游客态 Cookie，先清空再以 storage_state 为准。
             await context.clear_cookies()
         await context.add_cookies(cookies)
     except Exception:
-        if not replace:
+        added = 0
+        for cookie in cookies:
             try:
-                await context.add_cookies(cookies)
+                await context.add_cookies([cookie])
+                added += 1
             except Exception:
-                pass
-        else:
-            try:
+                continue
+        if added == 0 and not replace:
+            with contextlib.suppress(Exception):
                 await context.add_cookies(cookies)
-            except Exception:
-                pass
+    with contextlib.suppress(Exception):
+        await page.reload(wait_until="domcontentloaded", timeout=45000)
 
 
 async def _seed_local_storage_from_state(context: BrowserContext, state: dict | None) -> None:
@@ -841,6 +932,8 @@ async def new_browser_context(
     if uses_native_system_chrome(settings, headless=not visible):
         mark_native_system_chrome_context(context)
     await apply_stealth(context, settings, tenant_id=tenant_id, visible=visible)
+    if state and uses_native_system_chrome(settings, headless=not visible):
+        await _seed_storage_from_state(context, state, replace=False)
     return context
 
 
@@ -878,11 +971,7 @@ async def open_tenant_page(
         tenant_id=tenant_id,
         visible=not resolved_headless,
     )
-    if state and uses_native_system_chrome(settings, headless=resolved_headless):
-        await _seed_storage_from_state(context, state, replace=False)
-        page = context.pages[0] if context.pages else await context.new_page()
-    else:
-        page = await context.new_page()
+    page = context.pages[0] if context.pages else await context.new_page()
     return browser, context, page
 
 
@@ -993,6 +1082,7 @@ def tenant_antibot_config(settings: Settings, tenant_id: str) -> TenantAntibotCo
 
 _TAB_GUARD_INSTALLED = "_huoke_tab_guard_installed"
 _MAIN_PAGE_HOLDER = "_huoke_main_page_holder"
+_WORK_TABS_ATTR = "_huoke_work_tab_ids"
 _POPUP_SWEEPER_INSTALLED = "_huoke_popup_sweeper_installed"
 _CDP_POPUP_KILLER_INSTALLED = "_huoke_cdp_popup_killer_installed"
 _NATIVE_TAB_CLOSER_INSTALLED = "_huoke_native_tab_closer_installed"
@@ -1183,6 +1273,8 @@ def _should_kill_popup_page(page: Page, main: Page | None) -> bool:
 async def _kill_popup_page(page: Page, main: Page | None) -> None:
     if not _should_kill_popup_page(page, main):
         return
+    if _is_work_tab(page.context, page):
+        return
     with contextlib.suppress(Exception):
         await page.close(run_before_unload=False)
 
@@ -1226,6 +1318,15 @@ def _ensure_native_tracking_tab_closer(context: BrowserContext) -> None:
                 source="native_tracking_closer",
                 url=(page.url or ""),
                 reason="is_main_tab",
+            )
+            return
+        if _is_work_tab(context, page):
+            record_tab_audit(
+                context,
+                "tab_close_skipped",
+                source="native_tracking_closer",
+                url=(page.url or ""),
+                reason="work_tab",
             )
             return
         if page.is_closed():
@@ -1434,6 +1535,24 @@ async def bind_main_browser_tab(
     )
 
 
+def register_work_tab(context: BrowserContext, page: Page) -> None:
+    """登记业务 Tab（测试/多步骤），避免 native tab closer 误关 about:blank 新页。"""
+    tabs: set[int] = getattr(context, _WORK_TABS_ATTR, None) or set()
+    tabs.add(id(page))
+    setattr(context, _WORK_TABS_ATTR, tabs)
+
+
+def unregister_work_tab(context: BrowserContext, page: Page) -> None:
+    tabs: set[int] = getattr(context, _WORK_TABS_ATTR, None) or set()
+    tabs.discard(id(page))
+    setattr(context, _WORK_TABS_ATTR, tabs)
+
+
+def _is_work_tab(context: BrowserContext, page: Page) -> bool:
+    tabs: set[int] = getattr(context, _WORK_TABS_ATTR, None) or set()
+    return id(page) in tabs
+
+
 def register_main_page(context: BrowserContext, main_page: Page) -> None:
     """同步登记主 tab（复用已有 context 时；完整守卫见 bind_main_page_guards）。"""
     holder: dict[str, Page | None] = getattr(context, _MAIN_PAGE_HOLDER, None) or {"page": None}
@@ -1575,6 +1694,31 @@ async def human_mouse_move(
     _last_mouse_pos[page_id] = (x, y)
 
 
+async def _neutralize_hidden_pointer_blockers(page: Page) -> None:
+    """抖音常留隐藏 #captcha_container，Playwright 会认为拦截点击但人眼不可见。"""
+    with contextlib.suppress(Exception):
+        await page.evaluate(
+            """() => {
+              const ids = ['captcha_container', 'captcha-verify-image'];
+              for (const id of ids) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                const visible = style.display !== 'none'
+                  && style.visibility !== 'hidden'
+                  && parseFloat(style.opacity || '1') > 0.05
+                  && rect.width > 8
+                  && rect.height > 8;
+                if (!visible) {
+                  el.style.pointerEvents = 'none';
+                  el.style.display = 'none';
+                }
+              }
+            }"""
+        )
+
+
 async def human_click(
     page: Page,
     target: str | Locator,
@@ -1586,7 +1730,14 @@ async def human_click(
     locator = page.locator(target).first if isinstance(target, str) else target
     await locator.wait_for(state="visible", timeout=timeout)
     if antibot_suppressed_for_page(page):
-        await locator.click(timeout=timeout)
+        await _neutralize_hidden_pointer_blockers(page)
+        box = await locator.bounding_box()
+        if box:
+            x = box["x"] + box["width"] * random.uniform(0.28, 0.72)
+            y = box["y"] + box["height"] * random.uniform(0.28, 0.72)
+            await page.mouse.click(x, y)
+            return
+        await locator.click(timeout=timeout, force=True)
         return
     box = await locator.bounding_box()
     if not box:
@@ -1611,10 +1762,21 @@ async def human_type(
 ) -> None:
     locator = page.locator(target).first if isinstance(target, str) else target
     if antibot_suppressed_for_page(page):
-        await locator.click(timeout=timeout)
+        await locator.wait_for(state="visible", timeout=timeout)
+        await _neutralize_hidden_pointer_blockers(page)
+        box = await locator.bounding_box()
+        if box:
+            x = box["x"] + box["width"] * random.uniform(0.35, 0.65)
+            y = box["y"] + box["height"] * random.uniform(0.35, 0.65)
+            await page.mouse.click(x, y)
+        else:
+            await locator.click(timeout=timeout, force=True)
         if clear_first:
-            await locator.fill("")
-        await locator.fill(text)
+            modifier = "Meta" if py_platform.system() == "Darwin" else "Control"
+            await page.keyboard.press(f"{modifier}+A")
+            await asyncio.sleep(0.05)
+            await page.keyboard.press("Backspace")
+        await page.keyboard.type(text, delay=random.randint(25, 80))
         return
     await human_click(page, locator, settings, tenant_id=tenant_id, timeout=timeout)
     if clear_first:

@@ -131,7 +131,6 @@ async function pollOnce() {
       statusMessage.value = data.message || "二维码已失效，请刷新后重试";
     }
   } catch (err) {
-    stopPolling();
     statusMessage.value = err.message || "查询登录状态失败";
     loginStatus.value = "error";
   }

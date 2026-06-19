@@ -93,7 +93,7 @@ async def human_reply_comment(
     tenant_id: str,
     content_url: str,
     reply_text: str,
-    scroll_rounds: int = 8,
+    scroll_rounds: int = 16,
     comment_id: str = "",
     comment_text: str = "",
 ) -> dict[str, Any]:
@@ -105,7 +105,7 @@ async def human_reply_comment(
         }
     current_url = (page.url or "").strip()
     on_target = content_url and content_url in current_url
-    if not on_target and not await is_feed_detail_open(page):
+    if content_url and not on_target:
         await page.goto(content_url, wait_until="domcontentloaded", timeout=45000)
 
     stage = "feed" if await is_feed_detail_open(page) else "video"
@@ -116,6 +116,11 @@ async def human_reply_comment(
         stage=stage,
     )
     await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
+    await activate_comment_sidebar_on_page(page, settings, tenant_id=tenant_id)
+    for _ in range(20):
+        if await page.locator('[data-e2e="comment-item"]').count():
+            break
+        await human_delay(page, settings, tenant_id=tenant_id, profile="poll")
 
     target = await scroll_comment_sidebar_until(
         page,
@@ -133,24 +138,40 @@ async def human_reply_comment(
             "comment_id": comment_id,
         }
 
-    reply_btn = None
-    for selector in _REPLY_BTN_SELECTORS:
-        candidate = target.locator(selector).first
-        if await candidate.count():
-            reply_btn = candidate
-            break
+    if stage == "feed":
+        await activate_comment_sidebar_on_page(page, settings, tenant_id=tenant_id)
+        await human_delay(page, settings, tenant_id=tenant_id, profile="action")
+
+    from app.services.social_roam.human.douyin.reply_warm_publish import (
+        _find_reply_btn_in_item,
+        _hover_comment_item,
+        _locate_reply_input,
+    )
+
+    await _hover_comment_item(page, target)
+    reply_btn = await _find_reply_btn_in_item(target)
+    if reply_btn is None:
+        for selector in _REPLY_BTN_SELECTORS:
+            candidate = target.locator(selector).first
+            if await candidate.count():
+                reply_btn = candidate
+                break
     if reply_btn is None or not await reply_btn.count():
         return {"ok": False, "error": "未找到回复按钮", "capture_method": "douyin_comment_ui_human"}
 
     await human_click(page, reply_btn, settings, tenant_id=tenant_id)
     await human_delay(page, settings, tenant_id=tenant_id, profile="action")
 
-    input_loc = None
-    for selector in _INPUT_SELECTORS:
-        candidate = page.locator(selector).last
-        if await candidate.count():
-            input_loc = candidate
-            break
+    input_loc = await _locate_reply_input(page, timeout_s=14.0)
+    if input_loc is None:
+        for selector in _INPUT_SELECTORS:
+            candidate = page.locator(selector).last
+            try:
+                if await candidate.count() and await candidate.is_visible():
+                    input_loc = candidate
+                    break
+            except Exception:
+                continue
     if input_loc is None:
         return {"ok": False, "error": "未找到回复输入框", "capture_method": "douyin_comment_ui_human"}
 

@@ -28,7 +28,11 @@ from app.platforms.xiaohongshu.constants import (
     SEARCH_NOTES_PATH,
 )
 from app.platforms.xiaohongshu.session import XhsSessionStore
-from app.platforms.xiaohongshu.ui_helpers import ensure_logged_in_user, save_login_if_authenticated
+from app.platforms.xiaohongshu.ui_helpers import (
+    ensure_logged_in_user,
+    save_login_if_authenticated,
+    should_persist_login,
+)
 from app.platforms.xiaohongshu.utils import parse_note_card, to_absolute_url, walk_note_ids
 from app.schemas.crawl import CrawlItem
 from app.services.playwright_pool import PlaywrightPool
@@ -203,24 +207,19 @@ class XhsCrawler:
                 "page": page,
             }
             await self._restore_login_page(context, page, restore=restore)
-            saved = False
-            for _ in range(240):
-                cookies = await context.cookies()
-                cookie_names = {cookie.get("name") for cookie in cookies if cookie.get("name")}
-                if cookie_names & REQUIRED_LOGIN_COOKIES and "web_session" in cookie_names:
+            while True:
+                if await should_persist_login(page):
                     result = await save_login_if_authenticated(
                         page, context, self.store, self.tenant_id, self.account_id
                     )
                     if result.get("saved"):
-                        saved = True
-                        break
+                        logger.info(
+                            "xhs interactive login saved tenant=%s account=%s",
+                            self.tenant_id,
+                            self.account_id,
+                        )
+                        await page.wait_for_timeout(30000)
                 await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="poll")
-            if not saved:
-                logger.warning(
-                    "xhs interactive login ended without guest=false save tenant=%s account=%s",
-                    self.tenant_id,
-                    self.account_id,
-                )
         finally:
             XhsCrawler._interactive_sessions.pop(key, None)
             XhsCrawler._interactive_tasks.pop(key, None)

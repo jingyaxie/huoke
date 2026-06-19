@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.antibot import (
     _is_tracking_popup_url,
+    _normalize_storage_cookie_for_add,
     _should_close_orphan_about_blank,
     apply_stealth,
     antibot_suppressed_for_page,
@@ -16,6 +17,28 @@ from app.core.antibot import (
     uses_native_system_chrome,
 )
 from app.core.config import Settings
+
+
+def test_normalize_storage_cookie_for_add_strips_domain_when_url_set():
+    normalized = _normalize_storage_cookie_for_add(
+        {
+            "name": "sessionid",
+            "value": "abc",
+            "domain": ".douyin.com",
+            "path": "/",
+            "sameSite": "Lax",
+            "httpOnly": True,
+            "secure": True,
+        }
+    )
+    assert normalized is not None
+    assert normalized["url"] == "https://www.douyin.com/"
+    assert "domain" not in normalized
+    assert normalized["sameSite"] == "Lax"
+
+
+def test_normalize_storage_cookie_for_add_skips_empty_name():
+    assert _normalize_storage_cookie_for_add({"name": "", "domain": ".douyin.com"}) is None
 
 
 def test_uses_native_system_chrome_when_channel_and_visible():

@@ -321,6 +321,10 @@ async def find_comment_item_locator(
                     text = (await item.inner_text(timeout=1500)) or ""
                     if needle in text:
                         return item
+                    for token in needle.replace("@", " ").split():
+                        token = token.strip()
+                        if len(token) >= 2 and token in text:
+                            return item
             except Exception:
                 continue
     return None

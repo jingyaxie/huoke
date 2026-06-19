@@ -494,10 +494,23 @@ class CommentReplyService:
                 reply_text=reply_text,
                 comment_text=target.comment_text,
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "platform": self.platform,
+                "comment_id": target.comment_id,
+                "error": str(exc),
+                "capture_method": "douyin_comment_ui_human",
+            }
         if not result.get("ok"):
-            return None
+            return {
+                "status": "failed",
+                "platform": self.platform,
+                "comment_id": target.comment_id,
+                "content_url": target.content_url,
+                "error": result.get("error") or "UI 回复失败",
+                "capture_method": result.get("capture_method"),
+            }
         return {
             "status": "completed",
             "platform": self.platform,
@@ -549,14 +562,19 @@ class CommentReplyService:
             return target
 
         if self.platform == "douyin":
-            if page is not None and warm_publish:
+            from app.core.antibot import uses_native_system_chrome
+
+            use_warm_publish = warm_publish and not uses_native_system_chrome(
+                self.settings, headless=False
+            )
+            if page is not None and use_warm_publish:
                 warm_payload = await self._reply_douyin_via_warm_publish(
                     target,
                     reply_text=reply_text,
                     page=page,
                     dry_run=dry_run,
                 )
-                if warm_payload is not None:
+                if warm_payload is not None and warm_payload.get("status") == "completed":
                     return warm_payload
                 if ui_first:
                     return {

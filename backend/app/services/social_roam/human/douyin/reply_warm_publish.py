@@ -356,7 +356,13 @@ async def _install_publish_interceptor(
         )
         await route.continue_(post_data=patched)
 
-    await page.route("**/*", _handle)
+    try:
+        await page.route("**/*", _handle)
+    except Exception as exc:
+        err = str(exc)
+        if "setCacheDisabled" in err or "wasn't found" in err:
+            return
+        raise
 
 
 async def _remove_publish_interceptor(page) -> None:
