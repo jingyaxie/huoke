@@ -28,13 +28,30 @@ try {
       "scripts/desktop-run-backend.ps1",
       "scripts/desktop-bundle-cache.ps1",
       "scripts/desktop-runtime-workdir.ps1",
-      "scripts/desktop_uvicorn_launcher.py",
       "scripts/generate_runtime_manifest.ps1",
       "scripts/verify_installed_startup.ps1",
       "scripts/verify_nsis_installed.ps1",
       "scripts/_python_win.ps1"
     )) {
     Test-PowerShellScriptSyntax -Path $script
+  }
+
+  $launcher = Join-Path $repoRoot "scripts/desktop_uvicorn_launcher.py"
+  if (-not (Test-Path $launcher)) {
+    throw "missing script: scripts/desktop_uvicorn_launcher.py"
+  }
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $py) {
+    $py = Get-Command python3 -ErrorAction SilentlyContinue
+  }
+  if ($py) {
+    & $py.Source -m py_compile $launcher
+    if ($LASTEXITCODE -ne 0) {
+      throw "Python syntax error in scripts/desktop_uvicorn_launcher.py"
+    }
+    Write-Host "syntax ok: scripts/desktop_uvicorn_launcher.py"
+  } else {
+    Write-Host "WARN: python not found; skipped desktop_uvicorn_launcher.py syntax check"
   }
 
   $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
