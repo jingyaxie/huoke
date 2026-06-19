@@ -97,6 +97,11 @@ if ($repairCount -lt 1) {
   throw "repair-wheels directory is empty"
 }
 
+$pdbCount = (Get-ChildItem (Join-Path $resolvedBundle "runtime/python") -Recurse -Include "*.pdb", "*.ilk" -File -ErrorAction SilentlyContinue).Count
+if ($pdbCount -gt 0) {
+  throw "portable Python bundle still contains $pdbCount debug artifact(s); rebuild with install_portable_python_win.ps1"
+}
+
 $chrome = Find-ChromePath
 if ($chrome) {
   Write-Host "Chrome detected: $chrome"

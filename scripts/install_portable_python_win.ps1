@@ -70,6 +70,20 @@ function Copy-HuokeMsvcRuntime {
   }
 }
 
+function Remove-HuokePortablePythonDebugArtifacts {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  $artifacts = Get-ChildItem -Path $Root -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in @(".pdb", ".ilk") }
+  $removed = 0
+  foreach ($item in $artifacts) {
+    Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $item.FullName)) {
+      $removed++
+    }
+  }
+  Write-Host "Removed $removed debug artifact(s) (.pdb/.ilk) from portable Python bundle"
+}
+
 function Set-PortablePythonEnvForExe {
   param([Parameter(Mandatory = $true)][string]$PythonExe)
   $pythonRoot = Split-Path $PythonExe -Parent
@@ -137,6 +151,7 @@ function Install-HuokePortablePython {
   Write-Host "Staging portable Python from $runtimeHome"
   robocopy $runtimeHome $TargetDir /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
   if ($LASTEXITCODE -ge 8) { throw "Failed to stage portable Python (robocopy $LASTEXITCODE)" }
+  Remove-HuokePortablePythonDebugArtifacts -Root $TargetDir
   Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 
   $pythonExe = Find-PortablePythonExe -Root $TargetDir
@@ -189,6 +204,8 @@ function Install-HuokePortablePython {
     --find-links $RepairWheelsDir `
     -r $RequirementsFile 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "offline pip install requirements failed with exit code $LASTEXITCODE" }
+
+  Remove-HuokePortablePythonDebugArtifacts -Root $TargetDir
 
   Write-Host "Verifying system Chrome via Playwright channel..."
   $verifyScript = Join-Path $PSScriptRoot "verify_playwright_bundle.py"
