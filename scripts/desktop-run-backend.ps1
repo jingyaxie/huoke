@@ -328,7 +328,7 @@ try {
 } catch {
   $msg = $_.Exception.Message
   if ($msg -match 'greenlet|native|DLL|vcruntime') {
-    $msg = "$msg`n`n建议: 1) 将安装目录加入杀毒白名单 2) 完全卸载后重装 3) 若提示缺少 vcruntime，安装 VC++ 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $msg = "$msg`n`nSuggestions: 1) Add install dir to antivirus allowlist 2) Fully uninstall and reinstall 3) If vcruntime is missing, install VC++ 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe"
   }
   Write-Log ("FATAL: {0}" -f $msg)
   if ($_.ScriptStackTrace) {

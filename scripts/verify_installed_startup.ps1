@@ -18,9 +18,9 @@ function Copy-InstalledLayout {
     Remove-Item -Recurse -Force $TargetRoot
   }
   New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
-  robocopy (Join-Path $SourceRoot "scripts") (Join-Path $TargetRoot "scripts") /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+  robocopy (Join-Path $SourceRoot "scripts") (Join-Path $TargetRoot "scripts") /E /SL /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
   if ($LASTEXITCODE -ge 8) { throw "scripts copy failed ($LASTEXITCODE)" }
-  robocopy (Join-Path $SourceRoot "desktop/bundle") (Join-Path $TargetRoot "desktop/bundle") /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+  robocopy (Join-Path $SourceRoot "desktop/bundle") (Join-Path $TargetRoot "desktop/bundle") /E /SL /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
   if ($LASTEXITCODE -ge 8) { throw "bundle copy failed ($LASTEXITCODE)" }
   $exampleEnv = Join-Path $SourceRoot ".env.desktop.example"
   if (Test-Path $exampleEnv) {

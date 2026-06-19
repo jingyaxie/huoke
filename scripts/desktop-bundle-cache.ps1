@@ -179,7 +179,7 @@ function Sync-HuokeBundleCache {
     $src = Join-Path $SourceBundleDir $name
     if (-not (Test-Path $src)) { continue }
     $dst = Join-Path $cacheBundle $name
-    robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+    robocopy $src $dst /E /SL /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
     if ($LASTEXITCODE -ge 8) {
       Clear-HuokeBundleCache -DataDir $DataDir
       throw "Failed to cache bundle component '$name' (robocopy exit $LASTEXITCODE)"
