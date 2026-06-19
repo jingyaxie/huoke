@@ -86,12 +86,20 @@ def run_preflight(*, include_lifespan: bool = False) -> object:
 
 
 def _uvicorn_log_config() -> dict:
+    # uvicorn.configure_logging() always patches formatters["default"] and
+    # formatters["access"] when use_colors is set — both must be present.
     return {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
             "default": {
                 "format": "%(levelname)s: %(message)s",
+                "use_colors": False,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+                "use_colors": False,
             },
         },
         "handlers": {
@@ -100,11 +108,16 @@ def _uvicorn_log_config() -> dict:
                 "formatter": "default",
                 "stream": "ext://sys.stderr",
             },
+            "access": {
+                "class": "logging.StreamHandler",
+                "formatter": "access",
+                "stream": "ext://sys.stdout",
+            },
         },
         "loggers": {
             "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
             "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
         },
     }
 
