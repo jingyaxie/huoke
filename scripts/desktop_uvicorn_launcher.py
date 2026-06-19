@@ -41,9 +41,12 @@ def _register_windows_dll_dirs() -> None:
                 os.add_dll_directory(candidate)
             except OSError:
                 pass
-        path_prefix.append(candidate)
-    if path_prefix:
-        os.environ["PATH"] = ";".join(path_prefix + [os.environ.get("PATH", "")])
+        if candidate in (base, os.path.join(base, "DLLs"), os.path.join(runtime_root, "msvc")):
+            path_prefix.append(candidate)
+    if path_prefix and os.environ.get("HUOKE_DLL_BOOTSTRAP_DONE") != "1":
+        existing = os.environ.get("PATH", "")
+        os.environ["PATH"] = ";".join(path_prefix + ([existing] if existing else []))
+        os.environ["HUOKE_DLL_BOOTSTRAP_DONE"] = "1"
 
 
 def run_lifespan_smoke(app: object) -> None:

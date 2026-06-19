@@ -324,17 +324,7 @@ function Start-HuokeDesktopBackend {
     if ($repaired) {
       Write-Log "native repair completed; retrying launcher"
     }
-    $BundleDir = Sync-HuokeRuntimeWorkdir -SourceBundleDir $CachedBundleDir -DataDir $DataDir -Force
-    $PortablePython = Find-PortablePythonExe -BundleDir $BundleDir
     if ($PortablePython) {
-      $Python = $PortablePython
-      Set-PortablePythonEnv -PythonExe $Python
-      $env:HUOKE_BUNDLE_DIR = $BundleDir
-      $env:HUOKE_PYTHON_EXE = $Python
-      $PwBrowsers = Join-Path $BundleDir "runtime/playwright-browsers"
-      if (Test-Path $PwBrowsers) {
-        $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
-      }
       $null = Invoke-HuokePortableDllBootstrap -PythonExe $Python -ScriptDir $script:ScriptDir
     }
     $preflightOk = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly -AllowFailure

@@ -73,19 +73,30 @@ def _preload_dlls(paths: list[str]) -> None:
             pass
 
 
-def _register_dll_directories(directories: list[str]) -> None:
+_BOOTSTRAP_ENV = "HUOKE_DLL_BOOTSTRAP_DONE"
+
+
+def _register_dll_directories(directories: list[str], base: str, runtime_root: str) -> None:
     if os.name != "nt":
         return
-    path_prefix: list[str] = []
     for candidate in directories:
         if hasattr(os, "add_dll_directory"):
             try:
                 os.add_dll_directory(candidate)
             except OSError:
                 pass
-        path_prefix.append(candidate)
+    if os.environ.get(_BOOTSTRAP_ENV) == "1":
+        return
+    path_prefix = [
+        os.path.abspath(base),
+        os.path.abspath(os.path.join(base, "DLLs")),
+        os.path.abspath(os.path.join(runtime_root, "msvc")),
+    ]
+    path_prefix = [p for p in path_prefix if os.path.isdir(p)]
     if path_prefix:
-        os.environ["PATH"] = ";".join(path_prefix + [os.environ.get("PATH", "")])
+        existing = os.environ.get("PATH", "")
+        os.environ["PATH"] = ";".join(path_prefix + ([existing] if existing else []))
+    os.environ[_BOOTSTRAP_ENV] = "1"
 
 
 def _ensure_runtime_dlls_beside_pyds(base: str, runtime_root: str, runtime_dlls: list[str]) -> int:
@@ -119,7 +130,7 @@ def bootstrap_portable_python_dlls(*, heal_layout: bool = False) -> dict[str, ob
     directories = _dll_search_dirs(base, runtime_root)
     runtime_dlls = _collect_runtime_dlls(base, runtime_root)
     _preload_dlls(runtime_dlls)
-    _register_dll_directories(directories)
+    _register_dll_directories(directories, base, runtime_root)
     copied = _ensure_runtime_dlls_beside_pyds(base, runtime_root, runtime_dlls) if heal_layout else 0
     return {
         "ok": True,
