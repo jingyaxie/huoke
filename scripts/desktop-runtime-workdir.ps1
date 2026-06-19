@@ -155,8 +155,11 @@ function Sync-HuokeRuntimeWorkdir {
 
   $workCheck = Test-HuokeRuntimeManifest -BundleDir $workBundle
   if (-not $workCheck.Ok) {
+    $missingManifestOnly = ($workCheck.Issues.Count -eq 1 -and $workCheck.Issues[0] -eq "RUNTIME_MANIFEST.json missing")
     $hasOnlyHashMismatch = ($workCheck.Issues | Where-Object { $_ -notmatch '^hash mismatch:' }).Count -eq 0
-    if ($hasOnlyHashMismatch) {
+    if ($missingManifestOnly) {
+      Write-Host "WARN: RUNTIME_MANIFEST.json missing in runtime-work; continuing without hash gate"
+    } elseif ($hasOnlyHashMismatch) {
       Write-Host "WARN: runtime-work hash metadata mismatch; continuing because file sizes are intact"
     } else {
       $detail = if ($workCheck.Issues.Count -gt 0) { $workCheck.Issues -join "; " } else { "unknown" }

@@ -186,7 +186,12 @@ function Sync-HuokeBundleCache {
     }
   }
 
-  Copy-Item (Join-Path $SourceBundleDir "BUNDLE_MANIFEST.json") (Join-Path $cacheBundle "BUNDLE_MANIFEST.json") -ErrorAction SilentlyContinue
+  foreach ($name in @("BUNDLE_MANIFEST.json", "RUNTIME_MANIFEST.json")) {
+    $src = Join-Path $SourceBundleDir $name
+    if (Test-Path $src) {
+      Copy-Item $src (Join-Path $cacheBundle $name) -Force
+    }
+  }
   @{
     fingerprint = $fingerprint
     source = $SourceBundleDir
