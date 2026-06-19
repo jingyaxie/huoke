@@ -215,16 +215,6 @@ class DouyinProfileVideosTool(DouyinProfileTool):
                 except Exception:
                     pass
                 await page.wait_for_timeout(800)
-
-            if len(api_items) < limit or (cutoff is not None and len(_filter_by_publish_days(list(api_items.values()), days)) < limit):
-                template_url = await self.pick_api_template_url(page, donors)
-                if template_url:
-                    fetch_limit = max(limit, 15)
-                    if cutoff is not None:
-                        fetch_limit = max(fetch_limit, limit * 3)
-                    data = await self.fetch_self_works(page, template_url, sec_uid, limit=fetch_limit)
-                    for row in extract_aweme_items_from_json(data):
-                        api_items.setdefault(row["aweme_id"], row)
         finally:
             try:
                 page.remove_listener("response", on_response_async)

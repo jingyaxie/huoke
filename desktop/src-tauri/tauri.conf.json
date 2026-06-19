@@ -15,7 +15,7 @@
       {
         "label": "main",
         "title": "盈小蚁客户前端",
-        "url": "about:blank",
+        "url": "http://127.0.0.1:18765/cloud/dashboard",
         "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
         "width": 1440,
         "height": 900,
@@ -49,6 +49,9 @@
       "../../scripts/desktop-runtime-workdir.ps1": "scripts/desktop-runtime-workdir.ps1",
       "../../scripts/diagnose_portable_python.py": "scripts/diagnose_portable_python.py",
       "../../scripts/desktop_uvicorn_launcher.py": "scripts/desktop_uvicorn_launcher.py",
+      "../../scripts/desktop_run_backend.py": "scripts/desktop_run_backend.py",
+      "../../scripts/desktop_bundle_runtime.py": "scripts/desktop_bundle_runtime.py",
+      "../../scripts/desktop_stdio.py": "scripts/desktop_stdio.py",
       "../../scripts/portable_dll_bootstrap.py": "scripts/portable_dll_bootstrap.py",
       "../../scripts/_python_win.ps1": "scripts/_python_win.ps1",
       "../../.env.desktop.example": ".env.desktop.example"

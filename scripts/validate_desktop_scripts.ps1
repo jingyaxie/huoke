@@ -37,41 +37,49 @@ try {
     Test-PowerShellScriptSyntax -Path $script
   }
 
-  $launcher = Join-Path $repoRoot "scripts/desktop_uvicorn_launcher.py"
-  if (-not (Test-Path $launcher)) {
-    throw "missing script: scripts/desktop_uvicorn_launcher.py"
+  $pythonScripts = @(
+    "desktop_uvicorn_launcher.py",
+    "desktop_run_backend.py",
+    "desktop_bundle_runtime.py",
+    "desktop_stdio.py",
+    "portable_dll_bootstrap.py"
+  )
+  foreach ($name in $pythonScripts) {
+    $path = Join-Path $repoRoot "scripts/$name"
+    if (-not (Test-Path $path)) {
+      throw "missing script: scripts/$name"
+    }
   }
-  $bootstrap = Join-Path $repoRoot "scripts/portable_dll_bootstrap.py"
-  if (-not (Test-Path $bootstrap)) {
-    throw "missing script: scripts/portable_dll_bootstrap.py"
-  }
+
   $py = Get-Command python -ErrorAction SilentlyContinue
   if (-not $py) {
     $py = Get-Command python3 -ErrorAction SilentlyContinue
   }
   if ($py) {
-    & $py.Source -m py_compile $launcher
-    if ($LASTEXITCODE -ne 0) {
-      throw "Python syntax error in scripts/desktop_uvicorn_launcher.py"
+    foreach ($name in $pythonScripts) {
+      $path = Join-Path $repoRoot "scripts/$name"
+      & $py.Source -m py_compile $path
+      if ($LASTEXITCODE -ne 0) {
+        throw "Python syntax error in scripts/$name"
+      }
+      Write-Host "syntax ok: scripts/$name"
     }
-    & $py.Source -m py_compile $bootstrap
-    if ($LASTEXITCODE -ne 0) {
-      throw "Python syntax error in scripts/portable_dll_bootstrap.py"
-    }
-    Write-Host "syntax ok: scripts/desktop_uvicorn_launcher.py"
-    Write-Host "syntax ok: scripts/portable_dll_bootstrap.py"
   } else {
     Write-Host "WARN: python not found; skipped desktop python script syntax checks"
   }
 
   $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-  if ($config.app.windows[0].url -ne "about:blank") {
-    throw "main window must start at about:blank, got: $($config.app.windows[0].url)"
+  $expectedMainUrl = "http://127.0.0.1:18765/cloud/dashboard"
+  if ($config.app.windows[0].url -ne $expectedMainUrl) {
+    throw "main window must start at $expectedMainUrl, got: $($config.app.windows[0].url)"
   }
   foreach ($required in @(
       "../../scripts/desktop-runtime-workdir.ps1",
       "../../scripts/diagnose_portable_python.py",
       "../../scripts/desktop_uvicorn_launcher.py",
+      "../../scripts/desktop_run_backend.py",
+      "../../scripts/desktop_bundle_runtime.py",
+      "../../scripts/desktop_stdio.py",
       "../../scripts/portable_dll_bootstrap.py"
     )) {
     if (-not $config.bundle.resources.$required) {

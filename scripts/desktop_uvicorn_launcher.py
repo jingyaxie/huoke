@@ -6,11 +6,25 @@ import argparse
 import os
 import sys
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+from desktop_stdio import configure_desktop_stdio, safe_print
 
-from desktop_stdio import configure_pipe_stdio, log_line
+configure_desktop_stdio()
+
+
+def _ensure_backend_on_path() -> None:
+    """PYTHONPATH is only read at interpreter startup; apply it to sys.path here."""
+    pythonpath = os.environ.get("PYTHONPATH", "")
+    if pythonpath:
+        for part in pythonpath.split(os.pathsep):
+            part = part.strip()
+            if part and part not in sys.path:
+                sys.path.insert(0, part)
+        return
+    bundle = os.environ.get("HUOKE_BUNDLE_DIR", "")
+    if bundle:
+        candidate = os.path.join(bundle, "backend")
+        if os.path.isdir(candidate) and candidate not in sys.path:
+            sys.path.insert(0, candidate)
 
 
 def _register_windows_dll_dirs() -> None:
@@ -58,38 +72,74 @@ def run_lifespan_smoke(app: object) -> None:
 
 
 def run_preflight(*, include_lifespan: bool = False) -> object:
-    configure_pipe_stdio()
+    _ensure_backend_on_path()
     _register_windows_dll_dirs()
-    log_line(f"preflight: python {sys.version.split()[0]}")
+    safe_print("preflight: python", sys.version.split()[0], flush=True)
 
     import greenlet  # noqa: F401
     from greenlet._greenlet import _C_API  # noqa: F401
 
-    log_line("greenlet ok")
+    safe_print("greenlet ok", flush=True)
     import cryptography  # noqa: F401
 
-    log_line("cryptography ok")
+    safe_print("cryptography ok", flush=True)
     import pydantic_core  # noqa: F401
 
-    log_line("pydantic_core ok")
+    safe_print("pydantic_core ok", flush=True)
     from playwright.async_api import async_playwright  # noqa: F401
 
-    log_line("playwright ok")
+    safe_print("playwright ok", flush=True)
     from app.db.bootstrap import ensure_database_schema
     from app.main import app
 
-    log_line("app.main ok")
+    safe_print("app.main ok", flush=True)
     ensure_database_schema()
-    log_line("database schema ready")
+    safe_print("database schema ready", flush=True)
     if include_lifespan:
         run_lifespan_smoke(app)
-        log_line("lifespan ok")
-    log_line("preflight unified ok")
+        safe_print("lifespan ok", flush=True)
+    safe_print("preflight unified ok", flush=True)
     return app
 
 
+def _uvicorn_log_config() -> dict:
+    # uvicorn.configure_logging() always patches formatters["default"] and
+    # formatters["access"] when use_colors is set — both must be present.
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "%(levelname)s: %(message)s",
+                "use_colors": False,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+                "use_colors": False,
+            },
+        },
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "default",
+                "stream": "ext://sys.stderr",
+            },
+            "access": {
+                "class": "logging.StreamHandler",
+                "formatter": "access",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+
+
 def main() -> int:
-    configure_pipe_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=18765)
     parser.add_argument("--check-only", action="store_true")
@@ -98,11 +148,11 @@ def main() -> int:
     try:
         app = run_preflight(include_lifespan=args.check_only)
     except Exception as exc:
-        log_line(f"preflight failed: {type(exc).__name__}: {exc}", err=True)
-        import traceback
-
+        safe_print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
         try:
-            traceback.print_exc()
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
         except OSError:
             pass
         return 1
@@ -112,20 +162,27 @@ def main() -> int:
 
     import uvicorn
 
-    log_line(f"starting uvicorn on port {args.port}")
+    safe_print(f"starting uvicorn on port {args.port}", flush=True)
     try:
-        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=args.port,
+            log_level="info",
+            log_config=_uvicorn_log_config(),
+            use_colors=False,
+        )
     except SystemExit as exc:
         code = exc.code
         if code in (0, None):
             return 0
         return int(code) if isinstance(code, int) else 1
     except Exception as exc:
-        log_line(f"uvicorn failed: {type(exc).__name__}: {exc}", err=True)
-        import traceback
-
+        safe_print(f"uvicorn failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
         try:
-            traceback.print_exc()
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
         except OSError:
             pass
         return 1

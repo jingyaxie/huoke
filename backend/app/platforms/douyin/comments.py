@@ -140,7 +140,8 @@ class DouyinCommentCrawler:
         if not videos:
             return [], [], diagnostic or "主页未采集到可抓取评论的视频"
 
-        template_url = await self._pick_api_template_url(page, captured_api_urls)
+        from app.platforms.douyin.video_comments_passive import crawl_video_url_comments
+
         parsed = parse_profile_input_url(profile_url)
         results: list[dict] = []
         files: list[Path] = []
@@ -152,17 +153,18 @@ class DouyinCommentCrawler:
             aweme_id = _extract_aweme_id(url) or str(video.get("aweme_id") or "")
             if not aweme_id:
                 continue
-            payload = await self._comments._fetch_comments_from_api(
+            payload, _persist_meta = await crawl_video_url_comments(
                 page,
-                aweme_id,
-                url,
-                template_url,
+                self.settings,
+                tenant_id=self.tenant_id,
+                account_id=self.account_id,
+                video_url=url,
                 max_comments=max_comments,
+                days=comment_days,
+                raw_params={"profile_url": profile_url, "days": comment_days},
             )
-            if comment_days is not None:
+            if comment_days is not None and payload.get("comments"):
                 cutoff = _days_cutoff_ts(comment_days)
-                before_count = len(payload.get("comments") or [])
-                api_total = int(payload.get("api_total_top_comments") or before_count or 0)
                 comments_map = {
                     str(row.get("comment_id")): row
                     for row in (payload.get("comments") or [])
@@ -173,6 +175,7 @@ class DouyinCommentCrawler:
                     cutoff_ts=cutoff,
                     max_comments=max_comments,
                 )
+                api_total = int(payload.get("api_total_top_comments") or len(comments_map) or 0)
                 payload["comments"] = filtered
                 payload["total_comments_captured"] = len(filtered)
                 payload["top_comments_captured"] = len(
@@ -213,15 +216,6 @@ class DouyinCommentCrawler:
 
     async def _fetch_video_comments(self, *args, **kwargs):
         return await self._comments._fetch_video_comments(*args, **kwargs)
-
-    async def _warmup_for_js_api(self, page, captured_urls):
-        return await self._search.warmup_for_js_api(page, captured_urls)
-
-    async def _pick_api_template_url(self, page, captured_urls=None):
-        return await self._search.pick_api_template_url(page, captured_urls)
-
-    async def _fetch_json_via_page(self, page, url, *, timeout_ms: int = 15000):
-        return await self._search.fetch_json_via_page(page, url, timeout_ms=timeout_ms)
 
     async def crawl_keyword_comments(
         self,
@@ -432,9 +426,8 @@ class DouyinCommentCrawler:
                             watched.add(token)
 
         page.on("response", on_response)
-        template_url = ""
         try:
-            video_urls, diagnostic, template_url = await self._search.keyword_search(
+            video_urls, diagnostic, _template_url = await self._search.keyword_search(
                 page,
                 keyword=keyword,
                 limit=limit,
@@ -472,38 +465,29 @@ class DouyinCommentCrawler:
             aweme_id = _extract_aweme_id(url)
             if aweme_id:
                 watched.add(aweme_id)
-            if ui_first:
-                from app.platforms.douyin.video_comments_passive import crawl_video_url_comments
+            from app.platforms.douyin.video_comments_passive import crawl_video_url_comments
 
-                db_session = None
-                if isinstance(ui_flow_context, dict):
-                    db_session = ui_flow_context.get("db_session")
-                raw_params: dict = {"days": comment_days, "keyword": keyword, "region": region}
-                if isinstance(ui_flow_context, dict) and ui_flow_context.get("capture_mode"):
-                    raw_params["capture_mode"] = ui_flow_context.get("capture_mode")
-                payload, persist_meta = await crawl_video_url_comments(
-                    page,
-                    self.settings,
-                    tenant_id=self.tenant_id,
-                    account_id=self.account_id,
-                    video_url=url,
-                    max_comments=max_comments,
-                    days=comment_days,
-                    raw_params=raw_params,
-                    db_session=db_session,
-                )
-                if persist_meta and session_meta is not None:
-                    session_meta["comments_persisted"] = int(
-                        session_meta.get("comments_persisted") or 0
-                    ) + int(persist_meta.get("persisted") or 0)
-            else:
-                payload = await self._comments._fetch_comments_from_api(
-                    page,
-                    aweme_id,
-                    url,
-                    template_url,
-                    max_comments=max_comments,
-                )
+            db_session = None
+            if isinstance(ui_flow_context, dict):
+                db_session = ui_flow_context.get("db_session")
+            raw_params: dict = {"days": comment_days, "keyword": keyword, "region": region}
+            if isinstance(ui_flow_context, dict) and ui_flow_context.get("capture_mode"):
+                raw_params["capture_mode"] = ui_flow_context.get("capture_mode")
+            payload, persist_meta = await crawl_video_url_comments(
+                page,
+                self.settings,
+                tenant_id=self.tenant_id,
+                account_id=self.account_id,
+                video_url=url,
+                max_comments=max_comments,
+                days=comment_days,
+                raw_params=raw_params,
+                db_session=db_session,
+            )
+            if persist_meta and session_meta is not None:
+                session_meta["comments_persisted"] = int(
+                    session_meta.get("comments_persisted") or 0
+                ) + int(persist_meta.get("persisted") or 0)
             payload["platform"] = PLATFORM
             ctx = {
                 "keyword": keyword,

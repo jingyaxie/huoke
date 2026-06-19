@@ -9,7 +9,15 @@ function Resolve-HuokeDataDir {
 
 function Write-Log {
   param([string]$Message)
-  Write-Output ("[backend] [{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
+  $line = ("[backend] [{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
+  try {
+    Write-Output $line
+  } catch {
+    $logFile = $env:HUOKE_LOG_FILE
+    if ($logFile) {
+      Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 function Set-HuokePythonProcessEnv {
@@ -40,8 +48,14 @@ function Invoke-PythonScript {
     if ($null -eq $line) { continue }
     $text = if ($line -is [System.Management.Automation.ErrorRecord]) { "$line" } else { "$line" }
     if ($text.Length -gt 0) {
-      Write-Output ("[backend] {0}" -f $text)
-      try { [Console]::Out.Flush() } catch {}
+      try {
+        Write-Output ("[backend] {0}" -f $text)
+      } catch {
+        $logFile = $env:HUOKE_LOG_FILE
+        if ($logFile) {
+          Add-Content -LiteralPath $logFile -Value ("[backend] {0}" -f $text) -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+      }
     }
   }
   if ($exitCode -ne 0) {

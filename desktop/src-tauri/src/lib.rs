@@ -46,26 +46,12 @@ struct BackendProcess {
     log_readers: Vec<JoinHandle<()>>,
 }
 
-fn backend_script_name() -> &'static str {
+fn launch_marker_name() -> &'static str {
     if cfg!(windows) {
-        "desktop-run-backend.ps1"
+        "desktop_run_backend.py"
     } else {
         "desktop-run-backend.sh"
     }
-}
-
-fn windows_backend_shell() -> &'static str {
-    for candidate in ["pwsh.exe", "pwsh", "powershell.exe", "powershell"] {
-        let ok = Command::new(candidate)
-            .args(["-NoProfile", "-Command", "exit 0"])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        if ok {
-            return candidate;
-        }
-    }
-    "powershell"
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -113,7 +99,7 @@ fn append_unified_log(log_file: &Path, line: &str) {
 }
 
 fn find_launch_root(base: &Path) -> Option<PathBuf> {
-    let backend_script = PathBuf::from("scripts").join(backend_script_name());
+    let backend_script = PathBuf::from("scripts").join(launch_marker_name());
     let mut queue = vec![base.to_path_buf()];
 
     while let Some(current) = queue.pop() {
@@ -245,47 +231,94 @@ fn drain_log_readers(handles: Vec<JoinHandle<()>>) {
     }
 }
 
+#[cfg(windows)]
+fn find_windows_python_exe(bundle_dir: &Path, root: &Path) -> Result<PathBuf, String> {
+    for rel in [
+        "runtime/python/python.exe",
+        "runtime/.venv/Scripts/python.exe",
+    ] {
+        let candidate = bundle_dir.join(rel);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    let dev = root.join("backend/.venv/Scripts/python.exe");
+    if dev.is_file() {
+        return Ok(dev);
+    }
+    Err(format!(
+        "Python runtime not found (bundle={})",
+        bundle_dir.display()
+    ))
+}
+
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn build_backend_command(root: &Path, bundle_dir: &Path) -> Result<Command, String> {
+    #[cfg(windows)]
+    {
+        let python = find_windows_python_exe(bundle_dir, root)?;
+        let script = root.join("scripts").join("desktop_run_backend.py");
+        if !script.is_file() {
+            return Err(format!("缺少脚本: {}", script.display()));
+        }
+        let mut cmd = Command::new(python);
+        cmd.arg(script).arg("--port").arg(DESKTOP_PORT.to_string());
+        return Ok(cmd);
+    }
+    #[cfg(not(windows))]
+    {
+        let script = root.join("scripts").join("desktop-run-backend.sh");
+        if !script.is_file() {
+            return Err(format!("缺少脚本: {}", script.display()));
+        }
+        let mut cmd = Command::new("/bin/bash");
+        cmd.arg(script);
+        Ok(cmd)
+    }
+}
+
+fn apply_backend_command_env(
+    command: &mut Command,
+    root: &Path,
+    bundle_dir: &Path,
+    log_file: &Path,
+) {
+    if let Some(data_dir) = windows_data_dir() {
+        command.env("HUOKE_DATA_DIR", data_dir);
+    }
+    command.env("HUOKE_LOG_FILE", log_file);
+    command
+        .current_dir(root)
+        .env("HUOKE_ROOT", root)
+        .env("HUOKE_BUNDLE_DIR", bundle_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+}
+
+#[cfg(windows)]
+fn hide_backend_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_backend_console(_command: &mut Command) {}
+
 fn start_backend(
     root: &PathBuf,
     log_file: &Path,
     log_state: Arc<BackendLogState>,
 ) -> Result<BackendProcess, String> {
     let root = normalize_path(root);
-    let script = root.join("scripts").join(backend_script_name());
-    if !script.is_file() {
-        return Err(format!("缺少脚本: {}", script.display()));
-    }
-
     let bundle_dir = resolve_bundle_dir(&root)?;
     let log_file = Arc::new(log_file.to_path_buf());
 
-    let mut command = if cfg!(windows) {
-        let mut cmd = Command::new(windows_backend_shell());
-        cmd.args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ]);
-        cmd.arg(&script);
-        cmd
-    } else {
-        let mut cmd = Command::new("/bin/bash");
-        cmd.arg(&script);
-        cmd
-    };
-
-    if let Some(data_dir) = windows_data_dir() {
-        command.env("HUOKE_DATA_DIR", data_dir);
-    }
-    command.env("HUOKE_LOG_FILE", log_file.as_path());
+    let mut command = build_backend_command(&root, &bundle_dir)?;
+    apply_backend_command_env(&mut command, &root, &bundle_dir, log_file.as_path());
+    hide_backend_console(&mut command);
 
     let mut child = command
-        .current_dir(&root)
-        .env("HUOKE_ROOT", &root)
-        .env("HUOKE_BUNDLE_DIR", &bundle_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("启动后端失败: {err}"))?;
 
@@ -388,6 +421,21 @@ fn stop_backend(state: &ServiceState) {
     }
 }
 
+fn with_main_thread<R, F>(app: &AppHandle, f: F) -> Result<R, String>
+where
+    F: FnOnce(&AppHandle) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f(&handle));
+    })
+    .map_err(|err| err.to_string())?;
+    rx.recv()
+        .map_err(|_| "主线程任务未完成".to_string())?
+}
+
 fn show_startup_loading(app: &AppHandle) {
     let html = r#"document.open();document.write('<!doctype html><html><head><meta charset="utf-8"><title>启动中</title>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:48px;text-align:center;color:#444}
@@ -419,16 +467,16 @@ fn open_app_home(app: &AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    let parsed = APP_HOME_URL
-        .parse()
-        .map_err(|err| format!("invalid url: {err}"))?;
-    main.navigate(parsed)
+    main.eval("window.location.reload();")
         .map_err(|err| format!("打开获客首页失败: {err}"))?;
     Ok(())
 }
 
 fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), String> {
-    show_startup_loading(app);
+    with_main_thread(app, |app| {
+        show_startup_loading(app);
+        Ok(())
+    })?;
 
     let root = repo_root(app)?;
     let log_file = resolve_app_log_file(app)?;
@@ -444,8 +492,9 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
         &log_hint,
     )?;
 
-    let BackendProcess { child, log_readers } = backend;
-    drain_log_readers(log_readers);
+    // Do not join log reader threads here: they block until backend stdout/stderr
+    // close, which only happens when the process exits — leaving the UI on about:blank.
+    let BackendProcess { child, log_readers: _ } = backend;
 
     app.state::<ServiceState>()
         .backend
@@ -453,7 +502,7 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
         .expect("backend lock")
         .replace(child);
 
-    open_app_home(app)?;
+    with_main_thread(app, open_app_home)?;
     log::info!("Huoke backend ready at {APP_HOME_URL}");
     Ok(())
 }
@@ -474,14 +523,19 @@ pub fn run() {
         }))
         .setup(|app| {
             let handle = app.handle().clone();
-            let log_state = app.state::<Arc<BackendLogState>>();
-            match bootstrap(&handle, Arc::clone(&log_state)) {
+            let log_state = {
+                let state = app.state::<Arc<BackendLogState>>();
+                Arc::clone(&state)
+            };
+            std::thread::spawn(move || match bootstrap(&handle, log_state) {
                 Ok(()) => {}
                 Err(err) => {
                     log::error!("bootstrap failed: {err}");
-                    show_startup_error(&handle, &err);
+                    let app = handle.clone();
+                    let message = err;
+                    let _ = handle.run_on_main_thread(move || show_startup_error(&app, &message));
                 }
-            }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
