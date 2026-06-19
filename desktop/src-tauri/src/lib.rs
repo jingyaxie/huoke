@@ -334,11 +334,11 @@ fn verify_desktop_frontend(
 }
 
 fn format_backend_failure(base: &str, log_state: &BackendLogState) -> String {
-    let tail = log_state.tail(30);
+    let tail = log_state.tail(80);
     if tail.is_empty() {
         return base.to_string();
     }
-    format!("{base}\n\n后端输出（最近 30 行）:\n{tail}")
+    format!("{base}\n\n后端输出（最近 80 行）:\n{tail}")
 }
 
 fn wait_backend_ready(

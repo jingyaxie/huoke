@@ -39,7 +39,17 @@ def _register_windows_dll_dirs() -> None:
         os.environ["PATH"] = ";".join(path_prefix + [os.environ.get("PATH", "")])
 
 
-def run_preflight() -> object:
+def run_lifespan_smoke(app: object) -> None:
+    import asyncio
+
+    async def _run() -> None:
+        async with app.router.lifespan_context(app):  # type: ignore[attr-defined]
+            pass
+
+    asyncio.run(_run())
+
+
+def run_preflight(*, include_lifespan: bool = False) -> object:
     _register_windows_dll_dirs()
     print("preflight: python", sys.version.split()[0], flush=True)
 
@@ -62,6 +72,9 @@ def run_preflight() -> object:
     print("app.main ok", flush=True)
     ensure_database_schema()
     print("database schema ready", flush=True)
+    if include_lifespan:
+        run_lifespan_smoke(app)
+        print("lifespan ok", flush=True)
     print("preflight unified ok", flush=True)
     return app
 
@@ -73,9 +86,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        app = run_preflight()
+        app = run_preflight(include_lifespan=args.check_only)
     except Exception as exc:
         print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        import traceback
+
+        traceback.print_exc()
         return 1
 
     if args.check_only:
@@ -84,7 +100,19 @@ def main() -> int:
     import uvicorn
 
     print(f"starting uvicorn on port {args.port}", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+    except SystemExit as exc:
+        code = exc.code
+        if code in (0, None):
+            return 0
+        return int(code) if isinstance(code, int) else 1
+    except Exception as exc:
+        print(f"uvicorn failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        import traceback
+
+        traceback.print_exc()
+        return 1
     return 0
 
 

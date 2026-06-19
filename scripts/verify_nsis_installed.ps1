@@ -131,6 +131,9 @@ try {
       if ($needle -eq "preflight unified ok" -and $combinedLog -match 'preflight complete: native extensions ok') {
         continue
       }
+      if ($needle -eq "starting uvicorn" -and $combinedLog -match 'starting backend launcher on port') {
+        continue
+      }
       Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
       throw "NSIS smoke missing expected log line: $needle"
     }

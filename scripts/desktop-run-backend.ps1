@@ -12,7 +12,7 @@ function Write-Log {
   Write-Output ("[backend] [{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
 }
 
-function Invoke-PythonProcess {
+function Invoke-PythonScript {
   param(
     [Parameter(Mandatory = $true)][string]$Label,
     [Parameter(Mandatory = $true)][string]$PythonExe,
@@ -20,44 +20,46 @@ function Invoke-PythonProcess {
     [switch]$AllowFailure
   )
   Write-Log $Label
-  $stdoutFile = [IO.Path]::GetTempFileName()
-  $stderrFile = [IO.Path]::GetTempFileName()
-  try {
-    $proc = Start-Process `
-      -FilePath $PythonExe `
-      -ArgumentList $ArgumentList `
-      -WorkingDirectory (Get-Location).Path `
-      -Wait `
-      -PassThru `
-      -NoNewWindow `
-      -RedirectStandardOutput $stdoutFile `
-      -RedirectStandardError $stderrFile
-    if (Test-Path $stdoutFile) {
-      Get-Content $stdoutFile | ForEach-Object {
-        if ($_) {
-          Write-Output "[backend] $_"
-          try { [Console]::Out.Flush() } catch {}
-        }
-      }
+  # Do NOT pipe & output: PS 5.1 loses $LASTEXITCODE after a pipeline.
+  $output = & $PythonExe @ArgumentList 2>&1
+  $exitCode = $LASTEXITCODE
+  foreach ($line in @($output)) {
+    if ($null -ne $line -and "$line".Length -gt 0) {
+      Write-Output ("[backend] {0}" -f $line)
+      try { [Console]::Out.Flush() } catch {}
     }
-    if (Test-Path $stderrFile) {
-      Get-Content $stderrFile | ForEach-Object {
-        if ($_) {
-          Write-Output "[backend] $_"
-          try { [Console]::Out.Flush() } catch {}
-        }
-      }
-    }
-    if ($proc.ExitCode -ne 0) {
-      if ($AllowFailure) {
-        return $false
-      }
-      throw "$Label failed (exit $($proc.ExitCode))"
-    }
-    return $true
-  } finally {
-    Remove-Item $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
   }
+  if ($exitCode -ne 0) {
+    if ($AllowFailure) {
+      return $false
+    }
+    throw "$Label failed (exit $exitCode)"
+  }
+  return $true
+}
+
+function Start-PythonLauncherServer {
+  param(
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string]$LauncherScript,
+    [int]$Port = 18765
+  )
+  Write-Log "starting backend launcher on port $Port"
+  # Direct invocation streams Python stdout/stderr to Tauri without temp-file loss.
+  & $PythonExe $LauncherScript --port $Port
+  if ($LASTEXITCODE -ne 0) {
+    throw "backend launcher failed (exit $LASTEXITCODE)"
+  }
+}
+
+function Invoke-PythonProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+    [switch]$AllowFailure
+  )
+  return Invoke-PythonScript -Label $Label -PythonExe $PythonExe -ArgumentList $ArgumentList -AllowFailure:$AllowFailure
 }
 
 function Resolve-HuokeBundleDir {
@@ -268,8 +270,11 @@ function Start-HuokeDesktopBackend {
     throw "desktop_uvicorn_launcher.py missing under $($script:ScriptDir)"
   }
 
-  $preflightOk = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly -AllowFailure
-  if (-not $preflightOk) {
+  try {
+    Start-PythonLauncherServer -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
+  } catch {
+    $startError = $_.Exception.Message
+    Write-Log "backend launcher failed: $startError"
     Invoke-HuokeNativeDiagnostics -PythonExe $Python -BundleDir $BundleDir
     $repaired = Repair-HuokeNativeRuntime -PythonExe $Python -BundleDir $BundleDir
     if ($repaired) {
@@ -288,12 +293,8 @@ function Start-HuokeDesktopBackend {
       }
     }
     $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly
+    Start-PythonLauncherServer -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
   }
-
-  Write-Log "preflight unified ok"
-  Write-Log "preflight complete: native extensions ok"
-  Write-Log "starting uvicorn on port $BackendPort"
-  $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
 }
 
 $script:ScriptDir = $PSScriptRoot
