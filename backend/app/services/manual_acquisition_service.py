@@ -45,6 +45,10 @@ def infer_manual_url_mode(input_url: str, platform: str) -> str | None:
 
 def reconcile_manual_acquisition_mode(mode: str, input_url: str, platform: str) -> str:
     inferred = infer_manual_url_mode(input_url, platform)
+    if mode == "account_home":
+        return "account_home"
+    if mode == "single_video" and inferred == "account_home":
+        return "account_home"
     if inferred and inferred in MANUAL_ACQUISITION_MODES:
         return inferred
     return mode if mode in MANUAL_ACQUISITION_MODES else "account_home"

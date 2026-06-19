@@ -666,8 +666,6 @@ class SkillExecutor:
                 return {"error": "缺少参数 profile_url"}
             show_browser = self._resolve_show_browser(params)
             platform = self._resolve_platform(skill)
-            if platform != "douyin":
-                return {"error": f"平台 {platform} 暂不支持主页 URL 视频采集"}
             existing_page = None
             if show_browser and self.session is not None and platform == self.platform:
                 try:
@@ -720,8 +718,6 @@ class SkillExecutor:
                 return {"error": "缺少参数 profile_url"}
             show_browser = self._resolve_show_browser(params)
             platform = self._resolve_platform(skill)
-            if platform != "douyin":
-                return {"error": f"平台 {platform} 暂不支持主页 URL 批量抓评"}
             existing_page = None
             if self.session is not None and platform == self.platform:
                 try:

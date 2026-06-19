@@ -11,6 +11,7 @@ from app.platforms.xiaohongshu.comment_tool import XhsCommentTool
 from app.platforms.xiaohongshu.constants import PLATFORM
 from app.platforms.xiaohongshu.crawler import XhsCrawler
 from app.platforms.xiaohongshu.js_constants import DEFAULT_MAX_COMMENTS
+from app.platforms.xiaohongshu.profile_videos import XhsProfileVideosTool, parse_profile_input_url
 from app.platforms.search_filters import SearchFilterOptions
 from app.platforms.xiaohongshu.search import XhsSearchTool
 from app.platforms.xiaohongshu.session import XhsSessionStore, REQUIRED_LOGIN_COOKIES
@@ -35,10 +36,132 @@ class XhsCommentCrawler:
         self.store = store or XhsSessionStore(settings)
         self._search = XhsSearchTool(settings, tenant_id, self.store, account_id=account_id)
         self._comments = XhsCommentTool(settings, tenant_id, self.store, account_id=account_id)
+        self._profile_videos = XhsProfileVideosTool(settings, tenant_id, self.store, account_id=account_id)
         self.hot_crawler = XhsCrawler(settings, tenant_id, self.store, account_id=account_id)
 
     async def crawl_note_comments(self, *args, **kwargs):
         return await self._comments.crawl_note_comments(*args, **kwargs)
+
+    async def collect_profile_videos(self, *args, **kwargs):
+        return await self._profile_videos.collect_profile_videos(*args, **kwargs)
+
+    async def crawl_profile_comments(
+        self,
+        profile_url: str,
+        limit: int = 5,
+        show_browser: bool = False,
+        days: int | None = None,
+        comment_days: int | None = None,
+        max_comments: int = DEFAULT_MAX_COMMENTS,
+        *,
+        existing_page=None,
+        video_publish_days: int | None = None,
+    ) -> tuple[list[dict], list[Path], str | None, dict]:
+        require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
+        publish_days = video_publish_days if video_publish_days is not None else days
+        resolved_headless = headless_for_platform(self.settings, PLATFORM, False if show_browser else None)
+        session_meta = {"guest_mode": False, "session_mode": "logged_in"}
+
+        async def _run(page) -> tuple[list[dict], list[Path], str | None]:
+            return await self._crawl_profile_comments_on_page(
+                page,
+                profile_url=profile_url,
+                limit=limit,
+                days=publish_days,
+                comment_days=comment_days,
+                max_comments=max_comments,
+                session_meta=session_meta,
+            )
+
+        if existing_page is not None and not existing_page.is_closed():
+            results, files, diagnostic = await _run(existing_page)
+            session_meta["session_mode"] = await self._detect_session_mode_from_page(existing_page)
+            return results, files, diagnostic, session_meta
+
+        pool = PlaywrightPool.get()
+        async with pool.tenant_context(
+            PLATFORM,
+            self.tenant_id,
+            self.store,
+            self.settings,
+            headless=resolved_headless,
+            account_id=self.account_id,
+        ) as (_, page):
+            results, files, diagnostic = await _run(page)
+            session_meta["session_mode"] = await self._detect_session_mode_from_page(page)
+            return results, files, diagnostic, session_meta
+
+    async def _crawl_profile_comments_on_page(
+        self,
+        page,
+        *,
+        profile_url: str,
+        limit: int,
+        days: int | None,
+        comment_days: int | None,
+        max_comments: int,
+        session_meta: dict | None = None,
+    ) -> tuple[list[dict], list[Path], str | None]:
+        captured_api_urls: list[str] = []
+        notes, diagnostic, _capture = await self._profile_videos.collect_notes_on_page(
+            page,
+            profile_url=profile_url,
+            limit=limit,
+            days=days,
+            captured_api_urls=captured_api_urls,
+        )
+        if not notes:
+            return [], [], diagnostic or "主页未采集到可抓取评论的笔记"
+
+        template_url = await self._search.pick_api_template_url(page, captured_api_urls)
+        parsed = parse_profile_input_url(profile_url)
+        results: list[dict] = []
+        files: list[Path] = []
+        if session_meta is not None:
+            session_meta["videos_processed"] = 0
+
+        for note in notes[:limit]:
+            url = str(note.get("video_url") or note.get("note_url") or "")
+            note_id = extract_note_id(url) or str(note.get("note_id") or "")
+            if not note_id:
+                continue
+            payload = await self._comments._fetch_comments_via_nav(
+                page,
+                note_id,
+                url,
+                template_url or await self._search.pick_api_template_url(page),
+                max_comments=max_comments,
+            )
+            payload["platform"] = PLATFORM
+            payload["profile_context"] = {
+                "profile_url": parsed.get("profile_url") or profile_url,
+                "user_id": parsed.get("user_id") or note.get("author_id") or "",
+                "note_entry_id": parsed.get("note_id") or "",
+                "video_publish_days": days,
+            }
+            if session_meta:
+                payload["profile_context"].update(
+                    {
+                        "guest_mode": session_meta.get("guest_mode", False),
+                        "session_mode": session_meta.get("session_mode"),
+                    }
+                )
+            payload["video_url"] = payload.get("note_url") or url
+            output = (
+                self.settings.report_output_dir
+                / f"comments_{self.platform}_{self.tenant_id}_{note_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            results.append(payload)
+            files.append(output)
+            if session_meta is not None:
+                session_meta["videos_processed"] = int(session_meta.get("videos_processed") or 0) + 1
+            await human_pause(self.settings, tenant_id=self.tenant_id, profile="between_items")
+
+        watched_ids = [str(n.get("note_id") or "") for n in notes if n.get("note_id")]
+        if session_meta is not None and watched_ids:
+            session_meta["watched_content_ids"] = watched_ids[:500]
+        return results, files, diagnostic
 
     async def search_notes(self, *args, **kwargs):
         return await self._search.search_notes(*args, **kwargs)

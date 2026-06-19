@@ -30,7 +30,7 @@
       "id": "xiaohongshu-platform",
       "name": "小红书平台规则",
       "description": "操作 xiaohongshu.com 时的额外约束",
-      "content": "- 优先使用 xiaohongshu.com 域名页面\n- 关键词+评论：invoke_skill xhs-keyword-comments 或 pipeline-keyword-video-comments\n- 关注：invoke_skill follow-user + warm_outreach=true（直达评论者主页 UI 点击）\n- 私信：PC 不支持，send-dm 返回 platform_unsupported\n- 回复评论：invoke_skill reply-comment + warm_publish=true（优先定位目标评论；失败降级 random+patch）\n- 探索页 URL: https://www.xiaohongshu.com/explore",
+      "content": "- 优先使用 xiaohongshu.com 域名页面\n- 关键词+评论：invoke_skill xhs-keyword-comments 或 pipeline-keyword-video-comments\n- 手动获客主页：invoke_skill xhs-profile-comments（profile_url 支持主页或笔记 explore 链接）\n- 单条笔记评论：invoke_skill content-comments\n- 关注：invoke_skill follow-user + warm_outreach=true（直达评论者主页 UI 点击）\n- 私信：PC 不支持，send-dm 返回 platform_unsupported\n- 回复评论：invoke_skill reply-comment + warm_publish=true（优先定位目标评论；失败降级 random+patch）\n- 探索页 URL: https://www.xiaohongshu.com/explore",
       "always_apply": true,
       "platforms": [
         "xiaohongshu"

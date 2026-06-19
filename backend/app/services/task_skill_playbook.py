@@ -118,8 +118,11 @@ def skill_id_for_supervisor_action(
 
             strategy = resolve_agent_strategy(strategy_id, platform=platform)
         return _resolve_crawl_skill(platform, strategy=strategy)
-    if action == "crawl_profile" and platform == "douyin":
-        return "douyin-profile-comments"
+    if action == "crawl_profile":
+        if platform == "douyin":
+            return "douyin-profile-comments"
+        if platform == "xiaohongshu":
+            return "xhs-profile-comments"
     return ACTION_TO_SKILL.get(action)
 
 
@@ -147,6 +150,8 @@ def build_allowed_skills(platform: str, *, strategy: AgentStrategy | None = None
         skill_id = row["skill_id"]
         if row["supervisor_action"] == "crawl_keyword":
             skill_id = _resolve_crawl_skill(platform, strategy=strategy)
+        elif row["supervisor_action"] == "crawl_profile":
+            skill_id = skill_id_for_supervisor_action("crawl_profile", platform, strategy=strategy) or skill_id
         purpose = row["purpose"]
         if row["supervisor_action"] == "crawl_keyword" and strategy is not None and strategy.crawl_purpose:
             purpose = strategy.crawl_purpose

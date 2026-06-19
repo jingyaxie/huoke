@@ -64,7 +64,7 @@
     {
       "id": "profile-url-videos",
       "name": "主页 URL 视频采集",
-      "description": "打开抖音用户主页链接，监听 aweme/post 接口采集视频列表（输出形态对齐搜索）",
+      "description": "打开用户主页链接，监听主页笔记接口采集笔记/视频列表（抖音 aweme/post，小红书 user_posted）",
       "type": "builtin",
       "enabled": true,
       "scope": "global",
@@ -155,6 +155,54 @@
       "builtin_handler": "crawl_profile_comments",
       "created_at": "2026-06-16T00:00:00.000000+00:00",
       "updated_at": "2026-06-16T00:00:00.000000+00:00"
+    },
+    {
+      "id": "xhs-profile-comments",
+      "name": "小红书主页笔记+评论",
+      "description": "打开主页 URL 或笔记入口链接，采集博主笔记并批量抓取评论，供手动获客账号主页任务使用",
+      "type": "builtin",
+      "enabled": true,
+      "scope": "global",
+      "parameters": [
+        {
+          "name": "profile_url",
+          "type": "string",
+          "description": "小红书用户主页或笔记 explore 链接（笔记链接会自动解析博主主页）",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "description": "抓取笔记数量",
+          "required": false,
+          "default": 5
+        },
+        {
+          "name": "days",
+          "type": "integer",
+          "description": "评论/笔记发布时间筛选",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "video_publish_days",
+          "type": "integer",
+          "description": "笔记发布时间筛选（天）",
+          "required": false
+        },
+        {
+          "name": "show_browser",
+          "type": "boolean",
+          "description": "可见浏览器",
+          "required": false,
+          "default": false
+        }
+      ],
+      "content": "生产链路：打开 profile_url → 监听 user_posted → 逐条抓评论入库。",
+      "actions": [],
+      "builtin_handler": "crawl_profile_comments",
+      "created_at": "2026-06-19T00:00:00.000000+00:00",
+      "updated_at": "2026-06-19T00:00:00.000000+00:00"
     },
     {
       "id": "content-comments",
