@@ -264,7 +264,8 @@ class XhsCommentTool(XhsJsApiTool):
                             comments_map[sub_row["comment_id"]] = sub_row
 
         has_more = True
-        while has_more and guard < 20 and top_count < max_comments:
+        max_pages = max(20, (max_comments + 14) // 15)
+        while has_more and guard < max_pages and top_count < max_comments:
             guard += 1
             url = _build_comment_page_url(
                 template_url,

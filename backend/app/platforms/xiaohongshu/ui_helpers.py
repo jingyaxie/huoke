@@ -43,6 +43,57 @@ async def has_login_modal(page: Page) -> bool:
     return False
 
 
+async def dismiss_reds_alert(page: Page) -> dict[str, Any]:
+    """关闭小红书通用 alert（如禁言/风险提示），避免遮挡发送按钮。"""
+    result: dict[str, Any] = {"dismissed": False, "had_alert": False, "actions": []}
+
+    try:
+        has_alert = await page.locator(".reds-alert, .reds-alert-mask").first.count() > 0
+    except Exception:
+        has_alert = False
+    if not has_alert:
+        return result
+    result["had_alert"] = True
+
+    for selector in (
+        "button:has-text('我知道了')",
+        ".reds-alert-footer__right",
+        ".reds-alert .close",
+        ".reds-alert [class*='close']",
+    ):
+        try:
+            locator = page.locator(selector).first
+            if await locator.count() == 0 or not await locator.is_visible():
+                continue
+            await locator.click(force=True, timeout=2000)
+            result["actions"].append(f"click:{selector}")
+            await page.wait_for_timeout(400)
+            if await page.locator(".reds-alert-mask").count() == 0:
+                result["dismissed"] = True
+                return result
+        except Exception:
+            continue
+
+    try:
+        removed = await page.evaluate(
+            """() => {
+                let count = 0;
+                document.querySelectorAll('.reds-alert, .reds-alert-mask').forEach((el) => {
+                    el.remove();
+                    count += 1;
+                });
+                return count;
+            }"""
+        )
+        if removed:
+            result["actions"].append(f"js_remove:{removed}")
+            result["dismissed"] = True
+    except Exception:
+        pass
+
+    return result
+
+
 async def dismiss_login_overlay(page: Page) -> dict[str, Any]:
     """尝试关闭小红书登录弹窗/遮罩。"""
     result: dict[str, Any] = {"dismissed": False, "had_modal": False, "actions": []}

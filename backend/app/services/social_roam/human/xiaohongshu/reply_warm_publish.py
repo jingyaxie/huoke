@@ -525,7 +525,7 @@ async def _scroll_until_target_comment(
     comment_id: str,
     comment_text: str = "",
     parent_comment_id: str = "",
-    max_rounds: int = 16,
+    max_rounds: int = 80,
 ):
     parent_id = str(parent_comment_id or "").strip()
     expanded_parent = False
@@ -849,6 +849,7 @@ async def _click_send_and_wait_post(
     timeout_s: float = 14.0,
 ) -> bool:
     from app.core.antibot import human_click
+    from app.platforms.xiaohongshu.ui_helpers import dismiss_reds_alert
 
     async def _wait_result() -> bool:
         deadline = asyncio.get_running_loop().time() + timeout_s
@@ -860,6 +861,7 @@ async def _click_send_and_wait_post(
             await asyncio.sleep(0.35)
         return bool(publish_result.get("ok"))
 
+    await dismiss_reds_alert(page)
     await _human_pause(min_s=0.4, max_s=0.8)
     with contextlib.suppress(Exception):
         await page.keyboard.press("Enter")
@@ -872,6 +874,7 @@ async def _click_send_and_wait_post(
         publish_result["error"] = "回复弹层内 Enter 未触发发送，且未找到发送按钮"
         return False
 
+    await dismiss_reds_alert(page)
     await _human_pause(min_s=0.5, max_s=0.9)
     await human_click(page, send_btn, settings, tenant_id=tenant_id)
     if await _wait_result():
