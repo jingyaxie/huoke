@@ -421,6 +421,21 @@ fn stop_backend(state: &ServiceState) {
     }
 }
 
+fn with_main_thread<R, F>(app: &AppHandle, f: F) -> Result<R, String>
+where
+    F: FnOnce(&AppHandle) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f(&handle));
+    })
+    .map_err(|err| err.to_string())?;
+    rx.recv()
+        .map_err(|_| "主线程任务未完成".to_string())?
+}
+
 fn show_startup_loading(app: &AppHandle) {
     let html = r#"document.open();document.write('<!doctype html><html><head><meta charset="utf-8"><title>启动中</title>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:48px;text-align:center;color:#444}
@@ -452,16 +467,16 @@ fn open_app_home(app: &AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    let parsed = APP_HOME_URL
-        .parse()
-        .map_err(|err| format!("invalid url: {err}"))?;
-    main.navigate(parsed)
+    main.eval("window.location.reload();")
         .map_err(|err| format!("打开获客首页失败: {err}"))?;
     Ok(())
 }
 
 fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), String> {
-    show_startup_loading(app);
+    with_main_thread(app, |app| {
+        show_startup_loading(app);
+        Ok(())
+    })?;
 
     let root = repo_root(app)?;
     let log_file = resolve_app_log_file(app)?;
@@ -477,8 +492,9 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
         &log_hint,
     )?;
 
-    let BackendProcess { child, log_readers } = backend;
-    drain_log_readers(log_readers);
+    // Do not join log reader threads here: they block until backend stdout/stderr
+    // close, which only happens when the process exits — leaving the UI on about:blank.
+    let BackendProcess { child, log_readers: _ } = backend;
 
     app.state::<ServiceState>()
         .backend
@@ -486,7 +502,7 @@ fn bootstrap(app: &AppHandle, log_state: Arc<BackendLogState>) -> Result<(), Str
         .expect("backend lock")
         .replace(child);
 
-    open_app_home(app)?;
+    with_main_thread(app, open_app_home)?;
     log::info!("Huoke backend ready at {APP_HOME_URL}");
     Ok(())
 }
@@ -507,14 +523,19 @@ pub fn run() {
         }))
         .setup(|app| {
             let handle = app.handle().clone();
-            let log_state = app.state::<Arc<BackendLogState>>();
-            match bootstrap(&handle, Arc::clone(&log_state)) {
+            let log_state = {
+                let state = app.state::<Arc<BackendLogState>>();
+                Arc::clone(&state)
+            };
+            std::thread::spawn(move || match bootstrap(&handle, log_state) {
                 Ok(()) => {}
                 Err(err) => {
                     log::error!("bootstrap failed: {err}");
-                    show_startup_error(&handle, &err);
+                    let app = handle.clone();
+                    let message = err;
+                    let _ = handle.run_on_main_thread(move || show_startup_error(&app, &message));
                 }
-            }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
