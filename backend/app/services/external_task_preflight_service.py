@@ -132,6 +132,8 @@ def _collect_missing_skills(
     settings: Settings,
 ) -> list[str]:
     store = SkillStore(settings)
+    store._ensure_global_defaults()
+    enabled_ids = {s.id for s in store.list_enabled(tenant_id)}
     missing: list[str] = []
     for action in step_actions:
         if action in INTERNAL_SUPERVISOR_ACTIONS:
@@ -141,7 +143,7 @@ def _collect_missing_skills(
             missing.append(f"{action}(未绑定 Skill)")
             continue
         resolved = resolve_skill_id(skill_id)
-        if store.get(tenant_id, resolved) is None:
+        if resolved not in enabled_ids:
             missing.append(resolved)
     return missing
 

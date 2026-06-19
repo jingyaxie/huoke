@@ -1,6 +1,9 @@
 import { isPlatformMonitorEnabled } from "./accountMonitorPreference";
 
-export const DISPLAY_PLATFORMS = ["douyin", "xiaohongshu", "kuaishou"];
+/** 本机获客账号绑定支持的渠道（不含快手） */
+export const BINDABLE_PLATFORMS = ["douyin", "xiaohongshu"];
+
+export const DISPLAY_PLATFORMS = BINDABLE_PLATFORMS;
 
 export const DEFAULT_PLATFORM_NICKNAME = {
   douyin: "抖音账号",

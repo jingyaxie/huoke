@@ -39,6 +39,17 @@ robocopy $BackendSrc $TargetBackend /E /NFL /NDL /NJH /NJS /nc /ns /np `
   /XD $exclude | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "Backend copy failed (robocopy exit $LASTEXITCODE)" }
 
+# 内置 Skill / 规则定义必须打入 bundle（供 skill_store 启动时 bootstrap；排除整个 storage 会漏掉）
+foreach ($rel in @("skills", "rules")) {
+  $src = Join-Path $BackendSrc "storage/$rel"
+  $dst = Join-Path $TargetBackend "storage/$rel"
+  if (-not (Test-Path $src)) {
+    throw "Missing backend storage/$rel (required for desktop bundle)"
+  }
+  robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+  if ($LASTEXITCODE -ge 8) { throw "Copy storage/$rel failed (robocopy exit $LASTEXITCODE)" }
+}
+
 $FrontendDist = Join-Path $FrontendDir "dist"
 if (-not (Test-Path $FrontendDist)) {
   throw "Frontend dist not found: $FrontendDist"

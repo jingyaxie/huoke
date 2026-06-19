@@ -47,7 +47,9 @@ def _bootstrap_default_skills() -> list[dict]:
     ]
 
 
-DEFAULT_GLOBAL_SKILLS: list[dict] = _bootstrap_default_skills()
+def _default_global_skills() -> list[dict]:
+    """每次 bootstrap/merge 时重新读取，避免桌面 bundle 在 import 后才就位时只剩 check-login。"""
+    return _bootstrap_default_skills()
 
 # 已从 global.json 移除的废弃技能；启动时从磁盘清理，list 时过滤，防止 Docker 卷残留旧定义
 DEPRECATED_SKILL_IDS = frozenset(
@@ -95,7 +97,7 @@ class SkillStore:
             payload = {
                 "skills": [
                     {**skill, "created_at": now, "updated_at": now}
-                    for skill in DEFAULT_GLOBAL_SKILLS
+                    for skill in _default_global_skills()
                 ]
             }
             self.global_path.write_text(
@@ -142,7 +144,7 @@ class SkillStore:
         existing_ids = {s.get("id") for s in existing}
         now = _utc_now().isoformat()
         changed = False
-        for skill in DEFAULT_GLOBAL_SKILLS:
+        for skill in _default_global_skills():
             if skill["id"] in existing_ids:
                 continue
             existing.append({**skill, "created_at": now, "updated_at": now})

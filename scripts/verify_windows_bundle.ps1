@@ -61,6 +61,13 @@ foreach ($rel in @(
   Assert-PathExists -Path (Join-Path $resolvedBundle $rel) -Label $rel
 }
 
+foreach ($rel in @(
+    "backend/storage/skills/global.json",
+    "backend/storage/rules/global.json"
+  )) {
+  Assert-PathExists -Path (Join-Path $resolvedBundle $rel) -Label $rel
+}
+
 foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll")) {
   Assert-PathExists -Path (Join-Path $resolvedBundle "runtime/msvc/$dll") -Label $dll
 }

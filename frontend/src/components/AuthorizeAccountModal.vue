@@ -86,6 +86,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import AccountHealthAlerts from "./AccountHealthAlerts.vue";
+import { BINDABLE_PLATFORMS, PLATFORM_LABEL } from "../utils/accountSettings";
 import { initialBindSteps, runBrowserPlatformBindFlow } from "../utils/platformBindFlow";
 
 const props = defineProps({
@@ -97,11 +98,10 @@ const props = defineProps({
 
 const emit = defineEmits(["update:modelValue", "bound", "resolve-health"]);
 
-const platformOptions = [
-  { key: "douyin", label: "抖音" },
-  { key: "xiaohongshu", label: "小红书" },
-  { key: "kuaishou", label: "快手" },
-];
+const platformOptions = BINDABLE_PLATFORMS.map((key) => ({
+  key,
+  label: PLATFORM_LABEL[key] || key,
+}));
 
 const visible = computed({
   get: () => props.modelValue,
@@ -116,11 +116,9 @@ const error = ref("");
 const steps = ref(initialBindSteps());
 const stopRef = ref(false);
 
-const platformHost = computed(() => {
-  if (platform.value === "douyin") return "douyin.com";
-  if (platform.value === "xiaohongshu") return "xiaohongshu.com";
-  return "kuaishou.com";
-});
+const platformHost = computed(() =>
+  platform.value === "xiaohongshu" ? "xiaohongshu.com" : "douyin.com",
+);
 
 const activeHint = computed(() => {
   const reversed = [...steps.value].reverse();

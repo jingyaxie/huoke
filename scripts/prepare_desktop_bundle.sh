@@ -34,6 +34,18 @@ rsync -a \
   --exclude 'storage' \
   "$BACKEND_SRC/" "$TARGET_BACKEND/"
 
+# 内置 Skill / 规则定义必须打入 bundle（排除整个 storage 会漏掉）
+for rel in skills rules; do
+  src="$BACKEND_SRC/storage/$rel"
+  dst="$TARGET_BACKEND/storage/$rel"
+  if [[ ! -d "$src" ]]; then
+    echo "missing backend storage/$rel (required for desktop bundle)" >&2
+    exit 1
+  fi
+  mkdir -p "$dst"
+  rsync -a "$src/" "$dst/"
+done
+
 if [[ -d "$FRONTEND_DIR/dist" ]]; then
   echo "复制前端静态资源..."
   rsync -a "$FRONTEND_DIR/dist/" "$BUNDLE_DIR/frontend-dist/"
