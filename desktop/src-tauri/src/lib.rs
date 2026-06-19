@@ -467,7 +467,10 @@ fn open_app_home(app: &AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    main.eval("window.location.reload();")
+    let parsed = APP_HOME_URL
+        .parse()
+        .map_err(|err| format!("invalid url: {err}"))?;
+    main.navigate(parsed)
         .map_err(|err| format!("打开获客首页失败: {err}"))?;
     Ok(())
 }

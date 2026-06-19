@@ -69,9 +69,9 @@ try {
   }
 
   $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-  $expectedMainUrl = "http://127.0.0.1:18765/cloud/dashboard"
+  $expectedMainUrl = "about:blank"
   if ($config.app.windows[0].url -ne $expectedMainUrl) {
-    throw "main window must start at $expectedMainUrl, got: $($config.app.windows[0].url)"
+    throw "main window must start at $expectedMainUrl until backend is ready, got: $($config.app.windows[0].url)"
   }
   foreach ($required in @(
       "../../scripts/desktop-runtime-workdir.ps1",
