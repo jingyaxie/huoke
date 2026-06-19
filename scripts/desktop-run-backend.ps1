@@ -21,11 +21,20 @@ function Invoke-PythonScript {
   )
   Write-Log $Label
   # Do NOT pipe & output: PS 5.1 loses $LASTEXITCODE after a pipeline.
-  $output = & $PythonExe @ArgumentList 2>&1
-  $exitCode = $LASTEXITCODE
+  # Use Continue so native stderr does not terminate before we read $LASTEXITCODE.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $output = & $PythonExe @ArgumentList 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
   foreach ($line in @($output)) {
-    if ($null -ne $line -and "$line".Length -gt 0) {
-      Write-Output ("[backend] {0}" -f $line)
+    if ($null -eq $line) { continue }
+    $text = if ($line -is [System.Management.Automation.ErrorRecord]) { "$line" } else { "$line" }
+    if ($text.Length -gt 0) {
+      Write-Output ("[backend] {0}" -f $text)
       try { [Console]::Out.Flush() } catch {}
     }
   }
@@ -46,9 +55,16 @@ function Start-PythonLauncherServer {
   )
   Write-Log "starting backend launcher on port $Port"
   # Direct invocation streams Python stdout/stderr to Tauri without temp-file loss.
-  & $PythonExe $LauncherScript --port $Port
-  if ($LASTEXITCODE -ne 0) {
-    throw "backend launcher failed (exit $LASTEXITCODE)"
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $PythonExe $LauncherScript --port $Port
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+  if ($exitCode -ne 0) {
+    throw "backend launcher failed (exit $exitCode)"
   }
 }
 
