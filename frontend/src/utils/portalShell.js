@@ -97,6 +97,12 @@ export function detectNativeShell() {
   return (hostname === "127.0.0.1" || hostname === "localhost") && (port === "8000" || port === "18765");
 }
 
+/** 仅云端 H5 嵌入页需盈小蚁登录；本地获客/编排/设置不拦截 */
+export function requiresPortalAuth(path) {
+  const normalized = String(path || "").trim();
+  return normalized === "/cloud" || normalized.startsWith("/cloud/");
+}
+
 export function handlePortalMessage(event) {
   if (!isPortalMessageOrigin(event.origin)) return null;
   const data = event.data;

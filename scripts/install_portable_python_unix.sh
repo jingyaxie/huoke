@@ -89,20 +89,9 @@ echo "Installing pip + backend requirements into portable Python..."
 "$python_bin" -m ensurepip --upgrade
 "$python_bin" -m pip install --disable-pip-version-check -U pip setuptools wheel
 "$python_bin" -m pip install --disable-pip-version-check -r "$REQUIREMENTS_FILE"
-browsers_dir="$(cd "$(dirname "$TARGET_DIR")" && pwd)/playwright-browsers"
-rm -rf "$browsers_dir"
-mkdir -p "$browsers_dir"
-export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
-
-echo "Installing Playwright Chromium into $browsers_dir..."
-echo "  - full browser (--no-shell) for headed desktop automation"
-"$python_bin" -m playwright install chromium --no-shell
-echo "  - headless shell (required by Playwright 1.6x for headless launch)"
-"$python_bin" -m playwright install chromium-headless-shell
-
-export PLAYWRIGHT_BROWSERS_PATH="$browsers_dir"
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYWRIGHT_BROWSERS_PATH="$browsers_dir" "$python_bin" "$script_root/verify_playwright_bundle.py"
+echo "Verifying system Chrome via Playwright channel..."
+"$python_bin" "$script_root/verify_playwright_bundle.py"
 
 "$python_bin" -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')"
 

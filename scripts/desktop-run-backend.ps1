@@ -275,12 +275,6 @@ function Start-HuokeDesktopBackend {
   $env:PYTHONPATH = $BackendDir
   $env:ANTIBOT_FINGERPRINT_PLATFORM = "win"
 
-  $PwBrowsers = Join-Path $BundleDir "runtime/playwright-browsers"
-  if (Test-Path $PwBrowsers) {
-    $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
-    Write-Log "Playwright browsers: $PwBrowsers"
-  }
-
   if (Test-Path $EnvFile) {
     Get-Content $EnvFile | ForEach-Object {
       $line = $_.Trim()
@@ -298,12 +292,10 @@ function Start-HuokeDesktopBackend {
 
   $Chrome = Find-ChromePath
   if (-not $Chrome) {
-    Write-Log "Chrome not installed, using bundled Playwright Chromium"
-    $env:ANTIBOT_BROWSER_CHANNEL = ""
-    $env:ANTIBOT_PLAYWRIGHT_FALLBACK = "true"
-  } else {
-    Write-Log "Chrome: $Chrome"
+    Write-Log "Google Chrome is required for browser automation. Install Chrome and restart the app."
+    throw "Google Chrome not installed"
   }
+  Write-Log "Chrome: $Chrome"
 
   $LauncherScript = Join-Path $script:ScriptDir "desktop_uvicorn_launcher.py"
   if (-not (Test-Path $LauncherScript)) {

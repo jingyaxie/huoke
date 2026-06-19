@@ -39,7 +39,12 @@ function Set-PortablePythonEnv {
   # DLL lookup for native wheels such as greenlet/playwright.
   Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   $env:PYTHONUTF8 = "1"
-  $dllDirs = @($pythonRoot, (Join-Path $pythonRoot "DLLs"))
+  $runtimeRoot = Split-Path $pythonRoot -Parent
+  $dllDirs = @(
+    $pythonRoot,
+    (Join-Path $pythonRoot "DLLs"),
+    (Join-Path $runtimeRoot "msvc")
+  )
   $prefix = (($dllDirs | Where-Object { Test-Path $_ }) -join ";")
   if ($prefix) {
     $env:PATH = "$prefix;$env:PATH"

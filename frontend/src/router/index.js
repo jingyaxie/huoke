@@ -26,7 +26,7 @@ import SettingsModelSection from "../views/settings/SettingsModelSection.vue";
 import SettingsDiagnosisSection from "../views/settings/SettingsDiagnosisSection.vue";
 import PortalLoginView from "../views/PortalLoginView.vue";
 import { buildCloudRoutes } from "../config/cloudNav";
-import { isPortalAuthenticated, isPortalEnabled } from "../utils/portalShell";
+import { isPortalAuthenticated, isPortalEnabled, requiresPortalAuth } from "../utils/portalShell";
 
 const routes = [
   {
@@ -39,7 +39,7 @@ const routes = [
     path: "/",
     component: MainLayout,
     children: [
-      { path: "", redirect: () => (isPortalEnabled() ? "/cloud/dashboard" : "/auto-tasks") },
+      { path: "", redirect: "/auto-tasks" },
       ...buildCloudRoutes(),
       { path: "auto-tasks", name: "auto-tasks", component: AutoTasksView, meta: { title: "自动获客", section: "AI 获客（本机）" } },
       { path: "manual-tasks", name: "manual-tasks", component: ManualTasksView, meta: { title: "手动获客", section: "AI 获客（本机）" } },
@@ -96,8 +96,7 @@ const router = createRouter({
 router.beforeEach((to) => {
   if (!isPortalEnabled()) return true;
   if (to.meta?.public) return true;
-  const needsPortal = Boolean(to.meta?.cloud) || to.path.startsWith("/cloud/");
-  if (!needsPortal) return true;
+  if (!requiresPortalAuth(to.path)) return true;
   if (isPortalAuthenticated()) return true;
   return {
     name: "portal-login",

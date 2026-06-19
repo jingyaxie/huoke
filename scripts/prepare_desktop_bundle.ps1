@@ -77,12 +77,11 @@ Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 @{
   kind = "huoke-desktop-bundle"
   python = "runtime/python"
-  playwright_browsers = "runtime/playwright-browsers"
   repair_wheels = "runtime/repair-wheels"
   msvc = "runtime/msvc"
   backend = "backend"
   frontend = "frontend-dist"
-  notes = "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."
+  notes = "Self-contained desktop runtime; requires system Google Chrome for browser automation."
 } | ConvertTo-Json | Set-Content -Path (Join-Path $BundleDir "BUNDLE_MANIFEST.json") -Encoding UTF8
 
 . "$PSScriptRoot/generate_runtime_manifest.ps1" -BundleDir $BundleDir

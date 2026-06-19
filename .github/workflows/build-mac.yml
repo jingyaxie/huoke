@@ -45,14 +45,8 @@ jobs:
           fi
           PYTHONPATH="$(pwd)/desktop/bundle/backend" "$py" -c "import uvicorn; from app.main import app; print('bundle verify ok')"
 
-          pw_browsers="desktop/bundle/runtime/playwright-browsers"
-          if [[ ! -d "$pw_browsers" ]]; then
-            echo "Missing bundled Playwright browsers: $pw_browsers" >&2
-            exit 1
-          fi
-          export PLAYWRIGHT_BROWSERS_PATH="$(pwd)/$pw_browsers"
           "$py" "$(pwd)/scripts/verify_playwright_bundle.py"
-          echo "Bundled Playwright browsers verified under $pw_browsers"
+          echo "System Chrome launch verified"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

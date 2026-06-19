@@ -14,7 +14,7 @@ export const CLOUD_NAV_SECTIONS = [
     label: "账号管理",
     items: [
       { key: "account_list", label: "账号列表", to: "/cloud/accounts", h5Path: "/customer/accounts" },
-      { key: "staff_binding", label: "我的账号绑定", to: "/cloud/staff-binding", h5Path: "/customer/staff-binding" },
+      { key: "staff_binding", label: "员工账号绑定", to: "/cloud/staff-binding", h5Path: "/customer/staff-binding" },
     ],
   },
   {
@@ -47,13 +47,13 @@ export const CLOUD_NAV_SECTIONS = [
   },
 ];
 
-/** 本地获客引擎（Tauri 本机执行） */
+/** 本地获客引擎（Tauri 本机执行；无需 H5 登录，平台绑定在账号设置单独完成） */
 export const LOCAL_NAV_SECTION = {
   label: "AI 获客（本机）",
   items: [
     { key: "auto_tasks", label: "自动获客", to: "/auto-tasks" },
     { key: "manual_tasks", label: "手动获客", to: "/manual-tasks" },
-    { key: "account_settings", label: "账号设置", to: "/account-settings" },
+    { key: "account_settings", label: "执行账号绑定", to: "/account-settings" },
     { key: "llm_settings", label: "大模型配置", to: "/llm-settings" },
     { key: "presets", label: "评论/私信预设", to: "/presets" },
   ],

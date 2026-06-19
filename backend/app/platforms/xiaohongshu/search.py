@@ -16,7 +16,6 @@ from app.platforms.xiaohongshu.js_api import XhsJsApiTool
 from app.platforms.xiaohongshu.js_constants import (
     PLATFORM,
     SEARCH_NOTES_PATH,
-    _build_search_url,
     _is_search_result_api,
 )
 from app.platforms.search_filters import (
@@ -26,7 +25,7 @@ from app.platforms.search_filters import (
     filter_search_items,
     select_rows_after_filter,
 )
-from app.platforms.xiaohongshu.utils import build_note_url, parse_note_card, walk_note_ids
+from app.platforms.xiaohongshu.utils import build_note_url, find_xsec_in_payload, parse_note_card, walk_note_ids
 from app.services.playwright_pool import PlaywrightPool
 
 # 探索页顶区搜索在信息流上方（#search-input-in-feeds），header 内 #search-input 常为 0×0 占位
@@ -239,6 +238,45 @@ class XhsSearchTool(XhsJsApiTool):
     async def _find_search_input(self, page):
         return await self._resolve_top_search_target(page)
 
+    async def _maybe_apply_search_publish_filter(
+        self,
+        page,
+        *,
+        keyword: str,
+        region: str | None,
+        days: int | None,
+        note_meta: dict[str, dict],
+        processed: set[int],
+    ) -> str | None:
+        """编排任务 UI 搜索：点「筛选 → 发布时间」，与 ui_flow search 对齐。"""
+        from app.services.ui_flow.params import UiFlowParams
+        from app.services.ui_flow.platforms.xiaohongshu.filter_ui import (
+            apply_ui_publish_time_filter,
+            needs_ui_publish_filter,
+        )
+        from app.services.ui_flow.platforms.xiaohongshu.ui_session import XhsUiSession
+
+        ui_params = UiFlowParams(platform=PLATFORM, keyword=keyword, days=days or 0, region=region)
+        ctx = XhsUiSession(
+            settings=self.settings,
+            tenant_id=self.tenant_id,
+            account_id=self.account_id,
+            params=ui_params,
+            page=page,
+        )
+        if not needs_ui_publish_filter(ctx):
+            return None
+        filter_label = await apply_ui_publish_time_filter(ctx)
+        note_meta.clear()
+        processed.clear()
+        if not filter_label:
+            return None
+        suffix = f"发布时间={filter_label}"
+        if ctx.state.get("search_filter_verified") is False:
+            steps = ctx.state.get("search_filter_steps") or []
+            suffix += f"；筛选步骤={'>'.join(str(s) for s in steps)}"
+        return suffix
+
     async def _ui_searchbar_keyword_search(
         self,
         page,
@@ -275,7 +313,15 @@ class XhsSearchTool(XhsJsApiTool):
         try:
             if not await self._trigger_searchbar(page, search_keyword):
                 return [], "未能通过搜索框完成搜索（禁止直接跳转搜索 URL）"
-            return await self._collect_search_results_on_page(
+            filter_suffix = await self._maybe_apply_search_publish_filter(
+                page,
+                keyword=keyword,
+                region=region,
+                days=days,
+                note_meta=note_meta,
+                processed=processed,
+            )
+            note_urls, diagnostic = await self._collect_search_results_on_page(
                 page,
                 limit=limit,
                 filters=filters,
@@ -287,6 +333,11 @@ class XhsSearchTool(XhsJsApiTool):
                 days=days,
                 search_keyword=search_keyword,
             )
+            if filter_suffix and diagnostic:
+                diagnostic = f"{diagnostic}；{filter_suffix}"
+            elif filter_suffix:
+                diagnostic = filter_suffix
+            return note_urls, diagnostic
         finally:
             await self._drain_tasks(pending)
             try:
@@ -309,7 +360,10 @@ class XhsSearchTool(XhsJsApiTool):
         search_keyword: str,
     ) -> tuple[list[str], str | None]:
         await self._drain_tasks(pending)
-        from app.services.ui_flow.platforms.xiaohongshu.feed_ui import scroll_search_results_page
+        from app.services.ui_flow.platforms.xiaohongshu.feed_ui import (
+            dismiss_ai_search_side_panel,
+            scroll_search_results_page,
+        )
 
         for _ in range(10):
             if len(note_meta) >= limit:
@@ -317,8 +371,9 @@ class XhsSearchTool(XhsJsApiTool):
             await scroll_search_results_page(page, self.settings, tenant_id=self.tenant_id)
             await self._drain_tasks(pending)
             await page.wait_for_timeout(500)
-        if not note_meta:
-            await self._collect_note_links_from_dom(page, note_meta, limit)
+        await dismiss_ai_search_side_panel(page, self.settings, tenant_id=self.tenant_id)
+        # 无论 API 是否已有 note_id，都从 DOM 补全 xsec_token（缺 token 直开易 404）
+        await self._collect_note_links_from_dom(page, note_meta, max(limit * 5, 20))
 
         urls, stats = self._meta_to_urls(note_meta, limit, region=region, days=days)
         if urls:
@@ -326,6 +381,12 @@ class XhsSearchTool(XhsJsApiTool):
             filter_note = filter_diagnostic_suffix(stats, requested=limit)
             if filter_note:
                 diagnostic = f"{diagnostic}；{filter_note}"
+            missing_token = int(stats.get("missing_xsec_token") or 0)
+            if missing_token:
+                diagnostic = (
+                    f"{diagnostic}；{missing_token} 条链接仍缺 xsec_token（打开可能 404，"
+                    "请确认搜索列表已加载或换关键词）"
+                )
             return urls, diagnostic
         return [], "搜索框提交后未返回笔记，请确认 Cookie 有效或搜索框是否可见。"
 
@@ -337,37 +398,16 @@ class XhsSearchTool(XhsJsApiTool):
         region: str | None = None,
         days: int | None = None,
     ) -> tuple[list[str], str | None]:
-        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
-        search_keyword = filters.composed_keyword()
-        note_meta: dict[str, dict] = {}
-
-        async def on_response(resp):
-            try:
-                if not _is_search_result_api(resp.url) or resp.status != 200:
-                    return
-                data = await resp.json()
-            except Exception:
-                return
-            self._ingest_search_payload(data, note_meta, limit * 3)
-
-        page.on("response", on_response)
-        try:
-            await page.goto(_build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
-            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
-            for _ in range(10):
-                if len(note_meta) >= limit:
-                    break
-                await human_scroll(page, self.settings, tenant_id=self.tenant_id)
-            if not note_meta:
-                await self._collect_note_links_from_dom(page, note_meta, limit)
-            urls, _ = self._meta_to_urls(note_meta, limit, region=region, days=days)
-            diagnostic = "已在可见浏览器中完成小红书关键词搜索。" if urls else "可见浏览器未提取到笔记链接。"
-            return urls, diagnostic
-        finally:
-            try:
-                page.remove_listener("response", on_response)
-            except Exception:
-                pass
+        """在已有浏览器页内通过搜索框搜索（禁止拼接 search_result URL）。"""
+        captured_api_urls: list[str] = []
+        return await self._ui_searchbar_keyword_search(
+            page,
+            keyword=keyword,
+            limit=limit,
+            captured_api_urls=captured_api_urls,
+            region=region,
+            days=days,
+        )
 
     async def _thin_browser_keyword_search(
         self,
@@ -379,50 +419,15 @@ class XhsSearchTool(XhsJsApiTool):
         region: str | None = None,
         days: int | None = None,
     ) -> tuple[list[str], str | None]:
-        filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
-        search_keyword = filters.composed_keyword()
-        await self.warmup_for_js_api(page, captured_api_urls)
-        note_meta: dict[str, dict] = {}
-        target_count = max(limit * fetch_multiplier(filters), 10)
-        processed: set[int] = set()
-        pending: list[asyncio.Task] = []
-
-        def on_response(resp) -> None:
-            if not _is_search_result_api(resp.url):
-                return
-            pending.append(
-                asyncio.create_task(
-                    self._ingest_search_response(resp, note_meta, captured_api_urls, target_count, processed)
-                )
-            )
-
-        page.on("response", on_response)
-        try:
-            await page.goto(_build_search_url(search_keyword), wait_until="domcontentloaded", timeout=120000)
-            await self._drain_tasks(pending)
-            for _ in range(10):
-                if len(note_meta) >= limit:
-                    break
-                await human_scroll(page, self.settings, tenant_id=self.tenant_id)
-                await self._drain_tasks(pending)
-                await page.wait_for_timeout(500)
-            if not note_meta:
-                await self._collect_note_links_from_dom(page, note_meta, limit)
-        finally:
-            await self._drain_tasks(pending)
-            try:
-                page.remove_listener("response", on_response)
-            except Exception:
-                pass
-
-        urls, stats = self._meta_to_urls(note_meta, limit, region=region, days=days)
-        if urls:
-            diagnostic = f"关键词「{search_keyword}」搜索成功（thin_nav_api，{len(urls)} 条笔记）"
-            filter_note = filter_diagnostic_suffix(stats, requested=limit)
-            if filter_note:
-                diagnostic = f"{diagnostic}；{filter_note}"
-            return urls, diagnostic
-        return [], "薄浏览器搜索未返回笔记，请确认 Cookie 有效或在本机有头浏览器 手动搜索后设 show_browser=true。"
+        """兼容旧名：与 _ui_searchbar_keyword_search 相同，禁止 goto 搜索 URL。"""
+        return await self._ui_searchbar_keyword_search(
+            page,
+            keyword=keyword,
+            limit=limit,
+            captured_api_urls=captured_api_urls,
+            region=region,
+            days=days,
+        )
 
     @staticmethod
     async def _drain_tasks(tasks: list[asyncio.Task]) -> None:
@@ -471,6 +476,7 @@ class XhsSearchTool(XhsJsApiTool):
                     "title": parsed.get("title") or "",
                     "ip_location": parsed.get("ip_location") or "",
                     "create_time": parsed.get("create_time"),
+                    "video_url": parsed.get("video_url"),
                     "xsec_token": parsed.get("raw_data", {}).get("xsec_token"),
                     "xsec_source": parsed.get("raw_data", {}).get("xsec_source"),
                     "raw_data": parsed.get("raw_data"),
@@ -479,13 +485,14 @@ class XhsSearchTool(XhsJsApiTool):
                 note_id = str(raw.get("note_id") or raw.get("id") or "")
                 if not re.fullmatch(r"[0-9a-fA-F]{16,32}", note_id):
                     continue
+                token, source = find_xsec_in_payload(raw)
                 note_meta[note_id] = {
                     "note_id": note_id,
                     "title": "",
                     "ip_location": "",
                     "create_time": None,
-                    "xsec_token": raw.get("xsec_token"),
-                    "xsec_source": raw.get("xsec_source") or "pc_search",
+                    "xsec_token": raw.get("xsec_token") or token,
+                    "xsec_source": raw.get("xsec_source") or source or "pc_search",
                     "raw_data": raw,
                 }
             if len(note_meta) >= target_count:
@@ -524,6 +531,8 @@ class XhsSearchTool(XhsJsApiTool):
         region: str | None = None,
         days: int | None = None,
     ) -> tuple[list[str], dict]:
+        from app.platforms.xiaohongshu.utils import extract_note_access_params, resolve_note_open_url
+
         items = list(note_meta.values())
         filtered, stats = filter_search_items(
             items,
@@ -533,20 +542,31 @@ class XhsSearchTool(XhsJsApiTool):
             limit=limit,
         )
         rows = select_rows_after_filter(items, filtered, region=region, limit=limit)
+        rows = sorted(
+            rows,
+            key=lambda meta: (0 if meta.get("xsec_token") or extract_note_access_params(
+                str(meta.get("video_url") or meta.get("note_url") or "")
+            ).get("xsec_token") else 1),
+        )
         urls: list[str] = []
+        missing_xsec_token = 0
         for meta in rows:
             note_id = meta.get("note_id") or ""
             if not note_id:
                 continue
-            urls.append(
-                build_note_url(
-                    note_id,
-                    meta.get("xsec_token"),
-                    meta.get("xsec_source") or "pc_search",
-                )
+            open_url = resolve_note_open_url(
+                note_id,
+                content_url=meta.get("video_url") or meta.get("note_url"),
+                note_meta=meta,
+                raw_data=meta.get("raw_data") if isinstance(meta.get("raw_data"), dict) else None,
             )
+            if not extract_note_access_params(open_url).get("xsec_token"):
+                missing_xsec_token += 1
+            urls.append(open_url)
             if len(urls) >= limit:
                 break
+        if missing_xsec_token:
+            stats = {**stats, "missing_xsec_token": missing_xsec_token}
         return urls[:limit], stats
 
     async def search_notes_by_keyword(
@@ -574,16 +594,7 @@ class XhsSearchTool(XhsJsApiTool):
         ) as (_, page):
             if manual_search:
                 return await self.search_notes_from_existing_page(page, keyword, limit, region=region, days=days)
-            if ui_search_only:
-                return await self._ui_searchbar_keyword_search(
-                    page,
-                    keyword=keyword,
-                    limit=limit,
-                    captured_api_urls=captured_api_urls,
-                    region=region,
-                    days=days,
-                )
-            return await self._thin_browser_keyword_search(
+            return await self._ui_searchbar_keyword_search(
                 page,
                 keyword=keyword,
                 limit=limit,
@@ -622,7 +633,7 @@ class XhsSearchTool(XhsJsApiTool):
             headless=headless,
             account_id=self.account_id,
         ) as (_, page):
-            note_urls, diagnostic = await self._thin_browser_keyword_search(
+            note_urls, diagnostic = await self._ui_searchbar_keyword_search(
                 page,
                 keyword=keyword,
                 limit=limit,

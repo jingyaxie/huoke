@@ -31,6 +31,7 @@ try {
       "scripts/generate_runtime_manifest.ps1",
       "scripts/verify_installed_startup.ps1",
       "scripts/verify_nsis_installed.ps1",
+      "scripts/verify_windows_bundle.ps1",
       "scripts/_python_win.ps1"
     )) {
     Test-PowerShellScriptSyntax -Path $script

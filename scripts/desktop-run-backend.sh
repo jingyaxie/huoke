@@ -91,12 +91,6 @@ export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 export PYTHONPATH="$BACKEND_DIR"
 
-PW_BROWSERS="$BUNDLE_DIR/runtime/playwright-browsers"
-if [[ -d "$PW_BROWSERS" ]]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS"
-  echo "Playwright browsers: $PW_BROWSERS"
-fi
-
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -111,14 +105,13 @@ export DATABASE_URL="sqlite+pysqlite:///${DB_FILE}"
 export STORAGE_ROOT="$STORAGE_DIR"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-if [[ ! -x "$CHROME" ]]; then
-  echo "未安装 Google Chrome，将使用内置 Playwright Chromium 执行浏览器自动化"
-  export ANTIBOT_BROWSER_CHANNEL=""
-  export ANTIBOT_PLAYWRIGHT_FALLBACK=true
-else
-  echo "Chrome: $($CHROME --version 2>/dev/null || true)"
+CHROME="$(find_chrome_executable 2>/dev/null || true)"
+if [[ -z "$CHROME" ]]; then
+  echo "未安装 Google Chrome，无法执行浏览器自动化。请安装后重启应用。" >&2
+  echo "下载: https://www.google.com/chrome/" >&2
+  exit 1
 fi
+echo "Chrome: $($CHROME --version 2>/dev/null || true)"
 
 echo "初始化数据库..."
 "$PYTHON" - <<'PY'

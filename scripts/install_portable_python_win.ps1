@@ -190,23 +190,26 @@ function Install-HuokePortablePython {
     -r $RequirementsFile 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "offline pip install requirements failed with exit code $LASTEXITCODE" }
 
-  $BrowsersDir = Join-Path $RuntimeDir "playwright-browsers"
-  if (Test-Path $BrowsersDir) {
-    Remove-Item -Recurse -Force $BrowsersDir
-  }
-  New-Item -ItemType Directory -Force -Path $BrowsersDir | Out-Null
-  $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
-
-  Write-Host "Installing Playwright Chromium into $BrowsersDir..."
-  & $pythonExe -m playwright install chromium --no-shell 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium --no-shell failed with exit code $LASTEXITCODE" }
-  & $pythonExe -m playwright install chromium-headless-shell 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium-headless-shell failed with exit code $LASTEXITCODE" }
-
-  $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
+  Write-Host "Verifying system Chrome via Playwright channel..."
   $verifyScript = Join-Path $PSScriptRoot "verify_playwright_bundle.py"
-  & $pythonExe $verifyScript 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
+  $chromePaths = @(
+    (Join-Path ${env:ProgramFiles} "Google/Chrome/Application/chrome.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Google/Chrome/Application/chrome.exe"),
+    (Join-Path $env:LOCALAPPDATA "Google/Chrome/Application/chrome.exe")
+  )
+  $hasChrome = $false
+  foreach ($chromePath in $chromePaths) {
+    if (Test-Path $chromePath) {
+      $hasChrome = $true
+      break
+    }
+  }
+  if ($hasChrome) {
+    & $pythonExe $verifyScript 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "system Chrome launch smoke test failed" }
+  } else {
+    Write-Warning "Build machine has no Google Chrome; skipped Playwright channel smoke test. Customer machines must install Chrome."
+  }
 
   Set-PortablePythonEnvForExe -PythonExe $pythonExe | Out-Null
   $bootstrapScript = Join-Path $pythonRoot "Lib\portable_dll_bootstrap.py"

@@ -20,7 +20,7 @@ fi
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 if [[ ! -x "$CHROME" ]]; then
   echo "未找到系统 Chrome: $CHROME" >&2
-  echo "请安装 Google Chrome，或在 .env.local 中设置 ANTIBOT_PLAYWRIGHT_FALLBACK=true。" >&2
+  echo "请安装 Google Chrome: https://www.google.com/chrome/" >&2
   exit 1
 fi
 echo "Chrome: $("$CHROME" --version 2>/dev/null || true)"
@@ -83,8 +83,6 @@ VENV_PYTHON="$BACKEND_DIR/.venv/bin/python"
 if [[ "$need_recreate_venv" == true ]]; then
   pip install -U pip setuptools wheel
   pip install -r requirements.txt
-  echo "安装 Playwright Chromium（备用，首次较慢）..."
-  "$VENV_PYTHON" -m playwright install chromium
 fi
 
 mkdir -p "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile"

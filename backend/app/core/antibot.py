@@ -617,14 +617,7 @@ async def launch_browser(playwright: Playwright, settings: Settings, *, headless
 
     await ensure_cjk_fonts_for_visible_browser(headless)
     kwargs = launch_kwargs(settings, headless=headless)
-    try:
-        return await playwright.chromium.launch(**kwargs)
-    except Exception:
-        if not settings.antibot_playwright_fallback:
-            raise
-        fallback = dict(kwargs)
-        fallback.pop("channel", None)
-        return await playwright.chromium.launch(**fallback)
+    return await playwright.chromium.launch(**kwargs)
 
 
 # Playwright storage_state.origins 会收录 iframe/CDN 子域的 localStorage；
@@ -817,21 +810,12 @@ async def launch_persistent_context(
         )
         try:
             context = await playwright.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+            break
         except Exception as exc:
             last_error = exc
-            if not settings.antibot_playwright_fallback:
-                raise
-            fallback = dict(kwargs)
-            fallback.pop("channel", None)
-            try:
-                context = await playwright.chromium.launch_persistent_context(str(profile_dir), **fallback)
-            except Exception as fallback_exc:
-                last_error = fallback_exc
-                if attempt == 0 and "ProcessSingleton" in str(fallback_exc):
-                    continue
-                raise last_error from None
-        if context is not None:
-            break
+            if attempt == 0 and "ProcessSingleton" in str(exc):
+                continue
+            raise
     if context is None:
         raise last_error from None  # type: ignore[misc]
 
@@ -1284,7 +1268,7 @@ def _ensure_native_tracking_tab_closer(context: BrowserContext) -> None:
 
 
 def _ensure_popup_tab_sweeper(context: BrowserContext) -> None:
-    """内置 Chromium：关掉非主 tab（不抢焦点）。"""
+    """非系统 Chrome 模式：关掉非主 tab（不抢焦点）。"""
     if getattr(context, _POPUP_SWEEPER_INSTALLED, False):
         return
 

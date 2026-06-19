@@ -130,6 +130,32 @@ def walk_note_ids(data: Any) -> list[str]:
     return uniq
 
 
+def find_xsec_in_payload(data: Any) -> tuple[str | None, str | None]:
+    """从搜索 API 原始 JSON 递归提取 xsec_token / xsec_source。"""
+    token: str | None = None
+    source: str | None = None
+
+    def walk(node: Any) -> None:
+        nonlocal token, source
+        if isinstance(node, dict):
+            if not token:
+                raw = node.get("xsec_token") or node.get("xsecToken")
+                if raw and str(raw).strip():
+                    token = str(raw).strip()
+            if not source:
+                raw = node.get("xsec_source") or node.get("xsecSource")
+                if raw and str(raw).strip():
+                    source = str(raw).strip()
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return token, source
+
+
 def parse_note_card(item: dict, *, rank: int, tenant_id: str) -> dict | None:
     card = item.get("note_card") or item.get("note") or item
     if not isinstance(card, dict):
@@ -158,6 +184,10 @@ def parse_note_card(item: dict, *, rank: int, tenant_id: str) -> dict | None:
         title = f"小红书笔记 {note_id[:8]}"
     xsec_token = card.get("xsec_token") or item.get("xsec_token")
     xsec_source = card.get("xsec_source") or item.get("xsec_source") or "pc_feed"
+    if not xsec_token:
+        nested_token, nested_source = find_xsec_in_payload(item)
+        xsec_token = xsec_token or nested_token
+        xsec_source = xsec_source or nested_source or "pc_feed"
     ip_location = card.get("ip_location") or card.get("ipLocation") or ""
     create_time = card.get("time") or card.get("create_time") or card.get("last_update_time")
     return {

@@ -3,7 +3,7 @@
     <header class="portal-login-bar">
       <div class="portal-login-bar-text">
         <strong>盈小蚁客户前端</strong>
-        <span>登录盈小蚁客户账号后，可使用数据看板、账号绑定与本机智能获客能力</span>
+        <span>登录盈小蚁客户账号后可使用云端数据看板与客服管理；本机智能获客无需此登录</span>
       </div>
     </header>
 

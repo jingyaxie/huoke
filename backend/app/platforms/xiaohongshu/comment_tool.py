@@ -10,7 +10,12 @@ from app.platforms.session_store import PlatformSessionStore
 from app.platforms.xiaohongshu.constants import COMMENT_PAGE_PATH, COMMENT_SUB_PATH, PLATFORM
 from app.platforms.xiaohongshu.js_api import XhsJsApiTool
 from app.platforms.xiaohongshu.js_constants import DEFAULT_MAX_COMMENTS, _build_comment_page_url
-from app.platforms.xiaohongshu.utils import extract_note_access_params, extract_note_id, normalize_xhs_comment
+from app.platforms.xiaohongshu.utils import (
+    extract_note_access_params,
+    extract_note_id,
+    normalize_xhs_comment,
+    resolve_note_open_url,
+)
 from app.services.playwright_pool import PlaywrightPool
 
 
@@ -96,6 +101,75 @@ class XhsCommentTool(XhsJsApiTool):
                 except Exception:
                     pass
 
+    async def _open_note_for_comments(
+        self,
+        page,
+        note_id: str,
+        note_url: str,
+    ) -> tuple[str, str | None]:
+        """打开笔记详情；优先带 xsec_token 的链接，避免 explore/{id} 裸链 404。"""
+        from app.services.ui_flow.platforms.xiaohongshu.feed_ui import (
+            _click_note_on_search_list,
+            _page_note_access_ok,
+            find_note_href_on_search,
+            page_has_search_note_cards,
+        )
+
+        access = extract_note_access_params(note_url)
+        candidates: list[str] = []
+        if note_url:
+            candidates.append(note_url)
+        resolved = resolve_note_open_url(note_id, content_url=note_url, note_meta={"note_id": note_id, **access})
+        if resolved and resolved not in candidates:
+            candidates.append(resolved)
+        href = await find_note_href_on_search(page, note_id)
+        if href and href not in candidates:
+            candidates.insert(0, href)
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for url in candidates:
+            key = str(url or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+
+        warning: str | None = None
+
+        on_search = "search_result" in (page.url or "") or await page_has_search_note_cards(page)
+        if on_search and await _click_note_on_search_list(
+            page,
+            self.settings,
+            tenant_id=self.tenant_id,
+            note_id=note_id,
+        ):
+            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+            if await _page_note_access_ok(page):
+                return str(page.url or note_url).strip(), None
+
+        for open_url in ordered:
+            if not extract_note_access_params(open_url).get("xsec_token"):
+                continue
+            await page.goto(open_url, wait_until="domcontentloaded", timeout=120000)
+            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+            if await _page_note_access_ok(page):
+                return open_url, None
+
+        for open_url in ordered:
+            await page.goto(open_url, wait_until="domcontentloaded", timeout=120000)
+            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
+            if await _page_note_access_ok(page):
+                used = open_url
+                if not extract_note_access_params(used).get("xsec_token"):
+                    warning = "笔记链接缺少 xsec_token，页面可能不稳定或评论接口受限"
+                return used, warning
+
+        warning = "无法打开笔记详情（可能缺少 xsec_token 或笔记已删除）"
+        fallback = ordered[0] if ordered else note_url
+        return fallback, warning
+
     async def _fetch_comments_via_nav(
         self,
         page,
@@ -107,6 +181,7 @@ class XhsCommentTool(XhsJsApiTool):
     ) -> dict:
         access = extract_note_access_params(note_url)
         captured_pages: list[dict] = []
+        open_warning: str | None = None
 
         async def on_response(resp):
             try:
@@ -123,7 +198,23 @@ class XhsCommentTool(XhsJsApiTool):
 
         page.on("response", on_response)
         try:
-            await page.goto(note_url, wait_until="domcontentloaded", timeout=120000)
+            note_url, open_warning = await self._open_note_for_comments(page, note_id, note_url)
+            access = extract_note_access_params(note_url)
+            from app.services.ui_flow.platforms.xiaohongshu.feed_ui import _page_note_access_ok
+
+            if not await _page_note_access_ok(page):
+                return {
+                    "platform": PLATFORM,
+                    "note_id": note_id,
+                    "note_url": note_url,
+                    "video_url": note_url,
+                    "api_total_top_comments": 0,
+                    "top_comments_captured": 0,
+                    "total_comments_captured": 0,
+                    "capture_method": "open_failed",
+                    "warning": open_warning or "笔记详情打开失败（404 或缺少 xsec_token）",
+                    "comments": [],
+                }
             for _ in range(6):
                 if captured_pages:
                     break
@@ -185,6 +276,8 @@ class XhsCommentTool(XhsJsApiTool):
                 warning = f"{api_error}；{warning}"
             elif not access.get("xsec_token"):
                 warning = "笔记链接缺少 xsec_token，评论接口可能拒绝访问；请通过搜索接口获取完整笔记链接。"
+            if open_warning:
+                warning = f"{open_warning}；{warning}" if warning else open_warning
             return {
                 "platform": PLATFORM,
                 "note_id": note_id,
@@ -212,9 +305,10 @@ class XhsCommentTool(XhsJsApiTool):
         comments = [row for row in comments if row.get("comment_id") in kept_ids]
         preview_reply_rows = [row for row in comments if row.get("parent_comment_id")]
         expected_reply_total = sum(int(row.get("reply_comment_total") or 0) for row in top_rows)
-        warning = None
+        warning = open_warning
         if api_total > max_comments:
-            warning = f"已限制抓取前 {max_comments} 条顶层评论（接口总数 {api_total}）。"
+            limit_note = f"已限制抓取前 {max_comments} 条顶层评论（接口总数 {api_total}）。"
+            warning = f"{warning}；{limit_note}" if warning else limit_note
         return {
             "platform": PLATFORM,
             "note_id": note_id,

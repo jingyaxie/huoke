@@ -95,3 +95,12 @@ if (-not $installers -or $installers.Count -eq 0) {
 $installers | ForEach-Object {
   Write-Host "  Installer: $($_.FullName)"
 }
+
+Write-Host ""
+Write-Host "==> Verifying bundled runtime in desktop/bundle"
+$preparedBundle = Join-Path $DesktopDir "bundle"
+if (-not (Test-Path $preparedBundle)) {
+  throw "Prepared bundle missing: $preparedBundle (prepare_desktop_bundle.ps1 should run before Tauri build)"
+}
+& (Join-Path $PSScriptRoot "verify_windows_bundle.ps1") -BundleDir $preparedBundle
+if ($LASTEXITCODE -ne 0) { throw "verify_windows_bundle.ps1 failed" }

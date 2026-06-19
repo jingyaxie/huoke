@@ -19,6 +19,37 @@ from app.platforms.xiaohongshu.utils import extract_note_id
 from app.services.playwright_pool import PlaywrightPool
 
 
+def _apply_comment_days_filter(payload: dict, comment_days: int | None, *, max_comments: int) -> None:
+    """按 comment_days 过滤已抓评论（与抖音 profile/keyword 路径一致）。"""
+    if comment_days is None:
+        return
+    from app.platforms.douyin.video_comments_passive import _days_cutoff_ts, _filter_comments_by_days
+
+    cutoff = _days_cutoff_ts(comment_days)
+    before_count = len(payload.get("comments") or [])
+    api_total = int(payload.get("api_total_top_comments") or before_count or 0)
+    comments_map = {
+        str(row.get("comment_id")): row
+        for row in (payload.get("comments") or [])
+        if row.get("comment_id")
+    }
+    filtered = _filter_comments_by_days(
+        comments_map,
+        cutoff_ts=cutoff,
+        max_comments=max_comments,
+    )
+    payload["comments"] = filtered
+    payload["total_comments_captured"] = len(filtered)
+    payload["top_comments_captured"] = len(
+        [row for row in filtered if not row.get("parent_comment_id")]
+    )
+    payload["comment_days"] = comment_days
+    if not filtered and api_total > 0:
+        payload["warning"] = (
+            f"接口返回 {api_total} 条评论，近 {comment_days} 天时间窗内 0 条"
+        )
+
+
 class XhsCommentCrawler:
     """组合搜索工具与评论工具的门面。"""
 
@@ -132,12 +163,14 @@ class XhsCommentCrawler:
                 template_url or await self._search.pick_api_template_url(page),
                 max_comments=max_comments,
             )
+            _apply_comment_days_filter(payload, comment_days, max_comments=max_comments)
             payload["platform"] = PLATFORM
             payload["profile_context"] = {
                 "profile_url": parsed.get("profile_url") or profile_url,
                 "user_id": parsed.get("user_id") or note.get("author_id") or "",
                 "note_entry_id": parsed.get("note_id") or "",
                 "video_publish_days": days,
+                "comment_days": comment_days,
             }
             if session_meta:
                 payload["profile_context"].update(
@@ -188,6 +221,7 @@ class XhsCommentCrawler:
         ui_search_only: bool = False,
         ui_first: bool = False,
         ui_flow_context: dict | None = None,
+        comment_days: int | None = None,
         **_,
     ) -> tuple[list[dict], list[Path], str | None, dict]:
         if guest_mode:
@@ -221,6 +255,7 @@ class XhsCommentCrawler:
                 ui_first=ui_first,
                 manual_search=manual_search,
                 ui_flow_context=ui_flow_context,
+                comment_days=comment_days,
             )
             session_meta["session_mode"] = await self._detect_session_mode_from_page(existing_page)
             return results, files, diagnostic, session_meta
@@ -241,6 +276,7 @@ class XhsCommentCrawler:
                 ui_first=ui_first,
                 manual_search=manual_search,
                 ui_flow_context=ui_flow_context,
+                comment_days=comment_days,
             )
             session_meta["session_mode"] = await self._detect_session_mode_from_page(page)
             return results, files, diagnostic, session_meta
@@ -267,6 +303,7 @@ class XhsCommentCrawler:
                 ui_first=ui_first,
                 manual_search=manual_search,
                 ui_flow_context=ui_flow_context,
+                comment_days=comment_days,
             )
             session_meta["session_mode"] = await self._detect_session_mode_from_page(page)
             return results, files, diagnostic, session_meta
@@ -286,30 +323,17 @@ class XhsCommentCrawler:
         ui_first: bool = False,
         manual_search: bool = False,
         ui_flow_context: dict | None = None,
+        comment_days: int | None = None,
     ) -> tuple[list[dict], list[Path], str | None]:
         captured_api_urls: list[str] = []
-        if ui_search_only:
-            note_urls, diagnostic = await self._search._ui_searchbar_keyword_search(
-                page,
-                keyword=keyword,
-                limit=limit,
-                captured_api_urls=captured_api_urls,
-                region=region,
-                days=days,
-            )
-        elif manual_search:
-            note_urls, diagnostic = await self._search.search_notes_from_existing_page(
-                page, keyword, limit, region=region, days=days
-            )
-        else:
-            note_urls, diagnostic = await self._search._thin_browser_keyword_search(
-                page,
-                keyword=keyword,
-                limit=limit,
-                captured_api_urls=captured_api_urls,
-                region=region,
-                days=days,
-            )
+        note_urls, diagnostic = await self._search._ui_searchbar_keyword_search(
+            page,
+            keyword=keyword,
+            limit=limit,
+            captured_api_urls=captured_api_urls,
+            region=region,
+            days=days,
+        )
         results, files = await self._crawl_notes_on_page(
             page,
             note_urls,
@@ -319,6 +343,7 @@ class XhsCommentCrawler:
             max_comments=max_comments,
             session_meta=session_meta or {},
             template_url=await self._search.pick_api_template_url(page, captured_api_urls),
+            comment_days=comment_days,
         )
         return results, files, diagnostic
 
@@ -333,6 +358,7 @@ class XhsCommentCrawler:
         max_comments: int,
         session_meta: dict,
         template_url: str | None = None,
+        comment_days: int | None = None,
     ) -> tuple[list[dict], list[Path]]:
         filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
@@ -346,11 +372,15 @@ class XhsCommentCrawler:
                 template_url or await self._search.pick_api_template_url(page),
                 max_comments=max_comments,
             )
+            _apply_comment_days_filter(payload, comment_days, max_comments=max_comments)
             payload["platform"] = PLATFORM
+            capture_days = comment_days if comment_days is not None else days
             payload["keyword_context"] = {
                 "keyword": keyword,
                 "search_keyword": filters.composed_keyword(),
-                "days": days,
+                "days": capture_days,
+                "video_publish_days": days,
+                "comment_days": comment_days,
                 "region": region,
                 "guest_mode": session_meta.get("guest_mode", False),
                 "session_mode": session_meta.get("session_mode"),

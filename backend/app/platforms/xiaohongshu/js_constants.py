@@ -23,6 +23,7 @@ DROP_QUERY_KEYS = {"x-s", "x-t", "x-s-common"}
 _SEARCH_API_EXCLUDES = ("login/qrcode", "suggest", "recommend")
 _API_TEMPLATE_MARKERS = (
     SEARCH_NOTES_PATH,
+    "/api/sns/web/v2/search/notes",
     HOMEFEED_PATH,
     COMMENT_PAGE_PATH,
     USER_OTHERINFO_PATH,
@@ -51,6 +52,7 @@ def _encode_search_keyword(keyword: str) -> str:
 
 
 def _build_search_url(keyword: str) -> str:
+    """已废弃：小红书搜索须走探索页搜索框，禁止拼接 search_result URL 直跳。"""
     return (
         f"https://www.xiaohongshu.com/search_result"
         f"?keyword={_encode_search_keyword(keyword)}&source=web_search_result_notes"
@@ -117,4 +119,6 @@ def _build_user_otherinfo_url(template_url: str, user_id: str) -> str:
 def _is_search_result_api(url: str) -> bool:
     if any(ex in url for ex in _SEARCH_API_EXCLUDES):
         return False
-    return SEARCH_NOTES_PATH in url
+    if "xiaohongshu.com" not in url:
+        return False
+    return "/search/notes" in url

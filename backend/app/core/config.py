@@ -66,9 +66,8 @@ class Settings(BaseSettings):
     antibot_viewport_width: int = 1440
     antibot_viewport_height: int = 1200
     antibot_locale: str = "zh-CN"
+    # 仅使用本机 Chrome/Chromium（Playwright channel），不打包内置 Chromium
     antibot_browser_channel: Optional[str] = "chrome"
-    # False 时 channel 启动失败直接报错，不回退 Playwright 内置 Chromium
-    antibot_playwright_fallback: bool = True
     antibot_persistent_profile: bool = True
     antibot_warmup_enabled: bool = True
 

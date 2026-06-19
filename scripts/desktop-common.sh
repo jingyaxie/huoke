@@ -73,3 +73,26 @@ resolve_huoke_bundle_dir() {
   fi
   echo "$root"
 }
+
+# macOS / Linux 桌面启动脚本用；Windows 打包走 desktop-run-backend.ps1
+find_chrome_executable() {
+  local candidate
+  case "$(uname -s)" in
+    Darwin)
+      candidate="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      if [[ -x "$candidate" ]]; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+      ;;
+    Linux)
+      for candidate in google-chrome google-chrome-stable chromium chromium-browser; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+          printf '%s' "$candidate"
+          return 0
+        fi
+      done
+      ;;
+  esac
+  return 1
+}

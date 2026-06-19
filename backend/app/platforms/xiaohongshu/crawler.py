@@ -323,79 +323,32 @@ class XhsCrawler:
         return results
 
     async def search_note_urls(self, keyword: str, limit: int, *, headless: bool = True) -> tuple[list[str], str | None]:
-        from urllib.parse import quote
+        from app.platforms.xiaohongshu.search import XhsSearchTool
+        from app.services.playwright_pool import PlaywrightPool
 
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
-        note_meta: dict[str, dict] = {}
-
-        async with async_playwright() as p:
-            browser = await launch_browser(p, self.settings, headless=headless)
-            context = await browser.new_context(**self._context_kwargs())
-            await apply_stealth(context, self.settings, tenant_id=self.tenant_id)
-            page = await context.new_page()
-
-            async def on_response(resp):
-                try:
-                    if SEARCH_NOTES_PATH not in resp.url or resp.status != 200:
-                        return
-                    data = await resp.json()
-                except Exception:
-                    return
-                for note_id in walk_note_ids(data):
-                    if note_id not in note_meta:
-                        note_meta[note_id] = {"note_id": note_id}
-                items = (data.get("data") or {}).get("items") or data.get("items") or []
-                for raw in items:
-                    if not isinstance(raw, dict):
-                        continue
-                    parsed = parse_note_card(raw, rank=0, tenant_id=self.tenant_id)
-                    if not parsed:
-                        continue
-                    note_id = parsed["external_id"]
-                    note_meta[note_id] = parsed.get("raw_data") or {"note_id": note_id}
-
-            page.on("response", on_response)
-            try:
-                search_url = f"https://www.xiaohongshu.com/search_result?keyword={quote(keyword)}&source=web_search_result_notes"
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=120000)
-                await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="page_load")
-                for _ in range(10):
-                    if len(note_meta) >= limit:
-                        break
-                    await human_scroll(page, self.settings, tenant_id=self.tenant_id)
-                if not note_meta:
-                    links = await page.locator('a[href*="/explore/"], a[href*="/discovery/item/"]').evaluate_all(
-                        "els => els.map(e => e.href)"
-                    )
-                    for href in links:
-                        match = re.search(r"(?:/explore/|/discovery/item/)([0-9a-fA-F]{16,32})", href or "")
-                        if match:
-                            note_meta[match.group(1)] = {"note_id": match.group(1)}
-            finally:
-                try:
-                    page.remove_listener("response", on_response)
-                except Exception:
-                    pass
-            await context.close()
-            await browser.close()
-
-        urls: list[str] = []
-        for note_id, meta in list(note_meta.items())[: limit * 2]:
-            from app.platforms.xiaohongshu.utils import build_note_url
-
-            urls.append(
-                build_note_url(
-                    note_id,
-                    meta.get("xsec_token"),
-                    meta.get("xsec_source") or "pc_search",
-                )
+        tool = XhsSearchTool(self.settings, self.tenant_id, self.store, account_id=self.account_id)
+        resolved_headless = headless_for_platform(self.settings, PLATFORM, headless)
+        captured_api_urls: list[str] = []
+        pool = PlaywrightPool.get()
+        async with pool.tenant_context(
+            PLATFORM,
+            self.tenant_id,
+            self.store,
+            self.settings,
+            headless=resolved_headless,
+            account_id=self.account_id,
+        ) as (_, page):
+            urls, diagnostic = await tool._ui_searchbar_keyword_search(
+                page,
+                keyword=keyword,
+                limit=limit,
+                captured_api_urls=captured_api_urls,
             )
-            if len(urls) >= limit:
-                break
 
-        diagnostic = None
         if not urls:
-            diagnostic = "搜索页未捕获到笔记，可能需要登录或触发小红书验证码。"
+            diagnostic = diagnostic or "搜索页未捕获到笔记，可能需要登录或触发小红书验证码。"
         elif not self.store.is_ready(self.store.load(self.tenant_id, self.account_id)):
-            diagnostic = "未检测到小红书登录态，部分笔记/评论可能抓取不全。"
+            extra = "未检测到小红书登录态，部分笔记/评论可能抓取不全。"
+            diagnostic = f"{diagnostic}；{extra}" if diagnostic else extra
         return urls[:limit], diagnostic

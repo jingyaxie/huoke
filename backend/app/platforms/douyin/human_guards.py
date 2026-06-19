@@ -88,12 +88,11 @@ async def assert_not_browser_blocked(page: Page) -> None:
     if reason == "so_landing_redirect":
         raise HumanBrowseGuardError(
             "当前页面被导向 so-landing.douyin.com（抖音识别为自动化浏览器）。"
-            "有头模式请使用系统 Chrome（ANTIBOT_BROWSER_CHANNEL=chrome），"
-            "或改用 headless: true 的内置 Chromium 无头模式。"
+            "请使用系统 Chrome（ANTIBOT_BROWSER_CHANNEL=chrome），并确保已登录抖音网页版。"
         )
     raise HumanBrowseGuardError(
         "当前页面返回 404，浏览器可能被抖音拦截。"
-        "有头请改用系统 Chrome，或切换 headless 模式。"
+        "请使用系统 Chrome（ANTIBOT_BROWSER_CHANNEL=chrome），并检查登录态。"
     )
 
 
