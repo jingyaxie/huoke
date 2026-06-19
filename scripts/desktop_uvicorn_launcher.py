@@ -25,14 +25,6 @@ def _register_windows_dll_dirs() -> None:
         os.path.join(base, "DLLs"),
         os.path.join(runtime_root, "msvc"),
     ]
-    site_packages = os.path.join(base, "Lib", "site-packages")
-    if os.path.isdir(site_packages):
-        for name in os.listdir(site_packages):
-            pkg_dir = os.path.join(site_packages, name)
-            if os.path.isdir(pkg_dir):
-                candidates.append(pkg_dir)
-
-    path_prefix: list[str] = []
     for candidate in candidates:
         if not os.path.isdir(candidate):
             continue
@@ -41,11 +33,11 @@ def _register_windows_dll_dirs() -> None:
                 os.add_dll_directory(candidate)
             except OSError:
                 pass
-        if candidate in (base, os.path.join(base, "DLLs"), os.path.join(runtime_root, "msvc")):
-            path_prefix.append(candidate)
-    if path_prefix and os.environ.get("HUOKE_DLL_BOOTSTRAP_DONE") != "1":
-        existing = os.environ.get("PATH", "")
-        os.environ["PATH"] = ";".join(path_prefix + ([existing] if existing else []))
+    if os.environ.get("HUOKE_DLL_BOOTSTRAP_DONE") != "1":
+        path_prefix = [p for p in candidates if os.path.isdir(p)]
+        if path_prefix:
+            existing = os.environ.get("PATH", "")
+            os.environ["PATH"] = ";".join(path_prefix + ([existing] if existing else []))
         os.environ["HUOKE_DLL_BOOTSTRAP_DONE"] = "1"
 
 

@@ -22,14 +22,6 @@ def _dll_search_dirs(base: str, runtime_root: str) -> list[str]:
         os.path.join(base, "DLLs"),
         os.path.join(runtime_root, "msvc"),
     ]
-    site_packages = os.path.join(base, "Lib", "site-packages")
-    if os.path.isdir(site_packages):
-        for name in os.listdir(site_packages):
-            pkg_dir = os.path.join(site_packages, name)
-            if os.path.isdir(pkg_dir):
-                dirs.append(pkg_dir)
-        for pyd in glob.glob(os.path.join(site_packages, "**", "*.pyd"), recursive=True):
-            dirs.append(os.path.dirname(pyd))
     unique: list[str] = []
     seen: set[str] = set()
     for candidate in dirs:
