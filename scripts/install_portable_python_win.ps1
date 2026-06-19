@@ -170,6 +170,11 @@ function Install-HuokePortablePython {
     throw "portable_dll_bootstrap.py missing: $bootstrapSrc"
   }
   Copy-Item $bootstrapSrc (Join-Path $pythonRoot "Lib\portable_dll_bootstrap.py") -Force
+  $stdioSrc = Join-Path $PSScriptRoot "desktop_stdio.py"
+  if (-not (Test-Path $stdioSrc)) {
+    throw "desktop_stdio.py missing: $stdioSrc"
+  }
+  Copy-Item $stdioSrc (Join-Path $pythonRoot "Lib\desktop_stdio.py") -Force
   Write-PortablePythonSitecustomize -PythonRoot $pythonRoot -RuntimeDir $RuntimeDir
 
   Write-Host "Installing pip + backend requirements..."

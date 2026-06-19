@@ -166,6 +166,11 @@ function Invoke-HuokePortableDllBootstrap {
       New-Item -ItemType Directory -Force -Path (Split-Path $bootstrap -Parent) | Out-Null
       Copy-Item $fallback $bootstrap -Force
       Write-Log "installed portable_dll_bootstrap.py into runtime Lib"
+      $fallbackStdio = Join-Path $ScriptDir "desktop_stdio.py"
+      if (Test-Path $fallbackStdio) {
+        Copy-Item $fallbackStdio (Join-Path $pythonRoot "Lib\desktop_stdio.py") -Force
+        Write-Log "installed desktop_stdio.py into runtime Lib"
+      }
     }
   }
   if (-not (Test-Path $bootstrap)) {

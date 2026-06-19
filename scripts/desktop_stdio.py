@@ -77,3 +77,21 @@ def safe_print(*args, **kwargs) -> None:
                     handle.write(text + "\n")
             except OSError:
                 pass
+
+
+def configure_pipe_stdio() -> None:
+    """Alias kept for portable_dll_bootstrap and other legacy callers."""
+    configure_desktop_stdio()
+
+
+def log_line(message: str, *, err: bool = False) -> None:
+    """Write one line without raising on broken pipe / flush errors."""
+    targets = (sys.stderr, sys.stdout) if err else (sys.stdout, sys.stderr)
+    for target in targets:
+        if target is None:
+            continue
+        try:
+            print(message, file=target)
+            return
+        except OSError:
+            continue
