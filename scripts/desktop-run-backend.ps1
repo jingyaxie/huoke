@@ -16,7 +16,8 @@ function Invoke-PythonStep {
   param(
     [string]$Label,
     [string]$PythonExe,
-    [string]$Code
+    [string]$Code,
+    [switch]$AllowFailure
   )
   Write-Log "preflight: $Label"
   $prevEap = $ErrorActionPreference
@@ -29,8 +30,12 @@ function Invoke-PythonStep {
       }
     }
     if ($LASTEXITCODE -ne 0) {
+      if ($AllowFailure) {
+        return $false
+      }
       throw "preflight failed at '$Label' (exit $LASTEXITCODE)"
     }
+    return $true
   } finally {
     $ErrorActionPreference = $prevEap
   }
@@ -75,17 +80,111 @@ function Test-PortInUse {
   return $false
 }
 
+function Invoke-HuokeNativeDiagnostics {
+  param(
+    [string]$PythonExe,
+    [string]$BundleDir
+  )
+  $diagScript = Join-Path $script:ScriptDir "diagnose_portable_python.py"
+  if (-not (Test-Path $diagScript)) {
+    Write-Log "WARN: diagnose_portable_python.py missing"
+    return
+  }
+  $env:HUOKE_BUNDLE_DIR = $BundleDir
+  $env:HUOKE_PYTHON_EXE = $PythonExe
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $PythonExe $diagScript 2>&1
+    if ($output) {
+      foreach ($line in @($output)) {
+        Write-Output "[backend] $line"
+      }
+    }
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+}
+
+function Repair-HuokeNativeRuntime {
+  param(
+    [string]$PythonExe,
+    [string]$BundleDir
+  )
+  $repairWheels = Join-Path $BundleDir "runtime/repair-wheels"
+  if (-not (Test-Path $repairWheels)) {
+    Write-Log "WARN: repair-wheels directory missing: $repairWheels"
+    return $false
+  }
+  Write-Log "attempting offline native repair from $repairWheels"
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $PythonExe -m pip install --disable-pip-version-check `
+      --no-index `
+      --find-links $repairWheels `
+      --force-reinstall `
+      greenlet playwright cryptography pydantic-core 2>&1
+    if ($output) {
+      foreach ($line in @($output)) {
+        Write-Output "[backend] $line"
+      }
+    }
+    return ($LASTEXITCODE -eq 0)
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+}
+
+function Invoke-HuokePreflight {
+  param(
+    [string]$PythonExe,
+    [string]$BundleDir,
+    [switch]$AllowRepair
+  )
+
+  $steps = @(
+    @{ Label = "python version"; Code = "import sys; print(sys.version)" },
+    @{ Label = "import uvicorn"; Code = "import uvicorn; print('uvicorn ok')" },
+    @{ Label = "import greenlet"; Code = "import greenlet; from greenlet._greenlet import _C_API; print('greenlet ok')" },
+    @{ Label = "import cryptography"; Code = "import cryptography; print('cryptography ok')" },
+    @{ Label = "import pydantic_core"; Code = "import pydantic_core; print('pydantic_core ok')" },
+    @{ Label = "import bootstrap"; Code = "from app.db.bootstrap import ensure_database_schema; print('bootstrap import ok')" },
+    @{ Label = "import playwright"; Code = "from playwright.async_api import async_playwright; print('playwright ok')" },
+    @{ Label = "import app.main"; Code = "from app.main import app; print('app.main ok')" },
+    @{ Label = "ensure_database_schema"; Code = "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')" }
+  )
+
+  foreach ($step in $steps) {
+    $ok = Invoke-PythonStep -Label $step.Label -PythonExe $PythonExe -Code $step.Code -AllowFailure
+    if ($ok) { continue }
+
+    if ($step.Label -eq "import greenlet" -and $AllowRepair) {
+      Invoke-HuokeNativeDiagnostics -PythonExe $PythonExe -BundleDir $BundleDir
+      if (Repair-HuokeNativeRuntime -PythonExe $PythonExe -BundleDir $BundleDir) {
+        Write-Log "native repair completed; retrying preflight"
+        return $false
+      }
+    }
+
+    Invoke-HuokeNativeDiagnostics -PythonExe $PythonExe -BundleDir $BundleDir
+    throw "preflight failed at '$($step.Label)'"
+  }
+  return $true
+}
+
 function Start-HuokeDesktopBackend {
   $DataDir = Resolve-HuokeDataDir
   $SourceBundleDir = Resolve-HuokeBundleDir
-  $BundleDir = Sync-HuokeBundleCache -SourceBundleDir $SourceBundleDir -DataDir $DataDir -Root $script:Root
+  $CachedBundleDir = Sync-HuokeBundleCache -SourceBundleDir $SourceBundleDir -DataDir $DataDir -Root $script:Root
+  $BundleDir = Sync-HuokeRuntimeWorkdir -SourceBundleDir $CachedBundleDir -DataDir $DataDir
   $BackendPort = if ($env:BACKEND_PORT) { [int]$env:BACKEND_PORT } else { 18765 }
   $StorageDir = Join-Path $DataDir "storage"
   $EnvFile = Join-Path $DataDir ".env.desktop"
   $DbFile = Join-Path $StorageDir "huoke_desktop.db"
 
   New-Item -ItemType Directory -Force -Path $DataDir, $StorageDir, (Join-Path $StorageDir "douyin/profile") | Out-Null
-  Write-Log "root=$($script:Root) sourceBundle=$SourceBundleDir bundle=$BundleDir"
+  Write-Log "root=$($script:Root) sourceBundle=$SourceBundleDir cachedBundle=$CachedBundleDir workBundle=$BundleDir"
 
   $ExampleEnv = Join-Path $script:Root ".env.desktop.example"
   if (-not (Test-Path $ExampleEnv)) {
@@ -143,6 +242,8 @@ function Start-HuokeDesktopBackend {
   Set-Location $BackendDir
 
   $env:DESKTOP_MODE = "true"
+  $env:HUOKE_BUNDLE_DIR = $BundleDir
+  $env:HUOKE_PYTHON_EXE = $Python
   $FrontendDist = Join-Path $BundleDir "frontend-dist"
   if (Test-Path $FrontendDist) {
     $env:FRONTEND_DIST_DIR = $FrontendDist
@@ -186,13 +287,22 @@ function Start-HuokeDesktopBackend {
     Write-Log "Chrome: $Chrome"
   }
 
-  Invoke-PythonStep -Label "python version" -PythonExe $Python -Code "import sys; print(sys.version)"
-  Invoke-PythonStep -Label "import uvicorn" -PythonExe $Python -Code "import uvicorn; print('uvicorn ok')"
-  Invoke-PythonStep -Label "import greenlet" -PythonExe $Python -Code "import greenlet; from greenlet._greenlet import _C_API; print('greenlet ok')"
-  Invoke-PythonStep -Label "import bootstrap" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; print('bootstrap import ok')"
-  Invoke-PythonStep -Label "import playwright" -PythonExe $Python -Code "from playwright.async_api import async_playwright; print('playwright ok')"
-  Invoke-PythonStep -Label "import app.main" -PythonExe $Python -Code "from app.main import app; print('app.main ok')"
-  Invoke-PythonStep -Label "ensure_database_schema" -PythonExe $Python -Code "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')"
+  $preflightOk = Invoke-HuokePreflight -PythonExe $Python -BundleDir $BundleDir -AllowRepair
+  if (-not $preflightOk) {
+    $BundleDir = Sync-HuokeRuntimeWorkdir -SourceBundleDir $CachedBundleDir -DataDir $DataDir -Force
+    $PortablePython = Find-PortablePythonExe -BundleDir $BundleDir
+    if ($PortablePython) {
+      $Python = $PortablePython
+      Set-PortablePythonEnv -PythonExe $Python
+      $env:HUOKE_BUNDLE_DIR = $BundleDir
+      $env:HUOKE_PYTHON_EXE = $Python
+      $PwBrowsers = Join-Path $BundleDir "runtime/playwright-browsers"
+      if (Test-Path $PwBrowsers) {
+        $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
+      }
+    }
+    $null = Invoke-HuokePreflight -PythonExe $Python -BundleDir $BundleDir
+  }
 
   Write-Log "starting uvicorn on port $BackendPort"
   $prevEap = $ErrorActionPreference
@@ -210,12 +320,17 @@ function Start-HuokeDesktopBackend {
 $script:ScriptDir = $PSScriptRoot
 $script:Root = if ($env:HUOKE_ROOT) { $env:HUOKE_ROOT } else { Split-Path -Parent $script:ScriptDir }
 . (Join-Path $script:ScriptDir "desktop-bundle-cache.ps1")
+. (Join-Path $script:ScriptDir "desktop-runtime-workdir.ps1")
 
 try {
   Write-Log "desktop-run-backend starting"
   Start-HuokeDesktopBackend
 } catch {
-  Write-Log ("FATAL: {0}" -f $_.Exception.Message)
+  $msg = $_.Exception.Message
+  if ($msg -match 'greenlet|native|DLL|vcruntime') {
+    $msg = "$msg`n`n建议: 1) 将安装目录加入杀毒白名单 2) 完全卸载后重装 3) 若提示缺少 vcruntime，安装 VC++ 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+  }
+  Write-Log ("FATAL: {0}" -f $msg)
   if ($_.ScriptStackTrace) {
     Write-Log $_.ScriptStackTrace
   }

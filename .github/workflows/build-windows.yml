@@ -53,39 +53,17 @@ jobs:
         shell: pwsh
         run: ./scripts/build_native_win.ps1
 
-      - name: Verify portable Python bundle
+      - name: Installed NSIS startup smoke (powershell.exe)
         shell: pwsh
         run: |
-          $py = @(
-            "desktop/bundle/runtime/python/python.exe",
-            "desktop/bundle/runtime/python/bin/python.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $py) {
-            throw "Missing portable Python runtime under desktop/bundle/runtime/python"
+          $installer = Get-ChildItem "desktop/src-tauri/target/release/bundle/nsis" -Filter "*.exe" |
+            Where-Object { $_.Name -notmatch 'uninstall' } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "NSIS installer exe not found"
           }
-          $env:PYTHONPATH = (Resolve-Path "desktop/bundle/backend").Path
-          & $py -c "import uvicorn; from app.main import app; print('bundle verify ok')"
-
-          if (-not (Test-Path "scripts/_python_win.ps1")) {
-            throw "Missing scripts/_python_win.ps1 (required by desktop-run-backend.ps1)"
-          }
-          $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-          if (-not $config.bundle.resources.'../../scripts/_python_win.ps1') {
-            throw "_python_win.ps1 not listed in tauri.conf.json bundle.resources"
-          }
-
-          if (-not $config.bundle.resources.'../../scripts/desktop-bundle-cache.ps1') {
-            throw "desktop-bundle-cache.ps1 not listed in tauri.conf.json bundle.resources"
-          }
-
-          $pwBrowsers = "desktop/bundle/runtime/playwright-browsers"
-          if (-not (Test-Path $pwBrowsers)) {
-            throw "Missing bundled Playwright browsers: $pwBrowsers"
-          }
-          $env:PLAYWRIGHT_BROWSERS_PATH = (Resolve-Path $pwBrowsers).Path
-          & $py (Resolve-Path "scripts/verify_playwright_bundle.py").Path
-          if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch verify failed" }
-          Write-Host "Bundled Playwright browsers verified under $pwBrowsers"
+          ./scripts/verify_nsis_installed.ps1 -InstallerPath $installer.FullName -BackendPort 18768
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

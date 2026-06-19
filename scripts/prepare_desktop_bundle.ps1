@@ -60,7 +60,16 @@ if (-not $PortablePython) {
 Write-Host "Verifying portable Python can load backend (production-like env)..."
 $env:PYTHONPATH = $TargetBackend
 $null = Set-PortablePythonEnvForExe -PythonExe $PortablePython
-& $PortablePython -c "import greenlet; from greenlet._greenlet import _C_API; from app.main import app; print('backend import ok')"
+$nativeSmoke = @"
+import greenlet
+from greenlet._greenlet import _C_API
+import cryptography
+import pydantic_core
+from playwright.async_api import async_playwright
+from app.main import app
+print('backend import ok')
+"@
+& $PortablePython -c $nativeSmoke
 if ($LASTEXITCODE -ne 0) { throw "backend import smoke test failed" }
 Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
@@ -69,9 +78,15 @@ Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   kind = "huoke-desktop-bundle"
   python = "runtime/python"
   playwright_browsers = "runtime/playwright-browsers"
+  repair_wheels = "runtime/repair-wheels"
+  msvc = "runtime/msvc"
   backend = "backend"
   frontend = "frontend-dist"
   notes = "Self-contained desktop runtime with bundled Playwright Chromium; system Chrome is optional."
 } | ConvertTo-Json | Set-Content -Path (Join-Path $BundleDir "BUNDLE_MANIFEST.json") -Encoding UTF8
+
+. "$PSScriptRoot/generate_runtime_manifest.ps1" -BundleDir $BundleDir
+. "$PSScriptRoot/desktop-runtime-workdir.ps1"
+$null = Test-HuokeRuntimeManifest -BundleDir $BundleDir -ThrowOnMismatch
 
 Write-Host "Bundle ready: $BundleDir"

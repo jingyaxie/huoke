@@ -20,29 +20,81 @@ function Find-PortablePythonExe {
 }
 
 function Write-PortablePythonSitecustomize {
-  param([Parameter(Mandatory = $true)][string]$PythonRoot)
+  param(
+    [Parameter(Mandatory = $true)][string]$PythonRoot,
+    [Parameter(Mandatory = $true)][string]$RuntimeDir
+  )
   $sitecustomize = Join-Path $PythonRoot "Lib\sitecustomize.py"
-  @'
+  $msvcRel = "../msvc"
+  if (Test-Path (Join-Path $RuntimeDir "msvc")) {
+    $msvcRel = "../msvc"
+  }
+  @"
 """Huoke portable Python: register DLL directories for native extensions on Windows."""
+import glob
 import os
 import sys
 
 
+def _safe_add_dll_directory(path: str) -> None:
+    if not path or not os.path.isdir(path):
+        return
+    if not hasattr(os, "add_dll_directory"):
+        return
+    try:
+        os.add_dll_directory(path)
+    except OSError:
+        pass
+
+
 def _register_windows_dll_dirs() -> None:
-    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+    if os.name != "nt":
         return
     base = os.path.dirname(os.path.abspath(sys.executable))
-    for name in ("", "DLLs"):
-        candidate = os.path.join(base, name) if name else base
-        if os.path.isdir(candidate):
+    runtime_root = os.path.dirname(base)
+    for candidate in (
+        base,
+        os.path.join(base, "DLLs"),
+        os.path.normpath(os.path.join(base, "$msvcRel")),
+        os.path.normpath(os.path.join(runtime_root, "msvc")),
+    ):
+        _safe_add_dll_directory(candidate)
+
+    site_packages = os.path.join(base, "Lib", "site-packages")
+    if os.path.isdir(site_packages):
+        for name in os.listdir(site_packages):
+            pkg_dir = os.path.join(site_packages, name)
+            if not os.path.isdir(pkg_dir):
+                continue
             try:
-                os.add_dll_directory(candidate)
+                if any(entry.lower().endswith(".pyd") for entry in os.listdir(pkg_dir)):
+                    _safe_add_dll_directory(pkg_dir)
             except OSError:
                 pass
+        for pyd in glob.glob(os.path.join(site_packages, "**", "*.pyd"), recursive=True):
+            _safe_add_dll_directory(os.path.dirname(pyd))
 
 
 _register_windows_dll_dirs()
-'@ | Set-Content -Path $sitecustomize -Encoding UTF8
+"@ | Set-Content -Path $sitecustomize -Encoding UTF8
+}
+
+function Copy-HuokeMsvcRuntime {
+  param(
+    [Parameter(Mandatory = $true)][string]$PythonRoot,
+    [Parameter(Mandatory = $true)][string]$RuntimeDir
+  )
+  $msvcDir = Join-Path $RuntimeDir "msvc"
+  New-Item -ItemType Directory -Force -Path $msvcDir | Out-Null
+  foreach ($name in @("vcruntime140.dll", "vcruntime140_1.dll")) {
+    foreach ($srcDir in @($PythonRoot, (Join-Path $PythonRoot "DLLs"))) {
+      $src = Join-Path $srcDir $name
+      if (Test-Path $src) {
+        Copy-Item $src (Join-Path $msvcDir $name) -Force
+        break
+      }
+    }
+  }
 }
 
 function Set-PortablePythonEnvForExe {
@@ -53,7 +105,12 @@ function Set-PortablePythonEnvForExe {
   }
   Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
   $env:PYTHONUTF8 = "1"
-  $dllDirs = @($pythonRoot, (Join-Path $pythonRoot "DLLs"))
+  $runtimeRoot = Split-Path $pythonRoot -Parent
+  $dllDirs = @(
+    $pythonRoot,
+    (Join-Path $pythonRoot "DLLs"),
+    (Join-Path $runtimeRoot "msvc")
+  )
   $prefix = (($dllDirs | Where-Object { Test-Path $_ }) -join ";")
   if ($prefix) {
     $env:PATH = "$prefix;$env:PATH"
@@ -73,6 +130,9 @@ function Install-HuokePortablePython {
     throw "Requirements file not found: $RequirementsFile"
   }
 
+  $RuntimeDir = Split-Path $TargetDir -Parent
+  $RepairWheelsDir = Join-Path $RuntimeDir "repair-wheels"
+
   $tarball = "cpython-$PythonVersion+$ReleaseTag-x86_64-pc-windows-msvc-install_only.tar.gz"
   $url = "https://github.com/astral-sh/python-build-standalone/releases/download/$ReleaseTag/$tarball"
   $tmpTar = Join-Path ([System.IO.Path]::GetTempPath()) "huoke-$tarball"
@@ -84,7 +144,7 @@ function Install-HuokePortablePython {
   if (Test-Path $TargetDir) {
     Remove-Item -Recurse -Force $TargetDir
   }
-  New-Item -ItemType Directory -Force -Path $stage, $TargetDir | Out-Null
+  New-Item -ItemType Directory -Force -Path $stage, $TargetDir, $RepairWheelsDir | Out-Null
 
   Write-Host "Downloading portable Python $PythonVersion (x86_64-pc-windows-msvc)..."
   Invoke-WebRequest -Uri $url -OutFile $tmpTar -UseBasicParsing
@@ -115,18 +175,44 @@ function Install-HuokePortablePython {
   if ((Split-Path $pythonRoot -Leaf) -eq "bin") {
     $pythonRoot = Split-Path $pythonRoot -Parent
   }
-  Write-PortablePythonSitecustomize -PythonRoot $pythonRoot
+
+  Copy-HuokeMsvcRuntime -PythonRoot $pythonRoot -RuntimeDir $RuntimeDir
+  Write-PortablePythonSitecustomize -PythonRoot $pythonRoot -RuntimeDir $RuntimeDir
 
   Write-Host "Installing pip + backend requirements..."
-  # Pipe subprocess stdout away from the success stream so callers can safely capture the return path.
   & $pythonExe -m ensurepip --upgrade 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "ensurepip failed with exit code $LASTEXITCODE" }
   & $pythonExe -m pip install --disable-pip-version-check -U pip setuptools wheel 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE" }
-  & $pythonExe -m pip install --disable-pip-version-check -r $RequirementsFile 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "pip install requirements failed with exit code $LASTEXITCODE" }
 
-  $BrowsersDir = Join-Path (Split-Path $TargetDir -Parent) "playwright-browsers"
+  Write-Host "Downloading offline repair wheels..."
+  if (Test-Path $RepairWheelsDir) {
+    Remove-Item -Recurse -Force $RepairWheelsDir
+  }
+  New-Item -ItemType Directory -Force -Path $RepairWheelsDir | Out-Null
+  & $pythonExe -m pip download --disable-pip-version-check `
+    -r $RequirementsFile `
+    -d $RepairWheelsDir `
+    --only-binary=:all: `
+    --platform win_amd64 `
+    --python-version 312 `
+    --implementation cp 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "WARN: pip download --only-binary failed; retrying without binary-only constraint"
+    & $pythonExe -m pip download --disable-pip-version-check `
+      -r $RequirementsFile `
+      -d $RepairWheelsDir 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "pip download repair wheels failed" }
+  }
+
+  Write-Host "Installing requirements from offline wheels..."
+  & $pythonExe -m pip install --disable-pip-version-check `
+    --no-index `
+    --find-links $RepairWheelsDir `
+    -r $RequirementsFile 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "offline pip install requirements failed with exit code $LASTEXITCODE" }
+
+  $BrowsersDir = Join-Path $RuntimeDir "playwright-browsers"
   if (Test-Path $BrowsersDir) {
     Remove-Item -Recurse -Force $BrowsersDir
   }
@@ -134,10 +220,8 @@ function Install-HuokePortablePython {
   $env:PLAYWRIGHT_BROWSERS_PATH = $BrowsersDir
 
   Write-Host "Installing Playwright Chromium into $BrowsersDir..."
-  Write-Host "  - full browser (--no-shell) for headed desktop automation"
   & $pythonExe -m playwright install chromium --no-shell 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "playwright install chromium --no-shell failed with exit code $LASTEXITCODE" }
-  Write-Host "  - headless shell (required by Playwright 1.6x for headless launch)"
   & $pythonExe -m playwright install chromium-headless-shell 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "playwright install chromium-headless-shell failed with exit code $LASTEXITCODE" }
 
@@ -147,8 +231,16 @@ function Install-HuokePortablePython {
   if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
 
   Set-PortablePythonEnvForExe -PythonExe $pythonExe | Out-Null
-  & $pythonExe -c "import greenlet; from greenlet._greenlet import _C_API; print('greenlet native ok')" 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "greenlet native extension smoke test failed" }
+  $nativeSmoke = @"
+import greenlet
+from greenlet._greenlet import _C_API
+import cryptography
+import pydantic_core
+from playwright.async_api import async_playwright
+print('native extensions ok')
+"@
+  & $pythonExe -c $nativeSmoke 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "native extension smoke test failed" }
 
   & $pythonExe -c "import uvicorn, fastapi, sqlalchemy, playwright; print('portable python smoke test ok')" 2>&1 | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "portable python import smoke test failed" }

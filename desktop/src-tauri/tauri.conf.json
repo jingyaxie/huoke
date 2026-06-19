@@ -45,6 +45,8 @@
       "../../scripts/desktop-run-backend.sh": "scripts/desktop-run-backend.sh",
       "../../scripts/desktop-run-backend.ps1": "scripts/desktop-run-backend.ps1",
       "../../scripts/desktop-bundle-cache.ps1": "scripts/desktop-bundle-cache.ps1",
+      "../../scripts/desktop-runtime-workdir.ps1": "scripts/desktop-runtime-workdir.ps1",
+      "../../scripts/diagnose_portable_python.py": "scripts/diagnose_portable_python.py",
       "../../scripts/_python_win.ps1": "scripts/_python_win.ps1",
       "../../.env.desktop.example": ".env.desktop.example"
     },

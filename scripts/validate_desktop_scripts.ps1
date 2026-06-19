@@ -27,7 +27,10 @@ try {
   foreach ($script in @(
       "scripts/desktop-run-backend.ps1",
       "scripts/desktop-bundle-cache.ps1",
+      "scripts/desktop-runtime-workdir.ps1",
+      "scripts/generate_runtime_manifest.ps1",
       "scripts/verify_installed_startup.ps1",
+      "scripts/verify_nsis_installed.ps1",
       "scripts/_python_win.ps1"
     )) {
     Test-PowerShellScriptSyntax -Path $script
@@ -37,10 +40,19 @@ try {
   if ($config.app.windows[0].url -ne "about:blank") {
     throw "main window must start at about:blank, got: $($config.app.windows[0].url)"
   }
+  foreach ($required in @(
+      "../../scripts/desktop-runtime-workdir.ps1",
+      "../../scripts/diagnose_portable_python.py"
+    )) {
+    if (-not $config.bundle.resources.$required) {
+      throw "missing bundle resource: $required"
+    }
+  }
   Write-Host "tauri.conf.json ok"
 
   if (Test-Path "desktop/bundle/runtime") {
     . (Join-Path $repoRoot "scripts/desktop-bundle-cache.ps1")
+    . (Join-Path $repoRoot "scripts/desktop-runtime-workdir.ps1")
     $bundleDir = (Resolve-Path "desktop/bundle").Path
     $asciiData = Join-Path $env:TEMP ("huoke-validate-cache-{0}" -f ([guid]::NewGuid().ToString('N')))
     $asciiRoot = Join-Path $env:TEMP "huoke-validate-ascii-root"
@@ -55,6 +67,20 @@ try {
         throw "portable python probe failed under ASCII path: $($probe.Output)"
       }
       Write-Host "bundle-cache ASCII guard ok"
+
+      $workData = Join-Path $env:TEMP ("huoke-validate-work-{0}" -f ([guid]::NewGuid().ToString('N')))
+      try {
+        $workBundle = Sync-HuokeRuntimeWorkdir -SourceBundleDir $bundleDir -DataDir $workData
+        $workCheck = Test-HuokeRuntimeManifest -BundleDir $workBundle
+        if (-not $workCheck.Ok) {
+          throw ("runtime-work manifest failed: " + ($workCheck.Issues -join "; "))
+        }
+        Write-Host "runtime-work sync ok"
+      } finally {
+        if (Test-Path $workData) {
+          Remove-Item -Recurse -Force $workData -ErrorAction SilentlyContinue
+        }
+      }
     } finally {
       if (Test-Path $asciiData) {
         Remove-Item -Recurse -Force $asciiData -ErrorAction SilentlyContinue
