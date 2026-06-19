@@ -1,25 +1,14 @@
 <template>
   <div class="portal-login">
-    <header class="portal-login-bar">
-      <div class="portal-login-bar-text">
-        <strong>盈小蚁客户前端</strong>
-        <span>登录盈小蚁客户账号后可使用云端数据看板与客服管理；本机智能获客无需此登录</span>
-      </div>
-    </header>
-
-    <div class="portal-login-body">
-      <div class="portal-login-frame-wrap">
-        <iframe
-          ref="frameRef"
-          class="portal-login-frame"
-          :src="loginUrl"
-          title="盈小蚁登录"
-          scrolling="yes"
-          referrerpolicy="no-referrer-when-downgrade"
-          @load="pingFrame"
-        />
-      </div>
-    </div>
+    <iframe
+      ref="frameRef"
+      class="portal-login-frame"
+      :src="loginUrl"
+      title="盈小蚁登录"
+      scrolling="yes"
+      referrerpolicy="no-referrer-when-downgrade"
+      @load="pingFrame"
+    />
   </div>
 </template>
 
@@ -87,62 +76,19 @@ onUnmounted(() => {
 
 <style scoped>
 .portal-login {
-  display: flex;
-  flex-direction: column;
   width: 100%;
   height: 100%;
-  min-height: 0;
-  background: #f8fafc;
-}
-
-.portal-login-bar {
-  flex-shrink: 0;
-  padding: 14px 28px;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.portal-login-bar-text {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  flex-wrap: wrap;
-  font-size: 14px;
-  color: #64748b;
-}
-
-.portal-login-bar-text strong {
-  font-size: 16px;
-  color: #0f172a;
-}
-
-.portal-login-body {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  min-height: 0;
-  padding: 32px 24px;
+  min-height: 100%;
   overflow: auto;
-  background: linear-gradient(160deg, #f0fdfa 0%, #f8fafc 45%, #eff6ff 100%);
-}
-
-.portal-login-frame-wrap {
-  width: min(920px, calc(100vw - 48px));
-  flex-shrink: 0;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
-  overflow: hidden;
+  background: linear-gradient(160deg, #f0f9ff 0%, #f8fafc 48%, #eff6ff 100%);
 }
 
 .portal-login-frame {
   display: block;
   width: 100%;
-  height: min(600px, calc(100vh - 140px));
-  min-height: 520px;
+  min-height: 100%;
+  height: 100vh;
   border: 0;
-  background: #fff;
+  background: transparent;
 }
 </style>
