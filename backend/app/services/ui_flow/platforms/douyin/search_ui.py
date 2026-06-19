@@ -331,7 +331,7 @@ async def _submit_searchbar_keyword(ctx: DouyinUiSession, keyword: str) -> None:
     if await search_input.count() == 0:
         return
     await _human_type_one_per_second(ctx, search_input, keyword)
-    await _submit_search(ctx)
+    await _submit_search(ctx, keyword=keyword)
 
 
 async def _search_input_locator(page, settings=None, tenant_id: str = "default"):
@@ -516,19 +516,30 @@ async def _human_type_one_per_second(
 
     await _clear_search_input(ctx, search_input)
 
-    typed_ok = False
     if antibot_suppressed_for_page(page):
-        typed_ok = await _type_into_focused_search_input(page, text)
-
-    if not typed_ok:
-        for char in text:
+        # 系统 Chrome：Playwright fill 才能同步 React；逐字 press 后校验失败会误触发清空。
+        await human_type(page, search_input, text, ctx.settings, tenant_id=ctx.tenant_id, clear_first=False)
+        await asyncio.sleep(random.uniform(0.25, 0.45))
+        if await _read_search_input_value(ctx) != text:
             with contextlib.suppress(Exception):
-                await search_input.press_sequentially(char, delay=30)
-            await asyncio.sleep(random.uniform(0.85, 1.1))
-
-    if await _read_search_input_value(ctx) != text:
-        await _clear_search_input(ctx, search_input)
-        await human_type(page, search_input, text, ctx.settings, tenant_id=ctx.tenant_id)
+                await _focus_search_input_via_dom(page)
+            await human_type(page, search_input, text, ctx.settings, tenant_id=ctx.tenant_id, clear_first=True)
+    else:
+        typed_ok = await _type_into_focused_search_input(page, text)
+        if not typed_ok:
+            for char in text:
+                with contextlib.suppress(Exception):
+                    await search_input.press_sequentially(char, delay=30)
+                await asyncio.sleep(random.uniform(0.85, 1.1))
+        if await _read_search_input_value(ctx) != text:
+            await human_type(
+                page,
+                search_input,
+                text,
+                ctx.settings,
+                tenant_id=ctx.tenant_id,
+                clear_first=False,
+            )
 
 
 async def _search_via_searchbar_ui(
@@ -552,7 +563,7 @@ async def _search_via_searchbar_ui(
 
     await _human_type_one_per_second(ctx, search_input, keyword)
     await asyncio.sleep(random.uniform(0.3, 0.6))
-    await _submit_search(ctx)
+    await _submit_search(ctx, keyword=keyword)
     return await _wait_search_page_results(ctx, rounds=12, allow_scroll=allow_scroll)
 
 
@@ -565,7 +576,7 @@ async def _search_via_searchbar(ctx: DouyinUiSession, keyword: str) -> bool:
     if await search_input.count() == 0:
         return False
     await _human_type_one_per_second(ctx, search_input, keyword)
-    await _submit_search(ctx)
+    await _submit_search(ctx, keyword=keyword)
     return await _wait_search_page_results(ctx, rounds=8)
 
 
@@ -708,6 +719,29 @@ def _exp(ctx: DouyinUiSession) -> DouyinUiFlowExperience | None:
     return ctx.experience if isinstance(ctx.experience, DouyinUiFlowExperience) else None
 
 
+async def _read_search_input_value_dom(page) -> str:
+    """从 DOM 读取搜索框 value（React 受控时比 input_value 更可靠）。"""
+    try:
+        return str(
+            await page.evaluate(
+                """() => {
+                    const nodes = Array.from(document.querySelectorAll('input'));
+                    const el = nodes.find((node) => {
+                        const e2e = node.getAttribute('data-e2e') || '';
+                        if (e2e === 'searchbar-input') return true;
+                        const ph = node.getAttribute('placeholder') || '';
+                        const rect = node.getBoundingClientRect();
+                        return ph.includes('搜索') && rect.width > 80 && rect.height > 10;
+                    });
+                    return el && el.value ? String(el.value).trim() : '';
+                }"""
+            )
+            or ""
+        ).strip()
+    except Exception:
+        return ""
+
+
 async def _read_search_input_value(ctx: DouyinUiSession) -> str:
     try:
         loc = await _search_input_locator(ctx.page, ctx.settings, tenant_id=ctx.tenant_id)
@@ -715,11 +749,41 @@ async def _read_search_input_value(ctx: DouyinUiSession) -> str:
             value = (await loc.input_value() or "").strip()
             if value:
                 return value
+            dom_value = await _read_search_input_value_dom(ctx.page)
+            if dom_value:
+                return dom_value
             with contextlib.suppress(Exception):
                 return (await loc.inner_text() or "").strip()
     except Exception:
         pass
-    return ""
+    return await _read_search_input_value_dom(ctx.page)
+
+
+async def _ensure_search_input_keyword(
+    ctx: DouyinUiSession,
+    search_input,
+    keyword: str,
+) -> bool:
+    """提交前确保搜索框里有关键词（不清空已有正确内容）。"""
+    text = str(keyword or "").strip()
+    if not text:
+        return False
+    current = await _read_search_input_value(ctx)
+    if current == text:
+        return True
+    page = ctx.page
+    with contextlib.suppress(Exception):
+        await search_input.focus()
+    await human_type(
+        page,
+        search_input,
+        text,
+        ctx.settings,
+        tenant_id=ctx.tenant_id,
+        clear_first=bool(current),
+    )
+    await asyncio.sleep(random.uniform(0.2, 0.35))
+    return await _read_search_input_value(ctx) == text
 
 
 async def _already_on_search_results(ctx: DouyinUiSession, keyword: str) -> bool:
@@ -732,14 +796,23 @@ async def _already_on_search_results(ctx: DouyinUiSession, keyword: str) -> bool
     return await _search_page_has_results(ctx.page)
 
 
-async def _submit_search(ctx: DouyinUiSession) -> None:
+async def _submit_search(ctx: DouyinUiSession, *, keyword: str | None = None) -> None:
     if ctx.state.get("search_submitted"):
         return
 
     page = ctx.page
+    kw = str(keyword or ctx.params.keyword or "").strip()
+    search_input = await _search_input_locator(page, ctx.settings, tenant_id=ctx.tenant_id)
+    if kw and await search_input.count():
+        await _ensure_search_input_keyword(ctx, search_input, kw)
+
     btn = page.locator('[data-e2e="searchbar-button"]').first
 
     async def do_submit() -> None:
+        if await search_input.count():
+            with contextlib.suppress(Exception):
+                await search_input.focus()
+            await asyncio.sleep(0.12)
         if await btn.count() > 0 and await btn.is_visible():
             await human_click(ctx.page, btn, ctx.settings, tenant_id=ctx.tenant_id)
             return
@@ -749,14 +822,32 @@ async def _submit_search(ctx: DouyinUiSession) -> None:
             return
         await page.keyboard.press("Enter")
 
-    await do_submit()
-    await asyncio.sleep(1.2)
-    await release_searchbar_focus(page)
+    navigated = False
+    for attempt in range(3):
+        if kw and await search_input.count():
+            await _ensure_search_input_keyword(ctx, search_input, kw)
+        await do_submit()
+        for _ in range(12):
+            if _on_search_results_url(page.url or ""):
+                navigated = True
+                break
+            await asyncio.sleep(0.35)
+        if navigated:
+            break
+        if attempt < 2:
+            with contextlib.suppress(Exception):
+                if await search_input.count():
+                    await search_input.focus()
+                await page.keyboard.press("Enter")
 
-    ctx.state["search_submitted"] = True
+    if navigated:
+        await asyncio.sleep(0.5)
+        await release_searchbar_focus(page)
+
+    ctx.state["search_submitted"] = navigated
     exp = _exp(ctx)
     if exp:
-        exp.record_phase("SEARCH", elapsed_ms=0, hints={"submit": "enter_or_button"})
+        exp.record_phase("SEARCH", elapsed_ms=0, hints={"submit": "enter_or_button", "navigated": navigated})
 
 
 async def _wait_search_results(
@@ -1370,7 +1461,7 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
             return UiStepResult(ok=False, error="E_SEARCH_UI", diagnostic="未找到搜索框")
 
         await _human_type_one_per_second(ctx, search_input, keyword)
-        await _submit_search(ctx)
+        await _submit_search(ctx, keyword=keyword)
 
         ready = await _wait_search_results(
             ctx,

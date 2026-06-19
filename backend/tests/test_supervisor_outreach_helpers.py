@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.services.supervisor_outreach_helpers import (
     build_reply_text,
     count_crawl_comments,
+    crawl_search_phase_succeeded,
     extract_crawl_payloads,
     validate_crawl_skill_result,
 )
@@ -66,6 +67,75 @@ def test_validate_crawl_skill_result_rejects_metadata_only():
     assert ok is False
     assert count == 0
     assert "结构化" in err or "comments" in err
+
+
+def test_validate_crawl_skill_result_accepts_search_phase_only():
+    ok, err, count = validate_crawl_skill_result(
+        {
+            "status": "partial",
+            "videos_processed": 0,
+            "total_comments_captured": 0,
+            "search_succeeded": True,
+            "search_url": "https://www.douyin.com/jingxuan/search/淋浴房",
+            "discovered_video_urls": [
+                "https://www.douyin.com/video/7123456789012345678",
+            ],
+            "discovered_video_count": 1,
+            "results": [],
+        }
+    )
+    assert ok is True
+    assert err == ""
+    assert count == 0
+
+
+def test_crawl_search_phase_succeeded_requires_urls_or_count():
+    assert crawl_search_phase_succeeded(
+        {
+            "search_succeeded": True,
+            "search_url": "https://www.douyin.com/jingxuan/search/kw",
+            "discovered_video_urls": ["https://www.douyin.com/video/1"],
+        }
+    )
+    assert crawl_search_phase_succeeded(
+        {
+            "search_succeeded": True,
+            "search_url": "https://www.xiaohongshu.com/search_result?keyword=淋浴房",
+            "discovered_video_urls": [
+                "https://www.xiaohongshu.com/explore/abc123",
+            ],
+        }
+    )
+    assert not crawl_search_phase_succeeded(
+        {
+            "search_succeeded": True,
+            "search_url": "https://www.douyin.com/jingxuan/search/kw",
+            "discovered_video_urls": [],
+            "discovered_video_count": 0,
+        }
+    )
+    assert not crawl_search_phase_succeeded({"search_succeeded": False})
+
+
+def test_validate_crawl_skill_result_accepts_xhs_search_phase_only():
+    ok, err, count = validate_crawl_skill_result(
+        {
+            "status": "partial",
+            "platform": "xiaohongshu",
+            "videos_processed": 0,
+            "total_comments_captured": 0,
+            "search_succeeded": True,
+            "search_url": "https://www.xiaohongshu.com/search_result?keyword=淋浴房",
+            "discovered_video_urls": [
+                "https://www.xiaohongshu.com/explore/5f8a1b2c3d4e5f6a7b8c9d0e",
+            ],
+            "discovered_video_count": 1,
+            "results": [],
+        }
+    )
+    assert ok is True
+    assert err == ""
+    assert count == 0
 
 
 def test_validate_crawl_skill_result_accepts_structured_comments():

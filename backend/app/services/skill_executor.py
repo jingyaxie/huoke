@@ -493,11 +493,50 @@ class SkillExecutor:
             meta = session_meta if isinstance(session_meta, dict) else {}
             videos_processed = int(meta.get("videos_processed") or len(results))
             raw_scanned = int(meta.get("raw_comments_scanned") or 0)
-            if error and not results and videos_processed <= 0:
-                return {"error": error, "diagnostic": error}
+            search_fields = {
+                k: meta[k]
+                for k in (
+                    "search_succeeded",
+                    "search_url",
+                    "discovered_video_urls",
+                    "discovered_video_count",
+                )
+                if k in meta
+            }
+            if error and not results and videos_processed <= 0 and not search_fields.get("search_succeeded"):
+                return {"error": error, "diagnostic": error, **search_fields}
             total_captured = sum(r.get("total_comments_captured", 0) for r in results)
             result_rows = results if include_full else _slim_keyword_results(results)
             if total_captured <= 0 and videos_processed <= 0:
+                from app.services.supervisor_outreach import crawl_search_phase_succeeded
+
+                if crawl_search_phase_succeeded(search_fields):
+                    summary = f"关键词「{keyword}」搜索已成功，本批未抓到评论，将继续浏览更多视频"
+                    partial: dict[str, Any] = {
+                        "skill_id": skill.id,
+                        "skill_name": skill.name,
+                        "type": "builtin",
+                        "handler": handler,
+                        "status": "partial",
+                        "platform": platform,
+                        "summary": summary,
+                        "keyword": keyword,
+                        "videos_processed": videos_processed,
+                        "total_comments_captured": 0,
+                        "results": result_rows,
+                        "diagnostic": error,
+                        **search_fields,
+                    }
+                    if meta.get("crawl_search_exhausted"):
+                        partial["crawl_search_exhausted"] = True
+                    watched = meta.get("watched_content_ids")
+                    job_id = str(params.get("job_id") or params.get("task_id") or "").strip()
+                    watched_job_id = str(meta.get("watched_job_id") or job_id or "").strip()
+                    if isinstance(watched, list) and watched:
+                        partial["watched_content_ids"] = watched
+                        if watched_job_id:
+                            partial["watched_job_id"] = watched_job_id
+                    return partial
                 diag = str(error or "").strip()
                 if not diag:
                     warnings = [
@@ -520,6 +559,7 @@ class SkillExecutor:
                     "videos_processed": videos_processed,
                     "total_comments_captured": 0,
                     "results": result_rows,
+                    **search_fields,
                 }
             summary = f"关键词「{keyword}」共处理 {videos_processed} 个视频，抓取 {total_captured} 条评论"
             if raw_scanned > total_captured:
@@ -542,6 +582,7 @@ class SkillExecutor:
                 "results": result_rows,
                 "diagnostic": error,
                 "hint": _LOCAL_COMMENT_HINT,
+                **search_fields,
             }
             if meta.get("comments_persisted"):
                 payload["comments_persisted"] = int(meta.get("comments_persisted") or 0)

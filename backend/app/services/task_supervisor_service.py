@@ -47,6 +47,7 @@ from app.services.supervisor_outreach import (
     resolve_outreach_action_with_policy_async,
     run_evaluate_leads_phase,
     validate_crawl_skill_result,
+    crawl_search_phase_succeeded,
 )
 from app.services.supervisor_action_guard import guard_supervisor_action, requires_lead_evaluation
 from app.services.supervisor_crawl_helpers import (
@@ -1717,6 +1718,7 @@ class TaskSupervisorService:
             leads_now = int(state.get("leads_collected") or 0)
             leads_qualified = int(state.get("leads_qualified") or 0)
             gate = crawl_evaluate_gate(brief, state)
+            search_phase_ok = crawl_search_phase_succeeded(skill_result)
             skill_flow_need_more = (
                 is_skill_flow_brief(brief)
                 and captured <= 0
@@ -1724,7 +1726,11 @@ class TaskSupervisorService:
                 and not skill_result.get("crawl_search_exhausted")
                 and (target_leads <= 0 or leads_now < target_leads)
                 and not (target_leads > 0 and leads_qualified >= target_leads)
-                and (videos_processed > 0 or bool(state.get("watched_content_ids")))
+                and (
+                    videos_processed > 0
+                    or bool(state.get("watched_content_ids"))
+                    or search_phase_ok
+                )
                 and not gate.force_evaluate
                 and not gate.suspend
             )
@@ -1735,7 +1741,10 @@ class TaskSupervisorService:
                     state["crawl_evaluate_gate_reason"] = gate.reason
             elif skill_flow_need_more:
                 state.pop("crawl_done", None)
-                state["last_crawl_error"] = "本批视频未抓到匹配评论，继续浏览更多视频"
+                if search_phase_ok and videos_processed <= 0:
+                    state["last_crawl_error"] = "搜索已成功，本批未抓到评论，继续浏览更多视频"
+                else:
+                    state["last_crawl_error"] = "本批视频未抓到匹配评论，继续浏览更多视频"
                 execution_plan = state.get("execution_plan")
                 if isinstance(execution_plan, dict):
                     steps = execution_plan.get("steps")

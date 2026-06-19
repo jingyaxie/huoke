@@ -445,6 +445,15 @@ class DouyinCommentCrawler:
                 page.remove_listener("response", on_response)
             except Exception:
                 pass
+        page_url = page.url or ""
+        search_url = page_url if ("/search/" in page_url or "/jingxuan/search/" in page_url) else ""
+        if video_urls:
+            if session_meta is not None:
+                session_meta["discovered_video_urls"] = list(video_urls)
+                session_meta["discovered_video_count"] = len(video_urls)
+                session_meta["search_succeeded"] = True
+                if search_url:
+                    session_meta["search_url"] = search_url
         filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
         files: list[Path] = []

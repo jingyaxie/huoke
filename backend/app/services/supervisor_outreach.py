@@ -90,14 +90,70 @@ def count_crawl_comments(skill_result: dict[str, Any]) -> int:
     return total
 
 
+def _is_search_results_url(url: str | None) -> bool:
+    u = (url or "").lower()
+    return "/search/" in u or "/jingxuan/search/" in u or "search_result" in u
+
+
+def extract_discovered_video_urls(skill_result: dict[str, Any]) -> list[str]:
+    """搜索阶段发现的视频 URL（与评论抓取结果解耦）。"""
+    raw = skill_result.get("discovered_video_urls")
+    urls: list[str] = []
+    seen: set[str] = set()
+    if isinstance(raw, list):
+        for item in raw:
+            clean = str(item or "").strip().split("?")[0]
+            if clean and clean not in seen:
+                seen.add(clean)
+                urls.append(clean)
+        if urls:
+            return urls
+    for row in skill_result.get("results") or []:
+        if not isinstance(row, dict):
+            continue
+        clean = str(
+            row.get("video_url") or row.get("content_url") or row.get("note_url") or ""
+        ).strip().split("?")[0]
+        if clean and clean not in seen:
+            seen.add(clean)
+            urls.append(clean)
+    aweme_ids = skill_result.get("search_aweme_ids")
+    if isinstance(aweme_ids, list):
+        for aid in aweme_ids:
+            token = str(aid or "").strip().split("?")[0]
+            if not token:
+                continue
+            clean = f"https://www.douyin.com/video/{token}"
+            if clean not in seen:
+                seen.add(clean)
+                urls.append(clean)
+    return urls
+
+
+def crawl_search_phase_succeeded(skill_result: dict[str, Any]) -> bool:
+    """搜索阶段已成功：有结果页 URL 且发现至少 1 条视频链接。"""
+    if skill_result.get("search_succeeded") is False:
+        return False
+    urls = extract_discovered_video_urls(skill_result)
+    if not urls and int(skill_result.get("discovered_video_count") or 0) <= 0:
+        return False
+    if skill_result.get("search_succeeded") is True:
+        return True
+    search_url = str(skill_result.get("search_url") or "").strip()
+    if _is_search_results_url(search_url) and (urls or int(skill_result.get("discovered_video_count") or 0) > 0):
+        return True
+    return False
+
+
 def validate_crawl_skill_result(skill_result: dict[str, Any]) -> tuple[bool, str, int]:
     videos = int(skill_result.get("videos_processed") or 0)
     count = count_crawl_comments(skill_result)
-    capture_mode = str(skill_result.get("capture_mode") or "").strip().lower()
     if videos > 0 and count >= 0:
         return True, "", count
     if count > 0:
         return True, "", count
+    if crawl_search_phase_succeeded(skill_result):
+        return True, "", 0
     return (
         False,
         "抓取结果缺少 comments 结构化数据或未浏览任何视频，无法入库",

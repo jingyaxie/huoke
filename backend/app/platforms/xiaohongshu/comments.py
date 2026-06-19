@@ -326,6 +326,33 @@ class XhsCommentCrawler:
         comment_days: int | None = None,
     ) -> tuple[list[dict], list[Path], str | None]:
         captured_api_urls: list[str] = []
+        watched: set[str] = set()
+        watched_job_id = ""
+        if isinstance(ui_flow_context, dict):
+            watched_job_id = str(
+                ui_flow_context.get("job_id")
+                or ui_flow_context.get("task_id")
+                or ""
+            ).strip()
+            supervisor_state = ui_flow_context.get("supervisor_state")
+            if not isinstance(supervisor_state, dict):
+                supervisor_state = {}
+            if watched_job_id:
+                stored_job = str(supervisor_state.get("job_id") or "").strip()
+                if stored_job and stored_job != watched_job_id:
+                    supervisor_state = {}
+            for raw in ui_flow_context.get("watched_content_ids") or []:
+                token = str(raw or "").strip()
+                if token:
+                    watched.add(token)
+            if isinstance(supervisor_state.get("watched_content_ids"), list):
+                stored_job = str(supervisor_state.get("job_id") or "").strip()
+                if not stored_job or not watched_job_id or stored_job == watched_job_id:
+                    for raw in supervisor_state.get("watched_content_ids") or []:
+                        token = str(raw or "").strip()
+                        if token:
+                            watched.add(token)
+
         note_urls, diagnostic = await self._search._ui_searchbar_keyword_search(
             page,
             keyword=keyword,
@@ -334,9 +361,33 @@ class XhsCommentCrawler:
             region=region,
             days=days,
         )
+        page_url = page.url or ""
+        search_url = page_url if self._search._on_search_results_page(page_url) else ""
+        if note_urls:
+            if session_meta is not None:
+                session_meta["discovered_video_urls"] = list(note_urls)
+                session_meta["discovered_video_count"] = len(note_urls)
+                session_meta["search_succeeded"] = True
+                if search_url:
+                    session_meta["search_url"] = search_url
+
+        fresh_urls: list[str] = []
+        for url in note_urls:
+            note_id = extract_note_id(url)
+            if note_id and note_id in watched:
+                continue
+            fresh_urls.append(url)
+            if len(fresh_urls) >= limit:
+                break
+        if session_meta is not None:
+            session_meta["videos_processed"] = 0
+            if not fresh_urls and watched:
+                session_meta["crawl_search_exhausted"] = True
+                diagnostic = diagnostic or "当前搜索列表已无新笔记可浏览，请更换关键词或放宽匹配规则"
+
         results, files = await self._crawl_notes_on_page(
             page,
-            note_urls,
+            fresh_urls,
             keyword=keyword,
             days=days,
             region=region,
@@ -344,6 +395,8 @@ class XhsCommentCrawler:
             session_meta=session_meta or {},
             template_url=await self._search.pick_api_template_url(page, captured_api_urls),
             comment_days=comment_days,
+            watched=watched,
+            watched_job_id=watched_job_id,
         )
         return results, files, diagnostic
 
@@ -359,12 +412,17 @@ class XhsCommentCrawler:
         session_meta: dict,
         template_url: str | None = None,
         comment_days: int | None = None,
+        watched: set[str] | None = None,
+        watched_job_id: str = "",
     ) -> tuple[list[dict], list[Path]]:
         filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         results: list[dict] = []
         files: list[Path] = []
+        watched_ids = watched if watched is not None else set()
         for url in note_urls:
             note_id = extract_note_id(url)
+            if note_id:
+                watched_ids.add(note_id)
             payload = await self._comments._fetch_comments_via_nav(
                 page,
                 note_id,
@@ -393,7 +451,13 @@ class XhsCommentCrawler:
             output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             results.append(payload)
             files.append(output)
+            if session_meta is not None:
+                session_meta["videos_processed"] = int(session_meta.get("videos_processed") or 0) + 1
             await human_pause(self.settings, tenant_id=self.tenant_id, profile="between_items")
+        if session_meta is not None:
+            session_meta["watched_content_ids"] = sorted(watched_ids)[-500:]
+            if watched_job_id:
+                session_meta["watched_job_id"] = watched_job_id
         return results, files
 
     async def _detect_session_mode_from_page(self, page) -> str:

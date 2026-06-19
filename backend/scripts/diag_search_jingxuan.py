@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""诊断精选页搜索框交互（有头）。"""
+"""诊断精选页搜索框交互（有头，复用桌面 storage_state 登录态）。"""
 from __future__ import annotations
 
 import asyncio
@@ -16,18 +16,31 @@ KEYWORD = sys.argv[1] if len(sys.argv) > 1 else "团餐"
 async def main() -> int:
     from app.core.config import get_settings
     from app.platforms.douyin.session import DouyinSessionStore
-    from app.services.human_journey.platforms.douyin.search_ui import (
+    from app.services.ui_flow.params import parse_ui_flow_params
+    from app.services.ui_flow.platforms.douyin.search_ui import (
         _focus_search_input_via_dom,
         _read_search_input_value,
         _search_input_locator,
         run_searchbar_keyword_search,
     )
+    from app.services.ui_flow.platforms.douyin.ui_session import DouyinUiSession
     from app.services.playwright_pool import PlaywrightPool
 
     settings = get_settings()
     store = DouyinSessionStore(settings)
+    login = store.login_status("default", account_id="default")
     pool = PlaywrightPool.get()
-    report: dict = {"keyword": KEYWORD, "steps": []}
+    report: dict = {
+        "keyword": KEYWORD,
+        "storage_root": str(settings.storage_root),
+        "login_status": login,
+        "steps": [],
+    }
+
+    if login.get("status") != "ready":
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print("登录态未就绪，请先在桌面 App 完成抖音账号绑定", file=sys.stderr)
+        return 2
 
     async with pool.tenant_context(
         "douyin", "default", store, settings, headless=False, account_id="default"
@@ -51,10 +64,7 @@ async def main() -> int:
             keyword=KEYWORD,
             limit=5,
         )
-        from app.services.human_journey.platforms.douyin.ui_session import DouyinUiSession
-        from app.services.human_journey.params import parse_journey_params
-
-        params = parse_journey_params(
+        params = parse_ui_flow_params(
             {"keyword": KEYWORD, "content_limit": 5, "ui_search_only": True},
             platform="douyin",
         )
