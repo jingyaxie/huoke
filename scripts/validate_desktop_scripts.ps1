@@ -32,44 +32,38 @@ try {
       "scripts/verify_installed_startup.ps1",
       "scripts/verify_nsis_installed.ps1",
       "scripts/verify_windows_bundle.ps1",
-      "scripts/desktop_run_backend.py",
-      "scripts/desktop_bundle_runtime.py",
       "scripts/_python_win.ps1"
     )) {
     Test-PowerShellScriptSyntax -Path $script
   }
 
-  $launcher = Join-Path $repoRoot "scripts/desktop_uvicorn_launcher.py"
-  if (-not (Test-Path $launcher)) {
-    throw "missing script: scripts/desktop_uvicorn_launcher.py"
+  $pythonScripts = @(
+    "desktop_uvicorn_launcher.py",
+    "desktop_run_backend.py",
+    "desktop_bundle_runtime.py",
+    "desktop_stdio.py",
+    "portable_dll_bootstrap.py"
+  )
+  foreach ($name in $pythonScripts) {
+    $path = Join-Path $repoRoot "scripts/$name"
+    if (-not (Test-Path $path)) {
+      throw "missing script: scripts/$name"
+    }
   }
-  $bootstrap = Join-Path $repoRoot "scripts/portable_dll_bootstrap.py"
-  if (-not (Test-Path $bootstrap)) {
-    throw "missing script: scripts/portable_dll_bootstrap.py"
-  }
+
   $py = Get-Command python -ErrorAction SilentlyContinue
   if (-not $py) {
     $py = Get-Command python3 -ErrorAction SilentlyContinue
   }
   if ($py) {
-    & $py.Source -m py_compile $launcher
-    if ($LASTEXITCODE -ne 0) {
-      throw "Python syntax error in scripts/desktop_uvicorn_launcher.py"
-    }
-    foreach ($extra in @("desktop_run_backend.py", "desktop_bundle_runtime.py", "desktop_stdio.py")) {
-      $path = Join-Path $repoRoot "scripts/$extra"
+    foreach ($name in $pythonScripts) {
+      $path = Join-Path $repoRoot "scripts/$name"
       & $py.Source -m py_compile $path
       if ($LASTEXITCODE -ne 0) {
-        throw "Python syntax error in scripts/$extra"
+        throw "Python syntax error in scripts/$name"
       }
-      Write-Host "syntax ok: scripts/$extra"
+      Write-Host "syntax ok: scripts/$name"
     }
-    & $py.Source -m py_compile $bootstrap
-    if ($LASTEXITCODE -ne 0) {
-      throw "Python syntax error in scripts/portable_dll_bootstrap.py"
-    }
-    Write-Host "syntax ok: scripts/desktop_uvicorn_launcher.py"
-    Write-Host "syntax ok: scripts/portable_dll_bootstrap.py"
   } else {
     Write-Host "WARN: python not found; skipped desktop python script syntax checks"
   }
