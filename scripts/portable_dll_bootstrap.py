@@ -137,19 +137,25 @@ def bootstrap_portable_python_dlls(*, heal_layout: bool = False) -> dict[str, ob
 if __name__ == "__main__":
     import argparse
 
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    if _script_dir not in sys.path:
+        sys.path.insert(0, _script_dir)
+    from desktop_stdio import configure_pipe_stdio, log_line
+
+    configure_pipe_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("--heal-only", action="store_true", help="Copy/preload DLLs without failing the process")
     args = parser.parse_args()
     info = bootstrap_portable_python_dlls(heal_layout=True)
-    print("portable_dll_bootstrap:", info, flush=True)
+    log_line(f"portable_dll_bootstrap: {info}")
     if args.heal_only:
         raise SystemExit(0)
     try:
         import greenlet  # noqa: F401
         from greenlet._greenlet import _C_API  # noqa: F401
 
-        print("greenlet ok", flush=True)
+        log_line("greenlet ok")
     except Exception as exc:
-        print(f"greenlet failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        log_line(f"greenlet failed: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(1) from exc
     raise SystemExit(0)

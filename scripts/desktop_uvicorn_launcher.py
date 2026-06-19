@@ -6,6 +6,12 @@ import argparse
 import os
 import sys
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from desktop_stdio import configure_pipe_stdio, log_line
+
 
 def _register_windows_dll_dirs() -> None:
     try:
@@ -52,36 +58,38 @@ def run_lifespan_smoke(app: object) -> None:
 
 
 def run_preflight(*, include_lifespan: bool = False) -> object:
+    configure_pipe_stdio()
     _register_windows_dll_dirs()
-    print("preflight: python", sys.version.split()[0], flush=True)
+    log_line(f"preflight: python {sys.version.split()[0]}")
 
     import greenlet  # noqa: F401
     from greenlet._greenlet import _C_API  # noqa: F401
 
-    print("greenlet ok", flush=True)
+    log_line("greenlet ok")
     import cryptography  # noqa: F401
 
-    print("cryptography ok", flush=True)
+    log_line("cryptography ok")
     import pydantic_core  # noqa: F401
 
-    print("pydantic_core ok", flush=True)
+    log_line("pydantic_core ok")
     from playwright.async_api import async_playwright  # noqa: F401
 
-    print("playwright ok", flush=True)
+    log_line("playwright ok")
     from app.db.bootstrap import ensure_database_schema
     from app.main import app
 
-    print("app.main ok", flush=True)
+    log_line("app.main ok")
     ensure_database_schema()
-    print("database schema ready", flush=True)
+    log_line("database schema ready")
     if include_lifespan:
         run_lifespan_smoke(app)
-        print("lifespan ok", flush=True)
-    print("preflight unified ok", flush=True)
+        log_line("lifespan ok")
+    log_line("preflight unified ok")
     return app
 
 
 def main() -> int:
+    configure_pipe_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=18765)
     parser.add_argument("--check-only", action="store_true")
@@ -90,10 +98,13 @@ def main() -> int:
     try:
         app = run_preflight(include_lifespan=args.check_only)
     except Exception as exc:
-        print(f"preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        log_line(f"preflight failed: {type(exc).__name__}: {exc}", err=True)
         import traceback
 
-        traceback.print_exc()
+        try:
+            traceback.print_exc()
+        except OSError:
+            pass
         return 1
 
     if args.check_only:
@@ -101,7 +112,7 @@ def main() -> int:
 
     import uvicorn
 
-    print(f"starting uvicorn on port {args.port}", flush=True)
+    log_line(f"starting uvicorn on port {args.port}")
     try:
         uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
     except SystemExit as exc:
@@ -110,10 +121,13 @@ def main() -> int:
             return 0
         return int(code) if isinstance(code, int) else 1
     except Exception as exc:
-        print(f"uvicorn failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        log_line(f"uvicorn failed: {type(exc).__name__}: {exc}", err=True)
         import traceback
 
-        traceback.print_exc()
+        try:
+            traceback.print_exc()
+        except OSError:
+            pass
         return 1
     return 0
 

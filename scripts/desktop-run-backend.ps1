@@ -12,6 +12,11 @@ function Write-Log {
   Write-Output ("[backend] [{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
 }
 
+function Set-HuokePythonProcessEnv {
+  $env:PYTHONIOENCODING = "utf-8"
+  $env:PYTHONUNBUFFERED = "1"
+}
+
 function Invoke-PythonScript {
   param(
     [Parameter(Mandatory = $true)][string]$Label,
@@ -19,6 +24,7 @@ function Invoke-PythonScript {
     [Parameter(Mandatory = $true)][string[]]$ArgumentList,
     [switch]$AllowFailure
   )
+  Set-HuokePythonProcessEnv
   Write-Log $Label
   # Do NOT pipe & output: PS 5.1 loses $LASTEXITCODE after a pipeline.
   # Use Continue so native stderr does not terminate before we read $LASTEXITCODE.
@@ -55,6 +61,7 @@ function Start-PythonLauncherServer {
   )
   Write-Log "starting backend launcher on port $Port"
   # Direct invocation streams Python stdout/stderr to Tauri without temp-file loss.
+  Set-HuokePythonProcessEnv
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
