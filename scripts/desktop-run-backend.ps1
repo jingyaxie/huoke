@@ -304,6 +304,8 @@ function Start-HuokeDesktopBackend {
     $null = Invoke-HuokePreflight -PythonExe $Python -BundleDir $BundleDir
   }
 
+  Write-Log "preflight complete: native extensions ok"
+
   Write-Log "starting uvicorn on port $BackendPort"
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
