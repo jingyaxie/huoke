@@ -12,32 +12,45 @@ function Write-Log {
   Write-Output ("[backend] [{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
 }
 
-function Invoke-PythonStep {
+function Invoke-PythonProcess {
   param(
-    [string]$Label,
-    [string]$PythonExe,
-    [string]$Code,
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string[]]$ArgumentList,
     [switch]$AllowFailure
   )
-  Write-Log "preflight: $Label"
-  $prevEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
+  Write-Log $Label
+  $stdoutFile = [IO.Path]::GetTempFileName()
+  $stderrFile = [IO.Path]::GetTempFileName()
   try {
-    $output = & $PythonExe -c $Code 2>&1
-    if ($output) {
-      foreach ($line in @($output)) {
-        Write-Output "[backend] $line"
+    $proc = Start-Process `
+      -FilePath $PythonExe `
+      -ArgumentList $ArgumentList `
+      -WorkingDirectory (Get-Location).Path `
+      -Wait `
+      -PassThru `
+      -NoNewWindow `
+      -RedirectStandardOutput $stdoutFile `
+      -RedirectStandardError $stderrFile
+    if (Test-Path $stdoutFile) {
+      Get-Content $stdoutFile | ForEach-Object {
+        if ($_) { Write-Output "[backend] $_" }
       }
     }
-    if ($LASTEXITCODE -ne 0) {
+    if (Test-Path $stderrFile) {
+      Get-Content $stderrFile | ForEach-Object {
+        if ($_) { Write-Output "[backend] $_" }
+      }
+    }
+    if ($proc.ExitCode -ne 0) {
       if ($AllowFailure) {
         return $false
       }
-      throw "preflight failed at '$Label' (exit $LASTEXITCODE)"
+      throw "$Label failed (exit $($proc.ExitCode))"
     }
     return $true
   } finally {
-    $ErrorActionPreference = $prevEap
+    Remove-Item $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -92,18 +105,7 @@ function Invoke-HuokeNativeDiagnostics {
   }
   $env:HUOKE_BUNDLE_DIR = $BundleDir
   $env:HUOKE_PYTHON_EXE = $PythonExe
-  $prevEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    $output = & $PythonExe $diagScript 2>&1
-    if ($output) {
-      foreach ($line in @($output)) {
-        Write-Output "[backend] $line"
-      }
-    }
-  } finally {
-    $ErrorActionPreference = $prevEap
-  }
+  Invoke-PythonProcess -Label "native diagnostics" -PythonExe $PythonExe -ArgumentList @($diagScript) -AllowFailure | Out-Null
 }
 
 function Repair-HuokeNativeRuntime {
@@ -117,60 +119,28 @@ function Repair-HuokeNativeRuntime {
     return $false
   }
   Write-Log "attempting offline native repair from $repairWheels"
-  $prevEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    $output = & $PythonExe -m pip install --disable-pip-version-check `
-      --no-index `
-      --find-links $repairWheels `
-      --force-reinstall `
-      greenlet playwright cryptography pydantic-core 2>&1
-    if ($output) {
-      foreach ($line in @($output)) {
-        Write-Output "[backend] $line"
-      }
-    }
-    return ($LASTEXITCODE -eq 0)
-  } finally {
-    $ErrorActionPreference = $prevEap
-  }
+  $ok = Invoke-PythonProcess -Label "native repair" -PythonExe $PythonExe -ArgumentList @(
+    "-m", "pip", "install", "--disable-pip-version-check",
+    "--no-index", "--find-links", $repairWheels,
+    "--force-reinstall", "greenlet", "playwright", "cryptography", "pydantic-core"
+  ) -AllowFailure
+  return $ok
 }
 
-function Invoke-HuokePreflight {
+function Invoke-HuokeBackendLauncher {
   param(
-    [string]$PythonExe,
-    [string]$BundleDir,
-    [switch]$AllowRepair
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string]$LauncherScript,
+    [int]$Port = 18765,
+    [switch]$CheckOnly,
+    [switch]$AllowFailure
   )
-
-  $steps = @(
-    @{ Label = "python version"; Code = "import sys; print(sys.version)" },
-    @{ Label = "import uvicorn"; Code = "import uvicorn; print('uvicorn ok')" },
-    @{ Label = "import greenlet"; Code = "import greenlet; from greenlet._greenlet import _C_API; print('greenlet ok')" },
-    @{ Label = "import cryptography"; Code = "import cryptography; print('cryptography ok')" },
-    @{ Label = "import pydantic_core"; Code = "import pydantic_core; print('pydantic_core ok')" },
-    @{ Label = "import bootstrap"; Code = "from app.db.bootstrap import ensure_database_schema; print('bootstrap import ok')" },
-    @{ Label = "import playwright"; Code = "from playwright.async_api import async_playwright; print('playwright ok')" },
-    @{ Label = "import app.main"; Code = "from app.main import app; print('app.main ok')" },
-    @{ Label = "ensure_database_schema"; Code = "from app.db.bootstrap import ensure_database_schema; ensure_database_schema(); print('database schema ready')" }
-  )
-
-  foreach ($step in $steps) {
-    $ok = Invoke-PythonStep -Label $step.Label -PythonExe $PythonExe -Code $step.Code -AllowFailure
-    if ($ok) { continue }
-
-    if ($step.Label -eq "import greenlet" -and $AllowRepair) {
-      Invoke-HuokeNativeDiagnostics -PythonExe $PythonExe -BundleDir $BundleDir
-      if (Repair-HuokeNativeRuntime -PythonExe $PythonExe -BundleDir $BundleDir) {
-        Write-Log "native repair completed; retrying preflight"
-        return $false
-      }
-    }
-
-    Invoke-HuokeNativeDiagnostics -PythonExe $PythonExe -BundleDir $BundleDir
-    throw "preflight failed at '$($step.Label)'"
+  $args = @($LauncherScript, "--port", "$Port")
+  if ($CheckOnly) {
+    $args += "--check-only"
   }
-  return $true
+  $label = if ($CheckOnly) { "unified preflight" } else { "starting uvicorn on port $Port" }
+  return Invoke-PythonProcess -Label $label -PythonExe $PythonExe -ArgumentList $args -AllowFailure:$AllowFailure
 }
 
 function Start-HuokeDesktopBackend {
@@ -287,8 +257,18 @@ function Start-HuokeDesktopBackend {
     Write-Log "Chrome: $Chrome"
   }
 
-  $preflightOk = Invoke-HuokePreflight -PythonExe $Python -BundleDir $BundleDir -AllowRepair
+  $LauncherScript = Join-Path $script:ScriptDir "desktop_uvicorn_launcher.py"
+  if (-not (Test-Path $LauncherScript)) {
+    throw "desktop_uvicorn_launcher.py missing under $($script:ScriptDir)"
+  }
+
+  $preflightOk = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly -AllowFailure
   if (-not $preflightOk) {
+    Invoke-HuokeNativeDiagnostics -PythonExe $Python -BundleDir $BundleDir
+    $repaired = Repair-HuokeNativeRuntime -PythonExe $Python -BundleDir $BundleDir
+    if ($repaired) {
+      Write-Log "native repair completed; retrying preflight"
+    }
     $BundleDir = Sync-HuokeRuntimeWorkdir -SourceBundleDir $CachedBundleDir -DataDir $DataDir -Force
     $PortablePython = Find-PortablePythonExe -BundleDir $BundleDir
     if ($PortablePython) {
@@ -301,22 +281,11 @@ function Start-HuokeDesktopBackend {
         $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
       }
     }
-    $null = Invoke-HuokePreflight -PythonExe $Python -BundleDir $BundleDir
+    $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly
   }
 
   Write-Log "preflight complete: native extensions ok"
-
-  Write-Log "starting uvicorn on port $BackendPort"
-  $prevEap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    & $Python -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort
-    if ($LASTEXITCODE -ne 0) {
-      throw "uvicorn exited with code $LASTEXITCODE"
-    }
-  } finally {
-    $ErrorActionPreference = $prevEap
-  }
+  $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
 }
 
 $script:ScriptDir = $PSScriptRoot

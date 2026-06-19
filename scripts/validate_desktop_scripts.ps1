@@ -28,6 +28,7 @@ try {
       "scripts/desktop-run-backend.ps1",
       "scripts/desktop-bundle-cache.ps1",
       "scripts/desktop-runtime-workdir.ps1",
+      "scripts/desktop_uvicorn_launcher.py",
       "scripts/generate_runtime_manifest.ps1",
       "scripts/verify_installed_startup.ps1",
       "scripts/verify_nsis_installed.ps1",
@@ -42,7 +43,8 @@ try {
   }
   foreach ($required in @(
       "../../scripts/desktop-runtime-workdir.ps1",
-      "../../scripts/diagnose_portable_python.py"
+      "../../scripts/diagnose_portable_python.py",
+      "../../scripts/desktop_uvicorn_launcher.py"
     )) {
     if (-not $config.bundle.resources.$required) {
       throw "missing bundle resource: $required"

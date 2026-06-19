@@ -126,7 +126,7 @@ try {
   $stdoutText = if (Test-Path $stdoutFile) { Get-Content $stdoutFile -Raw } else { "" }
   $stderrText = if (Test-Path $stderrFile) { Get-Content $stderrFile -Raw } else { "" }
   $combinedLog = "$stdoutText`n$stderrText"
-  foreach ($needle in @("preflight complete", "starting uvicorn", "runtime-work")) {
+  foreach ($needle in @("preflight unified ok", "starting uvicorn", "runtime-work")) {
     if ($combinedLog -notmatch [regex]::Escape($needle)) {
       Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
       throw "NSIS smoke missing expected log line: $needle"
