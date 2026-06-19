@@ -25,57 +25,30 @@ function Write-PortablePythonSitecustomize {
     [Parameter(Mandatory = $true)][string]$RuntimeDir
   )
   $sitecustomize = Join-Path $PythonRoot "Lib\sitecustomize.py"
-  $msvcRel = "../msvc"
-  if (Test-Path (Join-Path $RuntimeDir "msvc")) {
-    $msvcRel = "../msvc"
-  }
   @"
-"""Huoke portable Python: register DLL directories for native extensions on Windows."""
-import glob
+"""Huoke portable Python: bootstrap native extension DLL lookup on Windows."""
 import os
 import sys
 
 
-def _safe_add_dll_directory(path: str) -> None:
-    if not path or not os.path.isdir(path):
-        return
-    if not hasattr(os, "add_dll_directory"):
-        return
-    try:
-        os.add_dll_directory(path)
-    except OSError:
-        pass
-
-
-def _register_windows_dll_dirs() -> None:
-    if os.name != "nt":
-        return
+def _bootstrap() -> None:
     base = os.path.dirname(os.path.abspath(sys.executable))
-    runtime_root = os.path.dirname(base)
-    for candidate in (
-        base,
-        os.path.join(base, "DLLs"),
-        os.path.normpath(os.path.join(base, "$msvcRel")),
-        os.path.normpath(os.path.join(runtime_root, "msvc")),
-    ):
-        _safe_add_dll_directory(candidate)
+    if os.path.basename(base) == "bin":
+        base = os.path.dirname(base)
+    path = os.path.join(base, "Lib", "portable_dll_bootstrap.py")
+    if not os.path.isfile(path):
+        return
+    import importlib.util
 
-    site_packages = os.path.join(base, "Lib", "site-packages")
-    if os.path.isdir(site_packages):
-        for name in os.listdir(site_packages):
-            pkg_dir = os.path.join(site_packages, name)
-            if not os.path.isdir(pkg_dir):
-                continue
-            try:
-                if any(entry.lower().endswith(".pyd") for entry in os.listdir(pkg_dir)):
-                    _safe_add_dll_directory(pkg_dir)
-            except OSError:
-                pass
-        for pyd in glob.glob(os.path.join(site_packages, "**", "*.pyd"), recursive=True):
-            _safe_add_dll_directory(os.path.dirname(pyd))
+    spec = importlib.util.spec_from_file_location("portable_dll_bootstrap", path)
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.bootstrap_portable_python_dlls(heal_layout=True)
 
 
-_register_windows_dll_dirs()
+_bootstrap()
 "@ | Set-Content -Path $sitecustomize -Encoding UTF8
 }
 
@@ -177,6 +150,11 @@ function Install-HuokePortablePython {
   }
 
   Copy-HuokeMsvcRuntime -PythonRoot $pythonRoot -RuntimeDir $RuntimeDir
+  $bootstrapSrc = Join-Path $PSScriptRoot "portable_dll_bootstrap.py"
+  if (-not (Test-Path $bootstrapSrc)) {
+    throw "portable_dll_bootstrap.py missing: $bootstrapSrc"
+  }
+  Copy-Item $bootstrapSrc (Join-Path $pythonRoot "Lib\portable_dll_bootstrap.py") -Force
   Write-PortablePythonSitecustomize -PythonRoot $pythonRoot -RuntimeDir $RuntimeDir
 
   Write-Host "Installing pip + backend requirements..."
@@ -231,6 +209,10 @@ function Install-HuokePortablePython {
   if ($LASTEXITCODE -ne 0) { throw "playwright chromium launch smoke test failed" }
 
   Set-PortablePythonEnvForExe -PythonExe $pythonExe | Out-Null
+  $bootstrapScript = Join-Path $pythonRoot "Lib\portable_dll_bootstrap.py"
+  & $pythonExe $bootstrapScript 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "portable dll bootstrap failed" }
+
   $nativeSmoke = @"
 import greenlet
 from greenlet._greenlet import _C_API

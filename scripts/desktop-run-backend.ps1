@@ -116,23 +116,47 @@ function Invoke-HuokeNativeDiagnostics {
   Invoke-PythonProcess -Label "native diagnostics" -PythonExe $PythonExe -ArgumentList @($diagScript) -AllowFailure | Out-Null
 }
 
+function Invoke-HuokePortableDllBootstrap {
+  param(
+    [Parameter(Mandatory = $true)][string]$PythonExe,
+    [Parameter(Mandatory = $true)][string]$ScriptDir
+  )
+  $pythonRoot = Get-PortablePythonRoot -PythonExe $PythonExe
+  $bootstrap = Join-Path $pythonRoot "Lib\portable_dll_bootstrap.py"
+  if (-not (Test-Path $bootstrap)) {
+    $fallback = Join-Path $ScriptDir "portable_dll_bootstrap.py"
+    if (Test-Path $fallback) {
+      New-Item -ItemType Directory -Force -Path (Split-Path $bootstrap -Parent) | Out-Null
+      Copy-Item $fallback $bootstrap -Force
+      Write-Log "installed portable_dll_bootstrap.py into runtime Lib"
+    }
+  }
+  if (-not (Test-Path $bootstrap)) {
+    Write-Log "WARN: portable_dll_bootstrap.py missing"
+    return $false
+  }
+  return Invoke-PythonScript -Label "portable dll bootstrap" -PythonExe $PythonExe -ArgumentList @($bootstrap, "--heal-only") -AllowFailure
+}
+
 function Repair-HuokeNativeRuntime {
   param(
     [string]$PythonExe,
-    [string]$BundleDir
+    [string]$BundleDir,
+    [string]$ScriptDir
   )
+  $layoutOk = Invoke-HuokePortableDllBootstrap -PythonExe $PythonExe -ScriptDir $ScriptDir
   $repairWheels = Join-Path $BundleDir "runtime/repair-wheels"
   if (-not (Test-Path $repairWheels)) {
     Write-Log "WARN: repair-wheels directory missing: $repairWheels"
-    return $false
+    return $layoutOk
   }
   Write-Log "attempting offline native repair from $repairWheels"
-  $ok = Invoke-PythonProcess -Label "native repair" -PythonExe $PythonExe -ArgumentList @(
+  $pipOk = Invoke-PythonScript -Label "native repair" -PythonExe $PythonExe -ArgumentList @(
     "-m", "pip", "install", "--disable-pip-version-check",
     "--no-index", "--find-links", $repairWheels,
     "--force-reinstall", "greenlet", "playwright", "cryptography", "pydantic-core"
   ) -AllowFailure
-  return $ok
+  return ($layoutOk -or $pipOk)
 }
 
 function Invoke-HuokeBackendLauncher {
@@ -270,15 +294,19 @@ function Start-HuokeDesktopBackend {
     throw "desktop_uvicorn_launcher.py missing under $($script:ScriptDir)"
   }
 
+  if ($PortablePython) {
+    $null = Invoke-HuokePortableDllBootstrap -PythonExe $Python -ScriptDir $script:ScriptDir
+  }
+
   try {
     Start-PythonLauncherServer -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
   } catch {
     $startError = $_.Exception.Message
     Write-Log "backend launcher failed: $startError"
     Invoke-HuokeNativeDiagnostics -PythonExe $Python -BundleDir $BundleDir
-    $repaired = Repair-HuokeNativeRuntime -PythonExe $Python -BundleDir $BundleDir
+    $repaired = Repair-HuokeNativeRuntime -PythonExe $Python -BundleDir $BundleDir -ScriptDir $script:ScriptDir
     if ($repaired) {
-      Write-Log "native repair completed; retrying preflight"
+      Write-Log "native repair completed; retrying launcher"
     }
     $BundleDir = Sync-HuokeRuntimeWorkdir -SourceBundleDir $CachedBundleDir -DataDir $DataDir -Force
     $PortablePython = Find-PortablePythonExe -BundleDir $BundleDir
@@ -291,8 +319,12 @@ function Start-HuokeDesktopBackend {
       if (Test-Path $PwBrowsers) {
         $env:PLAYWRIGHT_BROWSERS_PATH = $PwBrowsers
       }
+      $null = Invoke-HuokePortableDllBootstrap -PythonExe $Python -ScriptDir $script:ScriptDir
     }
-    $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly
+    $preflightOk = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly -AllowFailure
+    if (-not $preflightOk) {
+      throw "native repair completed but preflight still failed; see diagnose output above"
+    }
     Start-PythonLauncherServer -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
   }
 }

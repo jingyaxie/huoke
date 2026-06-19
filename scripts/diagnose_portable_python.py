@@ -80,6 +80,14 @@ def _check_file(label: str, path: Path, manifest: dict | None, manifest_suffix: 
 
 
 def main() -> int:
+    try:
+        import portable_dll_bootstrap
+
+        info = portable_dll_bootstrap.bootstrap_portable_python_dlls(heal_layout=True)
+        print(_prefix(f"bootstrap {info}"))
+    except Exception as exc:
+        print(_prefix(f"bootstrap skipped: {type(exc).__name__}: {exc}"))
+
     bundle_dir = os.environ.get("HUOKE_BUNDLE_DIR", "").strip()
     python_exe = os.environ.get("HUOKE_PYTHON_EXE", "").strip()
     if not python_exe:

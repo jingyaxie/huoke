@@ -40,6 +40,10 @@ try {
   if (-not (Test-Path $launcher)) {
     throw "missing script: scripts/desktop_uvicorn_launcher.py"
   }
+  $bootstrap = Join-Path $repoRoot "scripts/portable_dll_bootstrap.py"
+  if (-not (Test-Path $bootstrap)) {
+    throw "missing script: scripts/portable_dll_bootstrap.py"
+  }
   $py = Get-Command python -ErrorAction SilentlyContinue
   if (-not $py) {
     $py = Get-Command python3 -ErrorAction SilentlyContinue
@@ -49,9 +53,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Python syntax error in scripts/desktop_uvicorn_launcher.py"
     }
+    & $py.Source -m py_compile $bootstrap
+    if ($LASTEXITCODE -ne 0) {
+      throw "Python syntax error in scripts/portable_dll_bootstrap.py"
+    }
     Write-Host "syntax ok: scripts/desktop_uvicorn_launcher.py"
+    Write-Host "syntax ok: scripts/portable_dll_bootstrap.py"
   } else {
-    Write-Host "WARN: python not found; skipped desktop_uvicorn_launcher.py syntax check"
+    Write-Host "WARN: python not found; skipped desktop python script syntax checks"
   }
 
   $config = Get-Content "desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
@@ -61,7 +70,8 @@ try {
   foreach ($required in @(
       "../../scripts/desktop-runtime-workdir.ps1",
       "../../scripts/diagnose_portable_python.py",
-      "../../scripts/desktop_uvicorn_launcher.py"
+      "../../scripts/desktop_uvicorn_launcher.py",
+      "../../scripts/portable_dll_bootstrap.py"
     )) {
     if (-not $config.bundle.resources.$required) {
       throw "missing bundle resource: $required"

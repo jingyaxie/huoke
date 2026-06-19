@@ -8,6 +8,13 @@ import sys
 
 
 def _register_windows_dll_dirs() -> None:
+    try:
+        import portable_dll_bootstrap
+
+        portable_dll_bootstrap.bootstrap_portable_python_dlls(heal_layout=True)
+        return
+    except Exception:
+        pass
     if os.name != "nt":
         return
     exe = os.path.abspath(sys.executable)
