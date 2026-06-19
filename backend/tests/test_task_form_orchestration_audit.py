@@ -18,7 +18,9 @@ from app.services.task_execution_plan import build_supervisor_execution_plan
 from tests.helpers import API_HEADERS
 from tests.test_external_task_agent_e2e import (
     build_account_home_payload_like_frontend,
+    build_xhs_account_home_payload,
     build_xhs_auto_payload,
+    build_xhs_manual_payload,
 )
 from tests.test_frontend_payload_alignment import (
     DEFAULT_SETTINGS,
@@ -99,6 +101,8 @@ FORM_VARIANTS: list[tuple[str, callable, dict[str, Any]]] = [
     ("auto_basic", build_auto_task_payload_like_frontend, {"intent": "keyword_auto", "first_crawl": "crawl_keyword"}),
     ("auto_round_mode", _round_mode_auto_payload, {"intent": "keyword_auto", "first_crawl": "crawl_keyword", "has_round": True}),
     ("auto_xhs", build_xhs_auto_payload, {"intent": "keyword_auto", "first_crawl": "crawl_keyword", "platform": "xiaohongshu"}),
+    ("manual_xhs", build_xhs_manual_payload, {"intent": "single_video", "first_crawl": "crawl_content_url", "platform": "xiaohongshu"}),
+    ("account_home_xhs", build_xhs_account_home_payload, {"intent": "account_home", "first_crawl": "crawl_profile", "platform": "xiaohongshu"}),
     ("auto_kuaishou_unlimited", _kuaishou_auto_payload, {"intent": "keyword_auto", "first_crawl": "crawl_keyword", "platform": "kuaishou"}),
     ("auto_minimal", _minimal_auto_payload, {"intent": "keyword_auto", "first_crawl": "crawl_keyword"}),
     ("manual_single_video", build_manual_task_payload_like_frontend, {"intent": "single_video", "first_crawl": "crawl_content_url"}),

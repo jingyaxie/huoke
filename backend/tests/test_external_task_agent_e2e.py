@@ -61,12 +61,36 @@ def build_account_home_payload_like_frontend():
     }
 
 
+XHS_NOTE_URL = "https://www.xiaohongshu.com/explore/6a07f7370000000007021584"
+XHS_PROFILE_URL = "https://www.xiaohongshu.com/user/profile/634157fa000000001802ff07"
+
+
 def build_xhs_auto_payload():
     payload = build_auto_task_payload_like_frontend()
     payload["platform"] = "xiaohongshu"
     payload["agent_strategy"] = "skill-flow-xiaohongshu"
     payload["correlation"]["external_task_id"] = "xhs-auto-test"
     payload["correlation"]["idempotency_key"] = "xhs-auto-test"
+    return payload
+
+
+def build_xhs_manual_payload():
+    payload = build_manual_task_payload_like_frontend()
+    payload["platform"] = "xiaohongshu"
+    payload["scope"]["input_url"] = XHS_NOTE_URL
+    payload["agent_strategy"] = "skill-flow-xiaohongshu"
+    payload["correlation"]["external_task_id"] = "xhs-manual-test"
+    payload["correlation"]["idempotency_key"] = "xhs-manual-test"
+    return payload
+
+
+def build_xhs_account_home_payload():
+    payload = build_account_home_payload_like_frontend()
+    payload["platform"] = "xiaohongshu"
+    payload["scope"]["input_url"] = XHS_PROFILE_URL
+    payload["agent_strategy"] = "skill-flow-xiaohongshu"
+    payload["correlation"]["external_task_id"] = "xhs-account-home-test"
+    payload["correlation"]["idempotency_key"] = "xhs-account-home-test"
     return payload
 
 

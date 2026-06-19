@@ -27,6 +27,29 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Cache Rust crates
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          cache-on-failure: true
+
+      - name: Prefetch Rust dependencies
+        working-directory: desktop/src-tauri
+        env:
+          CARGO_NET_RETRY: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "cargo fetch attempt ${attempt}/5"
+            if cargo fetch; then
+              exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          echo "cargo fetch failed after 5 attempts" >&2
+          exit 1
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -56,6 +79,8 @@ jobs:
 
       - name: Build Windows NSIS installer
         shell: pwsh
+        env:
+          CARGO_NET_RETRY: 10
         run: ./scripts/build_native_win.ps1
 
       - name: Installed NSIS startup smoke (powershell.exe)
