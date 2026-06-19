@@ -18,3 +18,4 @@ def test_feed_modal_comment_wheel_targets():
     assert feed_ui._COMMENT_WHEEL_TARGETS[0].endswith('[data-e2e="comment-item"]')
     assert "feed-active-video" in feed_ui.COMMENT_SIDEBAR_SCROLL_JS
     assert "comment-item" in feed_ui.COMMENT_SIDEBAR_SCROLL_JS
+    assert "feed-comment-icon" in feed_ui._CLICK_COMMENT_ICON_JS

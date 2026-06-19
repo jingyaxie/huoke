@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 from typing import Any
 
@@ -26,6 +28,47 @@ _CLOSE_FEED_SELECTORS = (
     '[class*="close-btn"]',
 )
 _FEED_MODAL_COMMENT_ROOT = '[data-e2e="feed-active-video"]'
+_COMMENT_ICON_SELECTORS = (
+    '[data-e2e="feed-comment-icon"]',
+    '[data-e2e="comment-icon"]',
+    f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="feed-comment-icon"]',
+    '[class*="comment"] [data-e2e="feed-comment-icon"]',
+    '[class*="Interaction"] [class*="comment"]',
+    '[class*="interaction"] svg',
+)
+
+_CLICK_COMMENT_ICON_JS = """
+() => {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width >= 10 && r.height >= 10 && r.top >= 0 && r.bottom <= window.innerHeight + 4;
+  };
+  const clickEl = (el) => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    return true;
+  };
+  for (const sel of [
+    '[data-e2e="feed-comment-icon"]',
+    '[data-e2e="comment-icon"]',
+    '[data-e2e="detail-tab-comment"]',
+  ]) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (visible(el)) {
+        clickEl(el);
+        return sel;
+      }
+    }
+  }
+  for (const el of document.querySelectorAll('div[role="tab"], span, div, button')) {
+    const t = (el.textContent || '').replace(/\\s+/g, '');
+    if (t !== '评论' && !t.startsWith('评论(')) continue;
+    if (!visible(el)) continue;
+    clickEl(el);
+    return 'tab:评论';
+  }
+  return '';
+}
+"""
 _COMMENT_WHEEL_TARGETS = (
     f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="comment-item"]',
     '[data-e2e="comment-item"]',
@@ -63,22 +106,114 @@ COMMENT_SIDEBAR_SCROLL_JS = """
 """
 
 
-async def is_feed_detail_open(page) -> bool:
-    for selector in (
-        *_COMMENT_SIDEBAR_MARKERS,
-        _FEED_MODAL_COMMENT_ROOT,
-        '[data-e2e="feed-comment-icon"]',
-        '[data-e2e="video-player"]',
-    ):
+_FEED_OVERLAY_SELECTORS = (
+    _FEED_MODAL_COMMENT_ROOT,
+    '[data-e2e="feed-comment-icon"]',
+    '[data-e2e="comment-icon"]',
+    '[data-e2e="detail-tab-comment"]',
+)
+_SEARCH_LIST_POSTER_SELECTORS = (
+    '[class*="discover-video-card"]',
+    'div.search-result-card',
+    '[data-e2e="search-card-video"]',
+    '[class*="search-result-card"]',
+)
+
+
+async def _locator_visible(page, selector: str) -> bool:
+    try:
+        loc = page.locator(selector).first
+        return bool(await loc.count()) and await loc.is_visible()
+    except Exception:
+        return False
+
+
+async def feed_overlay_visible(page) -> bool:
+    """Feed 详情浮层/侧栏已实际渲染（不能仅凭 URL 上的 modal_id）。"""
+    for selector in _FEED_OVERLAY_SELECTORS:
+        if await _locator_visible(page, selector):
+            return True
+    for selector in _COMMENT_SIDEBAR_MARKERS:
+        if await _locator_visible(page, selector):
+            return True
+    return False
+
+
+async def search_list_visible(page) -> bool:
+    """仍在搜索列表页（无 Feed 浮层）。"""
+    url = (page.url or "").lower()
+    if "/search/" not in url and "/jingxuan/search/" not in url:
+        return False
+    if re.search(r"/video/\d+", url):
+        return False
+    if await feed_overlay_visible(page):
+        return False
+    for selector in _SEARCH_LIST_POSTER_SELECTORS:
         try:
-            loc = page.locator(selector).first
-            if await loc.count() and await loc.is_visible():
+            if await page.locator(selector).count() > 0:
                 return True
         except Exception:
             continue
+    return False
+
+
+async def classify_douyin_page(page) -> dict[str, Any]:
+    """综合 URL + DOM 判断当前页面阶段。"""
+    url = page.url or ""
+    url_l = url.lower()
+    on_search = "/search/" in url_l or "/jingxuan/search/" in url_l
+    on_video = bool(re.search(r"/video/\d+", url_l))
+    has_modal_param = "modal_id=" in url_l
+    feed_visible = await feed_overlay_visible(page)
+    list_visible = await search_list_visible(page)
+
+    if on_video:
+        phase = "video_page"
+    elif feed_visible:
+        phase = "feed_detail"
+    elif on_search and list_visible and not has_modal_param:
+        phase = "search_list"
+    elif on_search and has_modal_param and not feed_visible:
+        phase = "search_list"
+    elif on_search and list_visible:
+        phase = "search_list"
+    else:
+        phase = "unknown"
+
+    return {
+        "phase": phase,
+        "url": url,
+        "on_search": on_search,
+        "on_video": on_video,
+        "has_modal_param": has_modal_param,
+        "feed_visible": feed_visible,
+        "list_visible": list_visible,
+    }
+
+
+async def wait_feed_detail(page, *, max_sec: float = 6.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + max_sec
+    while asyncio.get_running_loop().time() < deadline:
+        if await is_feed_detail_open(page):
+            return True
+        await asyncio.sleep(0.15)
+    return False
+
+
+async def is_feed_detail_open(page) -> bool:
     url = (page.url or "").lower()
-    if "modal_id=" in url and "/search/" in url:
+    if re.search(r"/video/\d+", url):
         return True
+    if await feed_overlay_visible(page):
+        return True
+    # 搜索页上可能有背景 video-player，不能单独作为详情判定
+    if "/search/" not in url and "/jingxuan/search/" not in url:
+        try:
+            loc = page.locator('[data-e2e="video-player"]').first
+            if await loc.count() and await loc.is_visible():
+                return True
+        except Exception:
+            pass
     try:
         body = await page.locator("body").inner_text(timeout=1500)
         if "全部评论" in body and ("详情" in body or "相关推荐" in body):
@@ -88,16 +223,59 @@ async def is_feed_detail_open(page) -> bool:
     return False
 
 
+async def _has_visible_comment_items(page) -> bool:
+    """侧栏须可见评论项，不能仅凭 DOM 里隐藏的 comment-item 判定已打开。"""
+    for selector in (
+        f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="comment-item"]',
+        '[data-e2e="comment-item"]',
+        '[class*="CommentItem"]',
+    ):
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() and await loc.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _comment_sidebar_active(page) -> bool:
-    try:
-        modal_comments = page.locator(f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="comment-item"]').first
-        if await modal_comments.count() and await modal_comments.is_visible():
-            return True
-    except Exception:
-        pass
+    if await _has_visible_comment_items(page):
+        return True
     try:
         header = page.locator('text=全部评论').first
         return await header.count() > 0 and await header.is_visible()
+    except Exception:
+        return False
+
+
+async def _pause_feed_via_space(page) -> None:
+    with contextlib.suppress(Exception):
+        await page.keyboard.press("Space")
+        await asyncio.sleep(0.25)
+
+
+async def _click_comment_icon_via_dom(page) -> str:
+    try:
+        return str(await page.evaluate(_CLICK_COMMENT_ICON_JS) or "")
+    except Exception:
+        return ""
+
+
+async def _try_click_comment_target(
+    page,
+    target,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    timeout: float = 3500,
+) -> bool:
+    try:
+        loc = target if not isinstance(target, str) else page.locator(target).first
+        if not await loc.count() or not await loc.is_visible():
+            return False
+        await human_click(page, loc, settings, tenant_id=tenant_id, timeout=timeout)
+        return True
     except Exception:
         return False
 
@@ -167,51 +345,56 @@ async def activate_comment_sidebar_on_page(
         return True
 
     await pause_feed_video_on_page(page, settings, tenant_id=tenant_id)
-    await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
+    await _pause_feed_via_space(page)
 
-    icon_selectors = (
-        '[data-e2e="feed-comment-icon"]',
-        '[data-e2e="comment-icon"]',
-        f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="feed-comment-icon"]',
-        '[class*="comment"] [data-e2e="feed-comment-icon"]',
-    )
-    for _ in range(3):
+    for attempt in range(5):
         if await _comment_sidebar_active(page):
             return True
-        for selector in icon_selectors:
-            icon = page.locator(selector).first
-            try:
-                if await icon.count() and await icon.is_visible():
-                    await human_click(page, icon, settings, tenant_id=tenant_id)
-                    await human_delay(page, settings, tenant_id=tenant_id, profile="action")
-                    if await _comment_sidebar_active(page) or await page.locator('[data-e2e="comment-item"]').count():
-                        return True
-            except Exception:
-                continue
-        await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
 
-    candidates: list = []
-    for selector in _COMMENT_TAB_SELECTORS:
-        loc = page.locator(selector)
-        count = await loc.count()
-        for i in range(min(count, 5)):
-            candidates.append(loc.nth(i))
+        for selector in _COMMENT_ICON_SELECTORS:
+            if await _try_click_comment_target(
+                page,
+                selector,
+                settings,
+                tenant_id=tenant_id,
+            ):
+                await asyncio.sleep(0.45)
+                if await _comment_sidebar_active(page) or await _has_visible_comment_items(page):
+                    return True
 
-    for tab in candidates:
-        try:
-            if not await tab.is_visible():
-                continue
-            text = re.sub(r"\s+", "", (await tab.inner_text() or ""))
-            if text != "评论":
-                continue
-            await human_click(page, tab, settings, tenant_id=tenant_id)
-            await human_delay(page, settings, tenant_id=tenant_id, profile="action")
-            if await _comment_sidebar_active(page):
+        dom_hit = await _click_comment_icon_via_dom(page)
+        if dom_hit:
+            await asyncio.sleep(0.55)
+            if await _comment_sidebar_active(page) or await _has_visible_comment_items(page):
                 return True
-        except Exception:
-            continue
 
-    return await _comment_sidebar_active(page)
+        for selector in _COMMENT_TAB_SELECTORS:
+            loc = page.locator(selector)
+            count = await loc.count()
+            for i in range(min(count, 5)):
+                tab = loc.nth(i)
+                try:
+                    if not await tab.is_visible():
+                        continue
+                    text = re.sub(r"\s+", "", (await tab.inner_text() or ""))
+                    if not text.startswith("评论"):
+                        continue
+                    if await _try_click_comment_target(
+                        page,
+                        tab,
+                        settings,
+                        tenant_id=tenant_id,
+                    ):
+                        await asyncio.sleep(0.45)
+                        if await _comment_sidebar_active(page):
+                            return True
+                except Exception:
+                    continue
+
+        await _pause_feed_via_space(page)
+        await asyncio.sleep(0.35)
+
+    return await _comment_sidebar_active(page) or await _has_visible_comment_items(page)
 
 
 async def select_latest_comment_sort_on_page(

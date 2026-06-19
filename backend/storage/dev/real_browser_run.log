@@ -1,0 +1,115 @@
+﻿{
+  "storage_root": "C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\storage",
+  "login_status": {
+    "platform": "douyin",
+    "tenant_id": "default",
+    "account_id": "default",
+    "storage_state_path": "C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\storage\\douyin\\tenants\\default\\accounts\\default\\storage_state.json",
+    "profile_dir": "C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\storage\\douyin\\profile\\default\\default",
+    "profile_exists": false,
+    "profile_ready": false,
+    "encrypted": false,
+    "status": "ready",
+    "message": "鐧诲綍鎬佸彲鐢?,
+    "cookie_count": 60,
+    "cookie_names_preview": [
+      "",
+      "FOLLOW_LIVE_POINT_INFO",
+      "FOLLOW_NUMBER_YELLOW_POINT_INFO",
+      "IsDouyinActive",
+      "SelfTabRedDotControl",
+      "UIFID",
+      "UIFID_TEMP",
+      "__ac_nonce",
+      "__ac_signature",
+      "__security_mc_1_s_sdk_cert_key",
+      "__security_mc_1_s_sdk_crypt_sdk",
+      "__security_mc_1_s_sdk_sign_data_key_web_protect",
+      "__security_server_data_status",
+      "_bd_ticket_crypt_cookie",
+      "architecture",
+      "bd_ticket_guard_client_data",
+      "bd_ticket_guard_client_data_v2",
+      "bd_ticket_guard_client_web_domain",
+      "bd_ticket_guard_web_domain",
+      "bit_env"
+    ],
+    "required_cookies_present": [
+      "sessionid",
+      "sessionid_ss",
+      "sid_guard",
+      "sid_tt",
+      "uid_tt",
+      "uid_tt_ss"
+    ],
+    "user_logged_in": true,
+    "platform_user_id": "9b977a47a28267147e8a6785e3c7adde",
+    "uid": "9b977a47a28267147e8a6785e3c7adde"
+  },
+  "keyword": "娣嬫荡鎴?,
+  "reply_text": "鍚屾剰",
+  "dm_text": "hi",
+  "pause_between_steps": 25.0
+}
+python.exe : [fonts] install script failed: [WinError 2] 绯荤粺鎵句笉鍒版寚瀹氱殑鏂囦欢銆?
+所在位置 C:\Users\Administrator\AppData\Local\Temp\ps-script-2346e0a7-eb6a-423f-81c4-5db59290eb37.ps1:110 字符: 577
++ ... d=engine)"; & $py scripts/test_shower_room_steps.py --all --keyword 淋 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([fonts] install...粺鎵句笉鍒版寚瀹氱殑鏂囦欢銆?:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[fonts] bootstrap finished but no :lang=zh fonts (count=-1); 鍙娴忚鍣ㄤ腑鏂囧彲鑳芥棤娉曟樉绀猴紝璇烽噸寤?backend 闀滃儚
+[鑺傚] 澶嶇敤鍚屼竴娴忚鍣ㄧ獥鍙ｏ紝姣忔鏂板紑 Tab锛岄伩鍏嶉绻佸紑鍏崇獥鍙?
+
+
+============================================================
+STEP 1: 鎼滅储
+============================================================
+{
+  "step": 1,
+  "name": "search",
+  "keyword": "娣嬫荡鎴?,
+  "ok": true,
+  "elapsed_s": 15.37,
+  "diagnostic": "鎼滅储妗嗘悳绱㈠畬鎴?https://www.douyin.com/jingxuan/search/%E6%B7%8B%E6%B5%B4%E6%88%BF?aid=8fb1d6a0-88b9-4a92-9dba-b945454c99d6&type=general",
+  "video_urls": [
+    "https://www.douyin.com/video/7236305227954097445",
+    "https://www.douyin.com/video/7262010474215099687",
+    "https://www.douyin.com/video/7410021168779988224"
+  ],
+  "template_preview": "",
+  "captured_apis": 22,
+  "page_url": "https://www.douyin.com/"
+}
+
+[鑺傚] 鎼滅储瀹屾垚鍚庯紝鍋滈】 22s锛堟ā鎷熺湡浜猴紝鍕块绻佸紑鍏虫祻瑙堝櫒锛?
+
+
+============================================================
+STEP 2: 鎶撹瘎璁?
+============================================================
+TAB_AUDIT {"ts": 1781884602.027, "event": "tab_close", "source": "native_tracking_closer", "action": "page.close", "url
+": "about:blank", "reason": "tracking_popup_fallback"}
+{
+  "step": 2,
+  "name": "crawl_comments",
+  "video_url": "https://www.douyin.com/video/7236305227954097445",
+  "ok": false,
+  "error": "TargetClosedError: Page.goto: Target page, context or browser has been closed",
+  "trace": "nd\\app\\platforms\\douyin\\video_comments_passive.py\", line 199, in crawl_video_url_comments\n    await page.goto(video_url, wait_until=\"domcontentloaded\", timeout=60000)\n  File \"C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\runtime-work\\current\\runtime\\python\\Lib\\site-packages\\playwright\\async_api\\_generated.py\", line 9611, in goto\n    await self._impl_obj.goto(\n  File \"C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\runtime-work\\current\\runtime\\python\\Lib\\site-packages\\playwright\\_impl\\_page.py\", line 557, in goto\n    return await self._main_frame.goto(**locals_to_params(locals()))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\runtime-work\\current\\runtime\\python\\Lib\\site-packages\\playwright\\_impl\\_frame.py\", line 156, in goto\n    await self._channel.send(\n  File \"C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\runtime-work\\current\\runtime\\python\\Lib\\site-packages\\playwright\\_impl\\_connection.py\", line 69, in send\n    return await self._connection.wrap_api_call(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Administrator\\AppData\\Roaming\\com.huoke.desktop\\runtime-work\\current\\runtime\\python\\Lib\\site-packages\\playwright\\_impl\\_connection.py\", line 559, in wrap_api_call\n    raise rewrite_error(error, f\"{parsed_st['apiName']}: {error}\") from None\nplaywright._impl._errors.TargetClosedError: Page.goto: Target page, context or browser has been closed\n"
+}
+
+鐘舵€佹枃浠? C:\Users\Administrator\ai\huoke\backend\storage\dev\test_shower_room_state.json
+Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x0000028A7D9E9440>
+Traceback (most recent call last):
+  File "C:\Users\Administrator\AppData\Roaming\com.huoke.desktop\runtime-work\current\runtime\python\Lib\asyncio\base_s
+ubprocess.py", line 126, in __del__
+  File "C:\Users\Administrator\AppData\Roaming\com.huoke.desktop\runtime-work\current\runtime\python\Lib\asyncio\base_s
+ubprocess.py", line 104, in close
+  File "C:\Users\Administrator\AppData\Roaming\com.huoke.desktop\runtime-work\current\runtime\python\Lib\asyncio\proact
+or_events.py", line 109, in close
+  File "C:\Users\Administrator\AppData\Roaming\com.huoke.desktop\runtime-work\current\runtime\python\Lib\asyncio\base_e
+vents.py", line 799, in call_soon
+  File "C:\Users\Administrator\AppData\Roaming\com.huoke.desktop\runtime-work\current\runtime\python\Lib\asyncio\base_e
+vents.py", line 545, in _check_closed
+RuntimeError: Event loop is closed

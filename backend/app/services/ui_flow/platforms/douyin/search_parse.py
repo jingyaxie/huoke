@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.platforms.douyin.js_constants import _SEARCH_API_EXCLUDES, _SEARCH_RESULT_API_MARKERS
@@ -19,6 +20,65 @@ def search_nil_type(data: dict) -> str | None:
     if not isinstance(nil, dict):
         return None
     return str(nil.get("search_nil_type") or nil.get("search_nil_item") or "").strip() or None
+
+
+def search_api_min_items(limit: int) -> int:
+    """搜索完成判定所需的最少视频条数（不必等满 content_limit）。"""
+    return max(1, min(int(limit or 1), 3))
+
+
+@dataclass(frozen=True)
+class SearchApiOutcome:
+    ready: bool
+    reason: str
+    item_count: int
+    nil_type: str | None
+    verify_check: bool
+    explicit_empty: bool
+
+
+def analyze_search_api_response(data: Any, *, min_items: int = 1) -> SearchApiOutcome:
+    """根据 search/single 接口 JSON 判断本次搜索是否已有明确结论。"""
+    if not isinstance(data, dict):
+        return SearchApiOutcome(False, "invalid_payload", 0, None, False, False)
+
+    nil = search_nil_type(data)
+    if nil == "verify_check":
+        return SearchApiOutcome(False, "verify_check", 0, nil, True, False)
+
+    items = extract_aweme_items_from_json(data)
+    count = len(items)
+    if count >= max(1, int(min_items or 1)):
+        return SearchApiOutcome(True, f"items={count}", count, nil, False, False)
+
+    if nil:
+        return SearchApiOutcome(True, f"nil={nil}", count, nil, False, True)
+
+    status_code = data.get("status_code")
+    if status_code is not None and int(status_code) != 0:
+        return SearchApiOutcome(
+            True,
+            f"status_code={status_code}",
+            count,
+            nil,
+            False,
+            True,
+        )
+
+    if "has_more" in data and int(data.get("has_more") or 0) == 0 and data.get("data") is not None:
+        return SearchApiOutcome(True, "has_more=0", count, nil, False, count == 0)
+
+    return SearchApiOutcome(False, "pending", count, nil, False, False)
+
+
+def mark_search_api_flags(flags: dict[str, Any], outcome: SearchApiOutcome) -> None:
+    if outcome.verify_check:
+        flags["verify_check"] = True
+    if outcome.ready:
+        flags["api_complete"] = True
+        flags["api_complete_reason"] = outcome.reason
+        if outcome.explicit_empty:
+            flags["api_explicit_empty"] = True
 
 
 def normalize_search_aweme(node: dict) -> dict | None:

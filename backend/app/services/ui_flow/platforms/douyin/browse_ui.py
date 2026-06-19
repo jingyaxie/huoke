@@ -23,6 +23,8 @@ _VIDEO_CARD_SELECTORS = (
     '[data-e2e="search-card-video"]',
     '[class*="SearchVideoCard"]',
     'div.search-result-card',
+    '[class*="discover-video-card"]',
+    'img.discover-video-card-img',
 )
 
 
@@ -69,11 +71,33 @@ async def _open_feed_via_modal_id(ctx: DouyinUiSession, aweme_id: str) -> bool:
     modal_url = urlunparse(parsed._replace(query=urlencode(query)))
     try:
         await ctx.page.goto(modal_url, wait_until="domcontentloaded", timeout=45000)
-        await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="page_load")
-        ctx.state["feed_mode"] = True
-        return await is_feed_detail_open(ctx.page) or "modal_id=" in (ctx.page.url or "")
+        await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
+        from app.services.ui_flow.platforms.douyin.feed_ui import wait_feed_detail
+
+        if await wait_feed_detail(ctx.page, max_sec=6.0):
+            ctx.state["feed_mode"] = True
+            return True
+        clicked = await ctx.page.evaluate(
+            """(aweme) => {
+              const el = document.querySelector(`[data-aweme-id="${aweme}"]`)
+                || [...document.querySelectorAll('[data-aweme-id]')].find(
+                  (n) => String(n.getAttribute('data-aweme-id') || '').startsWith(String(aweme).slice(0, 12))
+                );
+              if (!el) return false;
+              el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+              if (typeof el.click === 'function') el.click();
+              return true;
+            }""",
+            aweme_id,
+        )
+        if clicked:
+            await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
+            if await wait_feed_detail(ctx.page, max_sec=5.0):
+                ctx.state["feed_mode"] = True
+                return True
     except Exception:
         return False
+    return False
 
 
 async def _click_video_link_at_index(ctx: DouyinUiSession, index: int) -> bool:
@@ -129,7 +153,9 @@ async def click_search_poster(ctx: DouyinUiSession, index: int) -> bool:
         return True
 
     if aweme_id and await _open_feed_via_modal_id(ctx, aweme_id):
-        return True
+        from app.services.ui_flow.platforms.douyin.feed_ui import wait_feed_detail
+
+        return await wait_feed_detail(ctx.page, max_sec=4.0)
 
     return False
 

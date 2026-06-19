@@ -9,9 +9,12 @@ from urllib.parse import quote
 from app.core.antibot import human_click, human_delay, human_type
 from app.services.ui_flow.platforms.douyin.experience import DouyinUiFlowExperience
 from app.services.ui_flow.platforms.douyin.search_parse import (
+    analyze_search_api_response,
     extract_aweme_items_from_json,
     is_search_result_api,
+    mark_search_api_flags,
     rank_search_items,
+    search_api_min_items,
     search_nil_type,
 )
 from app.services.ui_flow.platforms.douyin.ui_session import DouyinUiSession, UiStepResult
@@ -30,6 +33,8 @@ _SEARCH_INPUT_FALLBACKS = (
 _POSTER_SELECTORS = (
     'div.search-result-card',
     '[class*="search-result-card"]',
+    '[class*="discover-video-card"]',
+    'img.discover-video-card-img',
     '[data-e2e="search-card-video"] img',
     '[data-e2e="search-card-video"]',
     '[class*="SearchVideoCard"] img',
@@ -617,13 +622,26 @@ async def _await_search_single_api(
     limit: int,
     timeout_s: float = 18.0,
     allow_scroll: bool = True,
+    flags: dict[str, bool] | None = None,
 ) -> None:
-    """精选综合搜索：DOM 海报先于 search/single API，需显式等待接口。"""
-    need = max(1, min(int(limit or 1), 3))
+    """精选综合搜索：优先依据已拦截的 search/single 判定完成，DOM 仅作补充。"""
+    need = search_api_min_items(limit)
     if len(api_items) >= need:
         return
+    if flags and flags.get("api_complete") and (len(api_items) >= 1 or flags.get("api_explicit_empty")):
+        return
+    if len(api_items) >= 1 and await page_has_search_posters(ctx.page):
+        return
+    if flags and flags.get("api_complete"):
+        timeout_s = min(timeout_s, 4.0)
+        allow_scroll = False
+    elif await page_has_search_posters(ctx.page):
+        timeout_s = min(timeout_s, 6.0)
+
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline and len(api_items) < need:
+        if flags and flags.get("api_complete"):
+            return
         remaining_ms = max(
             400,
             int((deadline - asyncio.get_running_loop().time()) * 1000),
@@ -638,12 +656,15 @@ async def _await_search_single_api(
                 else:
                     await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
             data = await (await resp_info.value).json()
+            outcome = analyze_search_api_response(data, min_items=need)
+            if flags is not None:
+                mark_search_api_flags(flags, outcome)
             for row in extract_aweme_items_from_json(data):
                 api_items.setdefault(row["aweme_id"], row)
-            if len(api_items) >= need:
+            if len(api_items) >= need or (flags and flags.get("api_complete")):
                 return
         except Exception:
-            await asyncio.sleep(0.55)
+            await asyncio.sleep(0.35)
             if allow_scroll:
                 await _scroll_results(ctx)
 
@@ -656,11 +677,38 @@ async def _finalize_search_success(
     capture_method: str,
     diagnostic: str,
     allow_scroll: bool = True,
+    flags: dict[str, bool] | None = None,
 ) -> UiStepResult:
     await release_searchbar_focus(ctx.page)
-    await _await_search_single_api(ctx, api_items, limit=limit, allow_scroll=allow_scroll)
-    # 精选综合搜索：海报先渲染，search/single API 常晚于 DOM，需短暂等待
-    for _ in range(6):
+    need = search_api_min_items(limit)
+    if len(api_items) >= need or (flags and flags.get("api_complete")):
+        await _await_search_single_api(
+            ctx,
+            api_items,
+            limit=limit,
+            timeout_s=2.0,
+            allow_scroll=False,
+            flags=flags,
+        )
+    elif await page_has_search_posters(ctx.page):
+        await _await_search_single_api(
+            ctx,
+            api_items,
+            limit=limit,
+            timeout_s=6.0,
+            allow_scroll=False,
+            flags=flags,
+        )
+    else:
+        await _await_search_single_api(
+            ctx,
+            api_items,
+            limit=limit,
+            allow_scroll=allow_scroll,
+            flags=flags,
+        )
+    dom_wait_rounds = 2 if api_items or (flags and flags.get("api_complete")) else 6
+    for _ in range(dom_wait_rounds):
         if api_items or await collect_video_urls_from_page(ctx.page, limit=1):
             break
         await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
@@ -860,11 +908,13 @@ async def _wait_search_results(
     allow_direct_nav: bool = True,
     allow_scroll: bool | None = None,
 ) -> bool:
-    """等搜索真正完成：先跳转到搜索页，再等 API 或列表里的视频链接/海报。"""
+    """等搜索真正完成：优先依据 search/single 接口，DOM 海报/链接仅作补充。"""
     if allow_scroll is None:
         allow_scroll = not ctx.params.inline_ui_outreach
     if flags.get("verify_check"):
         return False
+
+    need = search_api_min_items(limit)
 
     for _ in range(15):
         if _on_search_results_page(ctx.page.url):
@@ -879,23 +929,29 @@ async def _wait_search_results(
     if not _on_search_results_page(ctx.page.url):
         return False
 
-    for _ in range(14):
+    for _ in range(10):
         if flags.get("verify_check"):
             return False
-        if len(api_items) >= limit:
+        if flags.get("api_complete"):
+            if len(api_items) >= need or flags.get("api_explicit_empty"):
+                return True
+            if await collect_video_urls_from_page(ctx.page, limit=1) or await page_has_search_posters(ctx.page):
+                return True
+        if len(api_items) >= need:
+            return True
+        if len(api_items) >= 1:
             return True
         if await collect_video_urls_from_page(ctx.page, limit=1):
             return True
         if await page_has_search_posters(ctx.page):
-            if api_items:
+            if api_items or flags.get("api_complete"):
                 return True
-            # 海报已出但 API 未回：继续轮询，避免 jingxuan 综合搜索空结果
         await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
         if allow_scroll:
             await _scroll_results(ctx)
 
     return bool(api_items) or bool(await collect_video_urls_from_page(ctx.page, limit=1)) or (
-        bool(await page_has_search_posters(ctx.page)) and bool(api_items)
+        bool(await page_has_search_posters(ctx.page)) and bool(api_items or flags.get("api_complete"))
     )
 
 
@@ -905,35 +961,40 @@ async def _wait_post_filter_api(
     *,
     flags: dict[str, bool],
     limit: int,
-    timeout_s: float = 28.0,
+    timeout_s: float = 20.0,
 ) -> bool:
-    """筛选完成后等待新的 search/single 返回，期间不滚动。"""
-    need = max(1, min(int(limit or 1), 3))
+    """筛选完成后等待新的 search/single 返回，依据接口字段判定完成。"""
+    need = search_api_min_items(limit)
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
         if flags.get("verify_check"):
             return False
         if len(api_items) >= need:
             return True
+        if flags.get("api_complete") and (len(api_items) >= 1 or flags.get("api_explicit_empty")):
+            return True
         remaining_ms = max(
-            400,
+            300,
             int((deadline - asyncio.get_running_loop().time()) * 1000),
         )
         try:
             async with ctx.page.expect_response(
                 lambda r: is_search_result_api(r.url) and r.status < 400,
-                timeout=min(remaining_ms, 8000),
+                timeout=min(remaining_ms, 6000),
             ) as resp_info:
                 await human_delay(ctx.page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
             data = await (await resp_info.value).json()
-            if search_nil_type(data) == "verify_check":
-                flags["verify_check"] = True
-                return False
+            outcome = analyze_search_api_response(data, min_items=need)
+            mark_search_api_flags(flags, outcome)
             for row in extract_aweme_items_from_json(data):
                 api_items.setdefault(row["aweme_id"], row)
+            if len(api_items) >= need or flags.get("api_complete"):
+                ctx.state["search_api_complete"] = True
+                ctx.state["search_api_complete_reason"] = flags.get("api_complete_reason") or outcome.reason
+                return True
         except Exception:
-            await asyncio.sleep(0.45)
-    return len(api_items) >= need or bool(api_items)
+            await asyncio.sleep(0.35)
+    return len(api_items) >= need or bool(api_items) or bool(flags.get("api_complete"))
 
 
 async def _collect_results(ctx: DouyinUiSession, *, api_items: dict[str, dict], limit: int) -> list[str]:
@@ -1349,12 +1410,21 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
             data = await resp.json()
         except Exception:
             return
-        if search_nil_type(data) == "verify_check":
-            flags["verify_check"] = True
+        need = search_api_min_items(limit)
+        outcome = analyze_search_api_response(data, min_items=need)
+        mark_search_api_flags(flags, outcome)
+        if outcome.ready:
+            ctx.state["search_api_complete"] = True
+            ctx.state["search_api_complete_reason"] = outcome.reason
         if not _should_collect_response():
             return
         for row in extract_aweme_items_from_json(data):
             api_items.setdefault(row["aweme_id"], row)
+        if len(api_items) >= need:
+            flags["api_complete"] = True
+            flags["api_complete_reason"] = f"items={len(api_items)}"
+            ctx.state["search_api_complete"] = True
+            ctx.state["search_api_complete_reason"] = flags["api_complete_reason"]
 
     ctx.page.on("response", on_response)
     try:
@@ -1366,6 +1436,7 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
                 limit=limit,
                 capture_method=f"{CAPTURE_METHOD_PREFIX}search_ui",
                 diagnostic="复用当前搜索页",
+                flags=flags,
             )
             if result.ok:
                 return result
@@ -1394,6 +1465,9 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
             if needs_filter:
                 filter_label = await apply_ui_publish_time_filter(ctx)
                 api_items.clear()
+                flags.pop("api_complete", None)
+                flags.pop("api_complete_reason", None)
+                flags.pop("api_explicit_empty", None)
                 collect_api["enabled"] = True
                 await _wait_post_filter_api(
                     ctx,
@@ -1413,6 +1487,8 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
                 )
 
             diagnostic = f"搜索框搜索完成 {ctx.page.url}"
+            if flags.get("api_complete_reason"):
+                diagnostic += f"；api={flags['api_complete_reason']}"
             if filter_label:
                 verified = ctx.state.get("search_filter_verified")
                 diagnostic += f"；发布时间={filter_label}"
@@ -1435,6 +1511,7 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
                 capture_method=f"{CAPTURE_METHOD_PREFIX}search_ui",
                 diagnostic=diagnostic,
                 allow_scroll=not needs_filter,
+                flags=flags,
             )
 
         if _on_search_results_page(ctx.page.url):
@@ -1454,6 +1531,7 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
                     limit=limit,
                     capture_method=f"{CAPTURE_METHOD_PREFIX}search_ui_direct",
                     diagnostic="精选搜索页已打开",
+                    flags=flags,
                 )
 
         search_input = await _search_input_locator(ctx.page, ctx.settings, tenant_id=ctx.tenant_id)
@@ -1493,6 +1571,7 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
             limit=limit,
             capture_method=f"{CAPTURE_METHOD_PREFIX}search_ui",
             diagnostic=f"搜索完成，页 {ctx.page.url}",
+            flags=flags,
         )
     finally:
         try:

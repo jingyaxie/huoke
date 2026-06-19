@@ -106,19 +106,22 @@ def _should_stop_for_time_window(
     round_idx: int,
     filtered_count: int,
     last_page: dict[str, Any],
-    min_scroll_before_time_stop: int = 2,
+    min_scroll_before_time_stop: int = 1,
 ) -> bool:
-    """仅在滚动多轮后、最近一页评论整体早于 cutoff 时停止（避免最热排序首页即停）。"""
+    """滚动评论时：若最近一页里「最新的那条」也已早于 cutoff，说明已越过时间窗口。
+
+    在「最新」排序下继续滚只会更旧，应结束当前视频、切换下一个。
+    min_scroll_before_time_stop 用于最热排序首页可能是旧热评时的防抖（默认 1 轮）。
+    """
+    del filtered_count  # 保留参数以兼容既有调用方
     if cutoff_ts is None:
         return False
     if round_idx < min_scroll_before_time_stop:
         return False
     newest_in_last = _newest_top_create_time_in_page(last_page)
-    if newest_in_last is None or newest_in_last >= cutoff_ts:
+    if newest_in_last is None:
         return False
-    if filtered_count > 0:
-        return True
-    return not int(last_page.get("has_more") or 0)
+    return newest_in_last < cutoff_ts
 
 
 def _last_list_page(captured_pages: list[dict[str, Any]]) -> dict[str, Any]:

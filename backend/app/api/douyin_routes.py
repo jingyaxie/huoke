@@ -13,6 +13,7 @@ from app.schemas.douyin_tools import (
     DouyinProfileVideosRequest,
     DouyinSearchVideosRequest,
     DouyinSendMessageRequest,
+    DouyinStandaloneKeywordBrowseRequest,
     DouyinToolResponse,
     DouyinUnfollowUserRequest,
     DouyinVideoCommentsRequest,
@@ -236,4 +237,75 @@ async def send_user_message(
         },
         diagnostic=message.get("error") or message.get("hint") or result.get("error"),
         report_file=result.get("output_file"),
+    )
+
+
+@router.post(
+    "/standalone/keyword-browse",
+    response_model=DouyinToolResponse,
+    summary="独立关键词浏览（复用桌面稳定浏览器）",
+)
+async def standalone_keyword_browse(
+    payload: DouyinStandaloneKeywordBrowseRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    account_id: str = Depends(get_account_id),
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(db_session),
+):
+    from app.platforms.douyin.standalone_keyword_browse import (
+        StandaloneKeywordBrowseConfig,
+        run_standalone_keyword_browse_with_browser,
+    )
+
+    target = max(1, int(payload.target_precise_leads or payload.limit))
+    config = StandaloneKeywordBrowseConfig(
+        keyword=payload.keyword.strip(),
+        days=payload.days,
+        comment_days=payload.comment_days,
+        content_limit=target,
+        target_precise_leads=target,
+        max_videos_to_browse=max(target, int(payload.max_videos_to_browse)),
+        match_keywords=list(payload.match_keywords),
+        exclude_keywords=list(payload.exclude_keywords),
+        execute_outreach=bool(payload.execute_outreach),
+        test_all_outreach=bool(payload.test_all_outreach),
+        reply_text=payload.reply_text.strip(),
+        dm_text=payload.dm_text.strip(),
+        action_policy={
+            "comment_ratio": payload.comment_ratio,
+            "dm_ratio": payload.dm_ratio,
+            "follow_ratio": payload.follow_ratio,
+            "interval_min_sec": 10,
+            "interval_max_sec": 30,
+        },
+        persist_to_db=bool(payload.persist_to_db),
+        reuse_stable_session=True,
+        close_browser_after=bool(payload.close_browser_after),
+    )
+    result = await run_standalone_keyword_browse_with_browser(
+        settings,
+        tenant_id=tenant_id,
+        account_id=account_id,
+        config=config,
+        db_session=session if config.persist_to_db else None,
+        headless=False,
+    )
+    return _envelope(
+        ok=result.ok,
+        tenant_id=tenant_id,
+        account_id=account_id,
+        tool="standalone_keyword_browse",
+        data={
+            "keyword": result.keyword,
+            "search_url": result.search_url,
+            "videos_processed": result.videos_processed,
+            "comments_scanned": result.comments_scanned,
+            "duplicates_skipped": result.duplicates_skipped,
+            "precise_lead_count": len(result.precise_leads),
+            "target_reached": result.target_reached,
+            "phase_log": result.phase_log[-20:],
+            "error": result.error,
+        },
+        diagnostic=result.diagnostic,
+        report_file=result.output_file,
     )

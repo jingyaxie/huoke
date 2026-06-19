@@ -37,6 +37,31 @@ def test_should_stop_after_scroll_when_last_page_is_old_and_has_matches():
     )
 
 
+def test_should_stop_when_last_page_is_old_even_without_in_window_matches():
+    cutoff = _cutoff(7)
+    old_ts = int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())
+    last_page = {"comments": [{"create_time": old_ts}], "has_more": 1}
+    assert _should_stop_for_time_window(
+        cutoff_ts=cutoff,
+        round_idx=2,
+        filtered_count=0,
+        last_page=last_page,
+    )
+
+
+def test_should_not_stop_before_min_scroll_rounds():
+    cutoff = _cutoff(7)
+    old_ts = int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())
+    last_page = {"comments": [{"create_time": old_ts}], "has_more": 1}
+    assert not _should_stop_for_time_window(
+        cutoff_ts=cutoff,
+        round_idx=0,
+        filtered_count=0,
+        last_page=last_page,
+        min_scroll_before_time_stop=2,
+    )
+
+
 def test_filter_keeps_recent_comments_only():
     cutoff = _cutoff(7)
     now = int(datetime.now(timezone.utc).timestamp())

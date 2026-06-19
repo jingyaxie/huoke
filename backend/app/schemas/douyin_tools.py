@@ -136,6 +136,28 @@ class DouyinMessageResult(BaseModel):
     hint: Optional[str] = None
 
 
+class DouyinStandaloneKeywordBrowseRequest(BaseModel):
+    """独立关键词浏览（复用桌面稳定浏览器基座）。"""
+
+    keyword: str = Field(min_length=1, max_length=100)
+    days: int = Field(default=7, ge=1, le=30)
+    limit: int = Field(default=3, ge=1, le=50, description="兼容字段；优先用 target_precise_leads")
+    target_precise_leads: int = Field(default=3, ge=1, le=20, description="目标精准线索条数")
+    max_videos_to_browse: int = Field(default=50, ge=1, le=100)
+    comment_days: Optional[int] = Field(default=None, ge=1, le=30)
+    match_keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(default_factory=list)
+    execute_outreach: bool = False
+    test_all_outreach: bool = False
+    reply_text: str = ""
+    dm_text: str = ""
+    comment_ratio: int = Field(default=50, ge=0, le=100)
+    dm_ratio: int = Field(default=30, ge=0, le=100)
+    follow_ratio: int = Field(default=20, ge=0, le=100)
+    persist_to_db: bool = False
+    close_browser_after: bool = False
+
+
 class DouyinToolResponse(BaseModel):
     """统一响应信封：业务数据放 data，诊断信息放 diagnostic。"""
 
