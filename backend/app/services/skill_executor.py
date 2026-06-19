@@ -1061,25 +1061,16 @@ class SkillExecutor:
                     result = {**result, "follow": relation}
                 else:
                     result = {**result, "unfollow": relation}
-            elif ui_first:
+            elif ui_first or not show_browser:
                 return {
-                    "error": "ui_first 模式下关注需有头浏览器 UI 操作",
+                    "error": "抖音 JS API 关注/取关已移除，请使用 warm_outreach 或 show_browser=true 走 human UI",
                     "status": "failed",
                 }
-            elif action == "follow":
-                result = await tool.follow_user(
-                    sec_uid=sec_uid,
-                    user_id=user_id,
-                    username=username,
-                    show_browser=show_browser,
-                )
             else:
-                result = await tool.unfollow_user(
-                    sec_uid=sec_uid,
-                    user_id=user_id,
-                    username=username,
-                    show_browser=show_browser,
-                )
+                return {
+                    "error": "抖音关注需要有头浏览器 page，请启用 show_browser 或使用 warm_outreach",
+                    "status": "failed",
+                }
         else:
             if not user_id:
                 return {"error": "缺少 user_id", "status": "failed"}

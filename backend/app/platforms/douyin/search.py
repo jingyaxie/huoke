@@ -4,49 +4,52 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
-
 from app.core.antibot import (
     headless_for_platform,
-    human_click,
     human_delay,
-    human_type,
     require_login,
 )
 from app.core.config import Settings
-from app.platforms.douyin.js_api import DouyinJsApiTool
 from app.platforms.douyin.js_constants import (
     PLATFORM,
     _SEARCH_API_EXCLUDES,
-    _SEARCH_JS_CHANNELS,
     _SEARCH_RESULT_API_MARKERS,
-    _build_search_api_url,
-    _build_search_sug_url,
-    _extract_search_id_from_sug,
 )
+from app.platforms.douyin.session import DouyinSessionStore
 from app.platforms.search_filters import (
     SearchFilterOptions,
-    fetch_multiplier,
     filter_diagnostic_suffix,
     filter_search_items,
     select_rows_after_filter,
 )
 from app.platforms.session_store import PlatformSessionStore
 from app.services.playwright_pool import PlaywrightPool
-from app.platforms.douyin.human_guards import HumanBrowseGuardError, assert_douyin_human_ready
+from app.platforms.douyin.human_guards import HumanBrowseGuardError
+
+_JS_REMOVED_HINT = (
+    "抖音已移除 JS API 搜索，请使用任务模式（ui_search_only）或 show_browser=true 走搜索框 UI"
+)
 
 
-class DouyinSearchTool(DouyinJsApiTool):
-    """抖音关键词搜索：首页 JS API 主路径，搜索框模拟兜底。"""
+class DouyinSearchTool:
+    """抖音关键词搜索：精选页搜索框 UI + 被动拦截 search API。"""
+
+    def __init__(
+        self,
+        settings: Settings,
+        tenant_id: str,
+        store: PlatformSessionStore | None = None,
+        account_id: str = "default",
+    ) -> None:
+        self.settings = settings
+        self.tenant_id = tenant_id
+        self.account_id = account_id
+        self.platform = PLATFORM
+        self.store = store or DouyinSessionStore(settings)
 
     def entry_url(self) -> str:
         """UI 搜索回退入口（热榜页，已验证可点搜索框）。"""
         return self.settings.douyin_hot_url
-
-    @property
-    def js_warmup_urls(self) -> tuple[str, ...]:
-        """JS 直调预热：首页参数更全，热榜兜底。"""
-        return (self.settings.douyin_home_url, self.settings.douyin_hot_url)
 
     @staticmethod
     def _search_nil_diagnostic(data: dict) -> str | None:
@@ -91,29 +94,13 @@ class DouyinSearchTool(DouyinJsApiTool):
         ui_search_only: bool = False,
         watched_skip: int = 0,
     ) -> tuple[list[str], str | None, str]:
-        """关键词搜索：ui_search_only 时仅模拟人类在搜索框输入并点击搜索。"""
+        """关键词搜索：仅搜索框 UI（ui_search_only）或 manual_search；已移除 JS/直链搜索。"""
+        if search_url_first:
+            return [], "search_url_first 已禁用（禁止直链搜索 URL）", ""
+
         filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         api_items: dict[str, dict] = {}
-        search_hints: dict[str, str] = {}
         search_started: dict[str, bool] = {"value": manual_search}
-        comment_template = ""
-
-        if not ui_search_only:
-            try:
-                await self.warmup_for_js_api(page, captured_api_urls)
-                await assert_douyin_human_ready(
-                    page,
-                    self.settings,
-                    tenant_id=self.tenant_id,
-                    account_id=self.account_id,
-                    store=self.store,
-                    stage="home",
-                    goto_home=False,
-                )
-            except HumanBrowseGuardError as exc:
-                return [], str(exc), ""
-            comment_template = await self.pick_api_template_url(page, captured_api_urls)
-
         has_storage_state = self.store.is_ready(self.store.load(self.tenant_id, self.account_id))
 
         async def on_response(resp) -> None:
@@ -146,136 +133,63 @@ class DouyinSearchTool(DouyinJsApiTool):
                     region=region,
                     days=days,
                 )
-                return urls, diagnostic, comment_template
+                return urls, diagnostic, ""
 
-            if ui_search_only:
-                from app.services.ui_flow.platforms.douyin.search_ui import run_searchbar_keyword_search
+            if not ui_search_only:
+                return [], _JS_REMOVED_HINT, ""
 
-                search_started["value"] = True
-                search_result = await run_searchbar_keyword_search(
-                    page,
-                    self.settings,
-                    tenant_id=self.tenant_id,
-                    account_id=self.account_id,
-                    keyword=filters.composed_keyword(),
-                    limit=limit,
-                    days=days,
-                    region=region,
+            from app.services.ui_flow.platforms.douyin.search_ui import run_searchbar_keyword_search
+
+            search_started["value"] = True
+            search_result = await run_searchbar_keyword_search(
+                page,
+                self.settings,
+                tenant_id=self.tenant_id,
+                account_id=self.account_id,
+                keyword=filters.composed_keyword(),
+                limit=limit,
+                days=days,
+                region=region,
+            )
+            if not search_result.ok:
+                diag = (
+                    search_result.diagnostic
+                    or search_result.error
+                    or "未能通过精选页搜索框完成搜索"
                 )
-                if not search_result.ok:
-                    diag = (
-                        search_result.diagnostic
-                        or search_result.error
-                        or "未能通过精选页搜索框完成搜索"
-                    )
-                    return [], diag, ""
-                urls = list(search_result.data.get("video_urls") or [])
-                if not urls:
-                    aweme_ids = search_result.data.get("search_aweme_ids") or []
-                    if aweme_ids:
-                        urls = [
-                            f"https://www.douyin.com/video/{aid.split('?')[0]}"
-                            for aid in aweme_ids[:limit]
-                            if aid
-                        ]
-                diagnostic = str(search_result.diagnostic or "")
-                if not comment_template:
-                    comment_template = await self.pick_api_template_url(page, captured_api_urls)
-                if not urls:
-                    urls, diagnostic = await self._collect_search_results(
-                        page,
-                        keyword=keyword,
-                        limit=limit,
-                        headless=headless,
-                        manual_search=False,
-                        keep_general_tab=True,
-                        api_items=api_items,
-                        has_storage_state=has_storage_state,
-                        region=region,
-                        days=days,
-                        watched_skip=watched_skip,
-                    )
-                if urls:
-                    await self._restore_comment_api_context(page, comment_template)
-                    return urls[:limit], diagnostic, comment_template
-                return (
-                    [],
-                    diagnostic or "搜索框提交后未返回视频，请检查登录态或关键词",
-                    comment_template,
-                )
+                return [], diag, ""
 
-            if search_url_first:
-                direct = await self._collect_after_direct_search_url(
+            urls = list(search_result.data.get("video_urls") or [])
+            if not urls:
+                aweme_ids = search_result.data.get("search_aweme_ids") or []
+                if aweme_ids:
+                    urls = [
+                        f"https://www.douyin.com/video/{aid.split('?')[0]}"
+                        for aid in aweme_ids[:limit]
+                        if aid
+                    ]
+            diagnostic = str(search_result.diagnostic or "")
+            if not urls:
+                urls, diagnostic = await self._collect_search_results(
                     page,
                     keyword=keyword,
                     limit=limit,
                     headless=headless,
+                    manual_search=False,
+                    keep_general_tab=True,
                     api_items=api_items,
                     has_storage_state=has_storage_state,
                     region=region,
                     days=days,
-                    search_started=search_started,
-                    comment_template=comment_template,
+                    watched_skip=watched_skip,
                 )
-                if direct is not None:
-                    return direct
-
-            js_result = await self._search_videos_via_js_api(
-                page,
-                filters,
-                limit,
-                comment_template,
-                api_items,
-                max_attempts=6,
-                search_hints=search_hints,
-            )
-            if js_result:
-                return js_result[0], js_result[1], comment_template
-
-            direct = await self._collect_after_direct_search_url(
-                page,
-                keyword=keyword,
-                limit=limit,
-                headless=headless,
-                api_items=api_items,
-                has_storage_state=has_storage_state,
-                region=region,
-                days=days,
-                search_started=search_started,
-                comment_template=comment_template,
-            )
-            if direct is not None:
-                return direct
-
-            api_items.clear()
-            await self._trigger_keyword_search(
-                page,
-                filters.composed_keyword(),
-                manual_search=False,
-                search_started=search_started,
-            )
-            urls, diagnostic = await self._collect_search_results(
-                page,
-                keyword=keyword,
-                limit=limit,
-                headless=headless,
-                manual_search=False,
-                keep_general_tab=ui_search_only,
-                api_items=api_items,
-                has_storage_state=has_storage_state,
-                region=region,
-                days=days,
-            )
             if urls:
-                await self._restore_comment_api_context(page, comment_template)
-                return urls, diagnostic, comment_template
-            await self._restore_comment_api_context(page, comment_template)
-            if search_hints.get("diagnostic"):
-                return [], search_hints["diagnostic"], comment_template
+                await self._restore_comment_api_context(page)
+                return urls[:limit], diagnostic, ""
             return (
                 [],
-                diagnostic or "搜索未返回视频，请确认 Cookie 有效或在本机有头浏览器 手动搜索后设 show_browser=true。",
-                comment_template,
+                diagnostic or "搜索框提交后未返回视频，请检查登录态或关键词",
+                "",
             )
         finally:
             try:
@@ -284,7 +198,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 pass
 
     async def _restore_comment_api_context(self, page, warmup_url: str | None = None) -> None:
-        """评论 fetch 需在首页上下文；搜索页同域 fetch comment/list 会挂起。"""
+        """离开搜索页，避免后续侧栏抓评时上下文异常。"""
         current = page.url or ""
         if "/search/" not in current:
             return
@@ -331,7 +245,7 @@ class DouyinSearchTool(DouyinJsApiTool):
         filters: SearchFilterOptions,
         limit: int,
         *,
-        mode: str,
+        mode: str = "ui_search",
     ) -> tuple[list[str], str | None] | None:
         ranked = self._rank_search_items(list(api_items.values()), filters.keyword)
         filtered, stats = filter_search_items(
@@ -354,7 +268,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 break
         if not uniq:
             return None
-        label = "js_api" if mode == "js_api" else "ui_search"
+        label = "ui_search"
         search_kw = filters.composed_keyword()
         diagnostic = f"关键词「{search_kw}」搜索成功（{label}，{len(uniq)} 条视频）"
         filter_note = filter_diagnostic_suffix(stats, requested=limit)
@@ -367,211 +281,6 @@ class DouyinSearchTool(DouyinJsApiTool):
             )
         return uniq[:limit], diagnostic
 
-    async def _search_videos_via_js_api(
-        self,
-        page,
-        filters: SearchFilterOptions,
-        limit: int,
-        template_url: str,
-        api_items: dict[str, dict],
-        *,
-        max_attempts: int = 6,
-        search_hints: dict[str, str] | None = None,
-    ) -> tuple[list[str], str | None] | None:
-        """主路径：首页上下文 fetch 搜索 API。"""
-        keyword = filters.composed_keyword()
-        sug_data = await self.fetch_json_via_page(
-            page, _build_search_sug_url(template_url, keyword), timeout_ms=8000
-        )
-        search_id = _extract_search_id_from_sug(sug_data)
-        fetch_count = max(limit * fetch_multiplier(filters), 15)
-        attempts = 0
-        for path, channel in _SEARCH_JS_CHANNELS:
-            for offset in (0, 10):
-                if attempts >= max_attempts:
-                    break
-                attempts += 1
-                url = _build_search_api_url(
-                    template_url,
-                    keyword,
-                    path=path,
-                    offset=offset,
-                    count=fetch_count,
-                    search_channel=channel,
-                    search_id=search_id,
-                    days=filters.days,
-                )
-                data = await self.fetch_json_via_page(page, url, timeout_ms=8000)
-                if not data:
-                    continue
-                self._record_search_nil(data, search_hints)
-                status_code = data.get("status_code")
-                if status_code not in (None, 0):
-                    continue
-                for row in self._extract_aweme_items_from_json(data):
-                    api_items.setdefault(row["aweme_id"], row)
-                if api_items:
-                    return self._finalize_search_results(api_items, filters, limit, mode="js_api")
-        return None
-
-    @staticmethod
-    def _direct_search_urls(keyword: str) -> tuple[str, ...]:
-        kw = quote((keyword or "").strip())
-        if not kw:
-            return ()
-        return (
-            f"https://www.douyin.com/search/{kw}?type=general",
-            f"https://www.douyin.com/jingxuan/search/{kw}?type=general",
-            f"https://www.douyin.com/search/{kw}",
-        )
-
-    async def _goto_search_results_direct(
-        self,
-        page,
-        keyword: str,
-        *,
-        search_started: dict[str, bool],
-    ) -> bool:
-        """搜索兜底：直接打开搜索结果页，避免仅停在首页未触发搜索。"""
-        for url in self._direct_search_urls(keyword):
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                await human_delay(page, self.settings, tenant_id=self.tenant_id, profile="fast")
-                if "/search/" in (page.url or ""):
-                    search_started["value"] = True
-                    return True
-            except Exception:
-                continue
-        return False
-
-    async def _collect_after_direct_search_url(
-        self,
-        page,
-        *,
-        keyword: str,
-        limit: int,
-        headless: bool,
-        api_items: dict[str, dict],
-        has_storage_state: bool,
-        region: str | None,
-        days: int | None,
-        search_started: dict[str, bool],
-        comment_template: str,
-    ) -> tuple[list[str], str | None, str] | None:
-        if not await self._goto_search_results_direct(
-            page,
-            keyword,
-            search_started=search_started,
-        ):
-            return None
-        urls, diagnostic = await self._collect_search_results(
-            page,
-            keyword=keyword,
-            limit=limit,
-            headless=headless,
-            manual_search=False,
-            keep_general_tab=True,
-            api_items=api_items,
-            has_storage_state=has_storage_state,
-            region=region,
-            days=days,
-        )
-        if urls:
-            await self._restore_comment_api_context(page, comment_template)
-            return urls, diagnostic, comment_template
-        return None
-
-    async def _trigger_keyword_search(
-        self,
-        page,
-        keyword: str,
-        *,
-        manual_search: bool,
-        search_started: dict[str, bool],
-        skip_goto: bool = False,
-        human_pace: bool = False,
-        ui_search_only: bool = False,
-    ) -> None:
-        if manual_search:
-            search_started["value"] = True
-            return
-        delay_profile = "action" if human_pace else "fast"
-        load_profile = "page_load" if human_pace else delay_profile
-        if not skip_goto:
-            target = self.settings.douyin_home_url if human_pace else self.entry_url
-            await page.goto(target, wait_until="domcontentloaded", timeout=60000)
-            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile=load_profile)
-        await assert_douyin_human_ready(
-            page,
-            self.settings,
-            tenant_id=self.tenant_id,
-            account_id=self.account_id,
-            store=self.store,
-            stage="home",
-            goto_home=False,
-        )
-        search_selectors = ('[data-e2e="searchbar-input"]',)
-        search_input = None
-        for selector in search_selectors:
-            loc = page.locator(selector).first
-            if await loc.count() > 0:
-                search_input = loc
-                break
-        if search_input is None:
-            search_input = page.locator('[data-e2e="searchbar-input"]').first
-        if await search_input.count() == 0:
-            if ui_search_only:
-                raise HumanBrowseGuardError(
-                    "精选/首页未找到搜索框，无法完成 ui_search_only 搜索"
-                )
-            if await self._goto_search_results_direct(page, keyword, search_started=search_started):
-                return
-            return
-        await human_click(page, search_input, self.settings, tenant_id=self.tenant_id)
-        if human_pace:
-            try:
-                current = (await search_input.input_value() or "").strip()
-            except Exception:
-                current = ""
-            if current != keyword.strip():
-                await search_input.fill("")
-                await human_delay(page, self.settings, tenant_id=self.tenant_id, profile=delay_profile)
-                await human_type(page, search_input, keyword, self.settings, tenant_id=self.tenant_id)
-        else:
-            await human_type(page, search_input, keyword, self.settings, tenant_id=self.tenant_id)
-        search_started["value"] = True
-
-        async def _submit_search() -> None:
-            btn_selectors = ('[data-e2e="searchbar-button"]',)
-            clicked = False
-            for selector in btn_selectors:
-                btn = page.locator(selector).first
-                if await btn.count() > 0:
-                    if human_pace:
-                        await human_click(page, btn, self.settings, tenant_id=self.tenant_id)
-                    else:
-                        await btn.click(force=True)
-                    clicked = True
-                    break
-            if not clicked:
-                await page.keyboard.press("Enter")
-
-        submit_timeout = 35000 if human_pace else 25000
-        try:
-            async with page.expect_response(
-                lambda resp: self._is_search_result_api(resp.url),
-                timeout=submit_timeout,
-            ):
-                await _submit_search()
-        except Exception:
-            await _submit_search()
-            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile=delay_profile)
-
-        wait_rounds = 14 if human_pace else 10
-        for _ in range(wait_rounds):
-            if "/search/" in page.url:
-                break
-            await human_delay(page, self.settings, tenant_id=self.tenant_id, profile=delay_profile)
     async def _collect_search_results(
         self,
         page,
@@ -715,6 +424,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 days=days,
                 headless=resolved_headless,
                 manual_search=manual_search,
+                ui_search_only=True,
             )
             return urls, diagnostic
 
@@ -826,7 +536,6 @@ class DouyinSearchTool(DouyinJsApiTool):
         require_login(self.store, self.tenant_id, self.settings, account_id=self.account_id)
         filters = SearchFilterOptions.from_params(keyword=keyword, region=region, days=days)
         headless = headless_for_platform(self.settings, PLATFORM, not show_browser)
-        resolved_ui_search_only = ui_search_only or not headless
         captured_api_urls: list[str] = []
 
         async def _run_keyword_search(page):
@@ -839,7 +548,7 @@ class DouyinSearchTool(DouyinJsApiTool):
                 days=days,
                 headless=headless,
                 manual_search=False,
-                ui_search_only=resolved_ui_search_only,
+                ui_search_only=True,
             )
 
         if existing_page is not None and not existing_page.is_closed():
@@ -868,11 +577,7 @@ class DouyinSearchTool(DouyinJsApiTool):
             seen.add(aweme_id)
             videos.append({"aweme_id": aweme_id, "video_url": url.split("?")[0]})
 
-        capture_method = "ui_flow_douyin_search_ui" if resolved_ui_search_only and videos else (
-            "js_api" if videos and diagnostic and "js_api" in diagnostic else (
-                "ui_search" if videos else "empty"
-            )
-        )
+        capture_method = "ui_flow_douyin_search_ui" if videos else "empty"
         payload = {
             "platform": PLATFORM,
             "keyword": keyword,

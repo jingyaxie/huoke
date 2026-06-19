@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import datetime
 from pathlib import Path
 
 from app.core.antibot import headless_for_platform, require_login
 from app.core.config import Settings
-from app.platforms.douyin.js_api import DouyinJsApiTool
 from app.platforms.douyin.profile import DouyinProfileTool
 from app.platforms.douyin.session import DouyinSessionStore
 from app.platforms.session_store import PlatformSessionStore
@@ -40,7 +40,7 @@ _IM_INPUT_SELECTORS = (
 )
 
 
-class DouyinDmTool(DouyinJsApiTool):
+class DouyinDmTool:
     """抖音私信工具（主页点击私信 → 嵌入式 msg-input 或 im-dialog 弹层发送）。"""
 
     def __init__(
@@ -50,7 +50,11 @@ class DouyinDmTool(DouyinJsApiTool):
         store: PlatformSessionStore | None = None,
         account_id: str = "default",
     ) -> None:
-        super().__init__(settings, tenant_id, store, account_id=account_id)
+        self.settings = settings
+        self.tenant_id = tenant_id
+        self.account_id = account_id
+        self.platform = PLATFORM
+        self.store = store or DouyinSessionStore(settings)
         self._profile = DouyinProfileTool(settings, tenant_id, self.store, account_id=account_id)
 
     async def send_message(
@@ -88,19 +92,20 @@ class DouyinDmTool(DouyinJsApiTool):
 
     async def send_message_on_page(self, page, *, sec_uid: str, message: str, username: str = "") -> dict:
         """在已打开的用户主页 page 上发送私信（不重复 goto）。"""
-        captured_urls: list[str] = []
-        await self.warmup_for_js_api(page, captured_urls)
         on_profile = sec_uid and sec_uid in (page.url or "")
         profile_url = page.url if on_profile else await self._profile.open_profile(page, sec_uid)
-        template_url = await self.pick_api_template_url(page, captured_urls)
-        profile_data = await self._profile.fetch_profile(page, template_url, sec_uid)
-        user = profile_data.get("user") or {}
+        resolved_username = username
+        if not resolved_username:
+            with contextlib.suppress(Exception):
+                nick = page.locator('[data-e2e="user-info"] h1, [data-e2e="user-detail"] h1').first
+                if await nick.count():
+                    resolved_username = (await nick.inner_text()).strip()
 
         return {
             "platform": PLATFORM,
             "tenant_id": self.tenant_id,
-            "username": username or user.get("nickname") or "",
-            "user_id": str(user.get("uid") or ""),
+            "username": resolved_username,
+            "user_id": "",
             "sec_uid": sec_uid,
             "profile_url": profile_url,
             "page_url": page.url,

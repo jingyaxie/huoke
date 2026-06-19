@@ -549,17 +549,6 @@ class CommentReplyService:
             return target
 
         if self.platform == "douyin":
-            tool = get_reply_comment_tool(
-                self.settings,
-                self.platform,
-                self.tenant_id,
-                account_id=self.account_id,
-            )
-            aweme_id = target.content_id
-            try:
-                aweme_id = _extract_aweme_id(target.content_url)
-            except ValueError:
-                aweme_id = target.content_id
             if page is not None and warm_publish:
                 warm_payload = await self._reply_douyin_via_warm_publish(
                     target,
@@ -591,13 +580,16 @@ class CommentReplyService:
                         "platform": self.platform,
                         "comment_id": target.comment_id,
                     }
-            result = await tool.reply_comment(
-                comment_id=target.comment_id,
-                reply_text=reply_text,
-                content_url=target.content_url,
-                aweme_id=aweme_id,
-                show_browser=show_browser,
-            )
+            return {
+                "status": "failed",
+                "error": (
+                    "抖音 JS API 评论回复已移除，请使用 warm_publish 或 human_reply_comment（需浏览器 page）"
+                    if page is None
+                    else "UI 回复失败，JS 接口已移除"
+                ),
+                "platform": self.platform,
+                "comment_id": target.comment_id,
+            }
         elif self.platform == "xiaohongshu":
             if page is None:
                 return {

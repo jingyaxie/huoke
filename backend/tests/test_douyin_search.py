@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 
 from app.core.config import Settings
-from app.platforms.douyin.search import DouyinSearchTool
+from app.platforms.douyin.search import DouyinSearchTool, _JS_REMOVED_HINT
 from app.platforms.douyin.session import DouyinSessionStore
 
 
@@ -33,7 +33,7 @@ def test_search_nil_verify_check_diagnostic():
     msg = DouyinSearchTool._search_nil_diagnostic(data)
     assert msg is not None
     assert "verify_check" in msg
-    assert "VNC" in msg
+    assert "show_browser" in msg
 
 
 def test_keyword_search_is_instance_method():
@@ -61,23 +61,22 @@ def test_keyword_search_is_instance_method():
     assert getattr(bound, "__self__", None) is tool
 
 
-def test_removed_goto_search_paths():
+def test_removed_legacy_search_paths():
     removed = (
         "_thin_browser_keyword_search",
         "_search_videos_via_thin_nav",
         "search_videos_from_existing_page",
         "_collect_keyword_search_results",
+        "_search_videos_via_js_api",
+        "_trigger_keyword_search",
+        "_direct_search_urls",
+        "_goto_search_results_direct",
+        "warmup_for_js_api",
+        "pick_api_template_url",
+        "fetch_json_via_page",
     )
     for name in removed:
         assert not hasattr(DouyinSearchTool, name), f"{name} should be removed"
 
-    kept = ("_search_videos_via_js_api", "_trigger_keyword_search", "keyword_search", "_direct_search_urls")
-    for name in kept:
-        assert hasattr(DouyinSearchTool, name), f"{name} should exist"
-
-
-def test_direct_search_urls_encode_keyword():
-    urls = DouyinSearchTool._direct_search_urls("团餐配送")
-    assert len(urls) >= 2
-    assert all("/search/" in u for u in urls)
-    assert "%" in urls[0] or "团餐" in urls[0]
+    assert hasattr(DouyinSearchTool, "keyword_search")
+    assert _JS_REMOVED_HINT
