@@ -34,12 +34,18 @@ function Invoke-PythonProcess {
       -RedirectStandardError $stderrFile
     if (Test-Path $stdoutFile) {
       Get-Content $stdoutFile | ForEach-Object {
-        if ($_) { Write-Output "[backend] $_" }
+        if ($_) {
+          Write-Output "[backend] $_"
+          try { [Console]::Out.Flush() } catch {}
+        }
       }
     }
     if (Test-Path $stderrFile) {
       Get-Content $stderrFile | ForEach-Object {
-        if ($_) { Write-Output "[backend] $_" }
+        if ($_) {
+          Write-Output "[backend] $_"
+          try { [Console]::Out.Flush() } catch {}
+        }
       }
     }
     if ($proc.ExitCode -ne 0) {
@@ -284,7 +290,9 @@ function Start-HuokeDesktopBackend {
     $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort -CheckOnly
   }
 
+  Write-Log "preflight unified ok"
   Write-Log "preflight complete: native extensions ok"
+  Write-Log "starting uvicorn on port $BackendPort"
   $null = Invoke-HuokeBackendLauncher -PythonExe $Python -LauncherScript $LauncherScript -Port $BackendPort
 }
 

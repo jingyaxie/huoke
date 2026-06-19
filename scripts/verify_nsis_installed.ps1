@@ -128,9 +128,17 @@ try {
   $combinedLog = "$stdoutText`n$stderrText"
   foreach ($needle in @("preflight unified ok", "starting uvicorn", "runtime-work")) {
     if ($combinedLog -notmatch [regex]::Escape($needle)) {
+      if ($needle -eq "preflight unified ok" -and $combinedLog -match 'preflight complete: native extensions ok') {
+        continue
+      }
       Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
       throw "NSIS smoke missing expected log line: $needle"
     }
+  }
+
+  if ($combinedLog -match 'uvicorn\\__main__|python -m uvicorn') {
+    Show-SmokeFailureLogs -StdoutFile $stdoutFile -StderrFile $stderrFile
+    throw "NSIS smoke detected legacy uvicorn launch path; desktop_uvicorn_launcher.py was not used"
   }
 
   Write-Host "NSIS installed startup smoke ok: $InstallRoot"
