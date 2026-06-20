@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import random
 from typing import Any
 
@@ -236,42 +235,6 @@ async def human_reply_comment(
     }
 
 
-async def _open_profile_via_sec_uid(
-    page,
-    settings: Settings,
-    *,
-    tenant_id: str,
-    sec_uid: str,
-) -> tuple[Any | None, dict[str, Any]]:
-    """头像点击失败时，用 sec_uid 在新 tab 打开主页。"""
-    sec_uid = str(sec_uid or "").strip()
-    if not sec_uid:
-        return None, {"ok": False, "error": "缺少 sec_uid"}
-    context = page.context
-    profile_page = await context.new_page()
-    store = DouyinSessionStore(settings)
-    profile = DouyinProfileTool(settings, tenant_id, store)
-    try:
-        profile_url = await profile.open_profile(profile_page, sec_uid)
-    except Exception as exc:
-        with contextlib.suppress(Exception):
-            await profile_page.close()
-        return None, {"ok": False, "error": f"sec_uid 打开主页失败：{exc}"}
-    await assert_douyin_human_ready(
-        profile_page,
-        settings,
-        tenant_id=tenant_id,
-        store=store,
-        stage="profile",
-        goto_home=False,
-    )
-    return profile_page, {
-        "ok": True,
-        "profile_url": profile_url,
-        "capture_method": "douyin_profile_sec_uid_fallback",
-    }
-
-
 async def human_open_profile_from_comment(
     page,
     settings: Settings,
@@ -284,24 +247,13 @@ async def human_open_profile_from_comment(
     scroll_rounds: int = 8,
     allow_sec_uid_fallback: bool = False,
 ) -> tuple[Any | None, dict[str, Any]]:
-    """从 feed 评论侧栏点击用户头像/链接，在新 tab 打开用户主页。"""
-    from app.platforms.douyin.profile import build_profile_url
-    from app.services.social_roam.human.douyin import warm_outreach_profile as warm
-    from app.services.social_roam.human.douyin.reply_warm_publish import (
-        _hover_comment_item,
-        _human_pause,
-    )
-
-    sec_uid = str(sec_uid or "").strip()
+    """从 feed 评论侧栏点头像/链接，在新 tab 打开用户主页。"""
+    del sec_uid, allow_sec_uid_fallback  # 保留参数兼容；私信/关注请走 warm_outreach
     on_feed = await is_feed_detail_open(page) or await is_search_feed_overlay(page)
     if not on_feed:
-        if allow_sec_uid_fallback and sec_uid:
-            return await _open_profile_via_sec_uid(
-                page, settings, tenant_id=tenant_id, sec_uid=sec_uid
-            )
         return None, {
             "ok": False,
-            "error": "当前不在 feed 详情/评论侧栏，无法从评论点头像进主页",
+            "error": "当前不在 feed 详情/评论侧栏，无法从评论进主页",
             "capture_method": "douyin_profile_from_comment",
         }
 
@@ -316,14 +268,6 @@ async def human_open_profile_from_comment(
         max_rounds=max(1, scroll_rounds),
     )
     if target is None:
-        if allow_sec_uid_fallback and sec_uid:
-            profile_page, meta = await _open_profile_via_sec_uid(
-                page, settings, tenant_id=tenant_id, sec_uid=sec_uid
-            )
-            meta["comment_id"] = comment_id
-            meta["parent_comment_id"] = parent_comment_id or None
-            meta["fallback_reason"] = "comment_not_found_in_dom"
-            return profile_page, meta
         return None, {
             "ok": False,
             "error": "分页滚动后仍未找到目标评论"
@@ -333,55 +277,29 @@ async def human_open_profile_from_comment(
             "parent_comment_id": parent_comment_id or None,
         }
 
-    profile_page = None
-    profile_url = build_profile_url(sec_uid) if sec_uid else ""
-    last_err = ""
-    for attempt in range(3):
-        await _hover_comment_item(page, target)
-        await _human_pause(min_s=0.5, max_s=1.0)
-        if profile_url:
-            with contextlib.suppress(Exception):
-                await warm._patch_comment_item_profile_href(target, profile_url)
-        await _human_pause(min_s=0.4, max_s=0.8)
-        try:
-            profile_page = await warm._click_target_comment_profile_link(
-                page,
-                target,
-                settings,
-                tenant_id=tenant_id,
-            )
-        except Exception as exc:
-            last_err = str(exc)[:120]
-            profile_page = None
-        if profile_page is not None:
+    avatar_link = None
+    for selector in _PROFILE_AVATAR_SELECTORS:
+        candidate = target.locator(selector).first
+        if await candidate.count():
+            avatar_link = candidate
             break
-        if attempt < 2:
-            with contextlib.suppress(Exception):
-                await scroll_comment_sidebar_until(
-                    page,
-                    settings,
-                    tenant_id=tenant_id,
-                    comment_id=comment_id,
-                    comment_text=comment_text,
-                    parent_comment_id=parent_comment_id,
-                    max_rounds=2,
-                )
-
-    if profile_page is None:
-        if allow_sec_uid_fallback and sec_uid:
-            profile_page, meta = await _open_profile_via_sec_uid(
-                page, settings, tenant_id=tenant_id, sec_uid=sec_uid
-            )
-            meta["comment_id"] = comment_id
-            meta["parent_comment_id"] = parent_comment_id or None
-            meta["fallback_reason"] = "avatar_click_failed"
-            return profile_page, meta
+    if avatar_link is None or not await avatar_link.count():
         return None, {
             "ok": False,
-            "error": last_err or "点击评论头像后未打开用户主页",
-            "capture_method": "douyin_profile_avatar_click",
-            "comment_id": comment_id,
-            "parent_comment_id": parent_comment_id or None,
+            "error": "未找到评论用户头像/主页链接",
+            "capture_method": "douyin_profile_from_comment",
+        }
+
+    context = page.context
+    try:
+        async with context.expect_page(timeout=20000) as popup:
+            await human_click(page, avatar_link, settings, tenant_id=tenant_id)
+        profile_page = await popup.value
+    except Exception as exc:
+        return None, {
+            "ok": False,
+            "error": f"点击评论头像后未打开新 tab：{exc}",
+            "capture_method": "douyin_profile_from_comment",
         }
 
     try:
@@ -393,10 +311,6 @@ async def human_open_profile_from_comment(
         )
     except Exception:
         pass
-
-    if sec_uid and sec_uid not in (profile_page.url or ""):
-        with contextlib.suppress(Exception):
-            await profile_page.goto(profile_url, wait_until="domcontentloaded", timeout=45000)
 
     store = DouyinSessionStore(settings)
     await assert_douyin_human_ready(
@@ -410,7 +324,7 @@ async def human_open_profile_from_comment(
     return profile_page, {
         "ok": True,
         "profile_url": profile_page.url,
-        "capture_method": "douyin_profile_avatar_click",
+        "capture_method": "douyin_profile_from_comment",
         "comment_id": comment_id,
         "parent_comment_id": parent_comment_id or None,
     }
@@ -543,7 +457,6 @@ async def human_send_dm(
         sec_uid=sec_uid,
         message=message,
         username=username,
-        require_on_profile=profile_page is not None,
     )
     dm = result.get("message") or {}
     ok = bool(dm.get("ok"))

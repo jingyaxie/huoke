@@ -44,10 +44,14 @@ async def test_execute_outreach_follow_fallback_to_reply_does_not_crash():
     lead = _lead(planned_action="follow")
 
     with patch(
-        "app.services.social_roam.human.douyin.actions.human_open_profile_from_comment",
+        "app.services.social_roam.human.douyin.warm_outreach_profile.warm_outreach_follow_dm_from_comment",
         new_callable=AsyncMock,
-        return_value=(None, {"ok": False, "error": "未找到评论用户头像/主页链接"}),
-    ) as open_profile, patch(
+        return_value={
+            "ok": False,
+            "error": "关注失败",
+            "follow": {"ok": False, "error": "未打开主页"},
+        },
+    ) as warm_outreach, patch(
         "app.services.social_roam.human.douyin.actions.human_reply_comment",
         new_callable=AsyncMock,
         return_value={"ok": True, "capture_method": "douyin_comment_ui_human"},
@@ -62,7 +66,7 @@ async def test_execute_outreach_follow_fallback_to_reply_does_not_crash():
             config=config,
         )
 
-    open_profile.assert_awaited_once()
+    warm_outreach.assert_awaited_once()
     reply.assert_awaited_once()
     assert result.get("ok") is True
     assert result.get("action") == "reply"
@@ -81,9 +85,13 @@ async def test_execute_outreach_dm_fallback_to_reply_when_profile_open_fails():
     lead = _lead(planned_action="dm")
 
     with patch(
-        "app.services.social_roam.human.douyin.actions.human_open_profile_from_comment",
+        "app.services.social_roam.human.douyin.warm_outreach_profile.warm_outreach_follow_dm_from_comment",
         new_callable=AsyncMock,
-        return_value=(None, {"ok": False, "error": "profile_missing"}),
+        return_value={
+            "ok": False,
+            "error": "私信失败",
+            "dm": {"ok": False, "error": "profile_missing"},
+        },
     ), patch(
         "app.services.social_roam.human.douyin.actions.human_reply_comment",
         new_callable=AsyncMock,

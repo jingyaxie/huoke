@@ -1595,6 +1595,74 @@ def _parent_comment_id_from_lead(lead: PreciseLeadRecord) -> str:
     return str(raw.get("parent_comment_id") or "").strip()
 
 
+async def _fallback_reply_from_warm_failure(
+    page: Page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    lead: PreciseLeadRecord,
+    config: StandaloneKeywordBrowseConfig,
+    failed_action: OutreachAction,
+    warm_result: dict[str, Any],
+) -> dict[str, Any]:
+    """warm_outreach 关注/私信失败时，回退为评论回复（与旧 Supervisor 行为一致）。"""
+    if not config.reply_text:
+        return {**warm_result, "action": str(failed_action or "skip")}
+    from app.services.social_roam.human.douyin.actions import human_reply_comment
+
+    parent_cid = _parent_comment_id_from_lead(lead)
+    reply_result = await human_reply_comment(
+        page,
+        settings,
+        tenant_id=tenant_id,
+        content_url=lead.video_url,
+        reply_text=config.reply_text,
+        comment_id=lead.comment_id,
+        comment_text=lead.comment_text,
+        parent_comment_id=parent_cid,
+    )
+    if reply_result.get("ok"):
+        return {**reply_result, "action": "reply", "fallback_from": failed_action}
+    return {
+        **warm_result,
+        "action": str(failed_action or "skip"),
+        "reply_fallback": reply_result,
+    }
+
+
+async def _warm_outreach_for_lead(
+    page: Page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    account_id: str,
+    lead: PreciseLeadRecord,
+    config: StandaloneKeywordBrowseConfig,
+    do_follow: bool,
+    do_dm: bool,
+) -> dict[str, Any]:
+    """私信/关注走与 Supervisor Skill 相同的 warm_outreach 链路。"""
+    from app.services.social_roam.human.douyin.warm_outreach_profile import (
+        warm_outreach_follow_dm_from_comment,
+    )
+
+    return await warm_outreach_follow_dm_from_comment(
+        page,
+        settings,
+        tenant_id=tenant_id,
+        account_id=account_id,
+        content_url=lead.video_url,
+        comment_id=lead.comment_id,
+        comment_text=lead.comment_text,
+        sec_uid=lead.sec_uid,
+        user_id=lead.user_id,
+        nickname=lead.username,
+        message=config.dm_text or "",
+        do_follow=do_follow,
+        do_dm=do_dm,
+    )
+
+
 async def _execute_all_outreach_for_lead(
     page: Page,
     settings: Settings,
@@ -1604,13 +1672,8 @@ async def _execute_all_outreach_for_lead(
     lead: PreciseLeadRecord,
     config: StandaloneKeywordBrowseConfig,
 ) -> dict[str, Any]:
-    """命中精准线索后依次测试：回复 → 关注 → 私信。"""
-    from app.services.social_roam.human.douyin.actions import (
-        human_follow_user,
-        human_open_profile_from_comment,
-        human_reply_comment,
-        human_send_dm,
-    )
+    """命中精准线索后依次测试：回复 → 关注 → 私信（关注/私信走 warm_outreach）。"""
+    from app.services.social_roam.human.douyin.actions import human_reply_comment
 
     results: dict[str, Any] = {}
     policy = config.action_policy or {}
@@ -1640,55 +1703,28 @@ async def _execute_all_outreach_for_lead(
         )
         await asyncio.sleep(interval())
 
-    profile_page = None
     if lead.sec_uid:
         await set_page_step_hint(
             page,
-            "触达：点头像进主页",
+            "触达：warm 进主页",
             sub=f"@{lead.username or lead.sec_uid[:16]}",
             title="Huoke · 抖音浏览",
         )
-        profile_page, open_meta = await human_open_profile_from_comment(
-            page,
-            settings,
-            tenant_id=tenant_id,
-            comment_id=lead.comment_id,
-            comment_text=lead.comment_text,
-            parent_comment_id=parent_cid,
-            sec_uid=lead.sec_uid,
-            allow_sec_uid_fallback=False,
-        )
-        results["open_profile"] = open_meta
-        if not open_meta.get("ok"):
-            return results
-        await asyncio.sleep(interval())
-
-    if lead.sec_uid:
-        await set_page_step_hint(page, "触达：主页点关注", sub=lead.username or lead.sec_uid[:16])
-        results["follow"] = await human_follow_user(
+        warm = await _warm_outreach_for_lead(
             page,
             settings,
             tenant_id=tenant_id,
             account_id=account_id,
-            sec_uid=lead.sec_uid,
-            user_id=lead.user_id,
-            username=lead.username,
-            profile_page=profile_page,
+            lead=lead,
+            config=config,
+            do_follow=True,
+            do_dm=bool(config.dm_text),
         )
-        await asyncio.sleep(interval())
-
-    if config.dm_text and lead.sec_uid:
-        await set_page_step_hint(page, "触达：主页点私信", sub=config.dm_text)
-        results["dm"] = await human_send_dm(
-            page,
-            settings,
-            tenant_id=tenant_id,
-            account_id=account_id,
-            sec_uid=lead.sec_uid,
-            message=config.dm_text,
-            username=lead.username,
-            profile_page=profile_page,
-        )
+        results["warm_outreach"] = warm
+        if warm.get("follow") is not None:
+            results["follow"] = warm.get("follow")
+        if warm.get("dm") is not None:
+            results["dm"] = warm.get("dm")
 
     results["ok"] = any(
         isinstance(v, dict) and v.get("ok") for k, v in results.items() if k in {"reply", "follow", "dm"}
@@ -2344,12 +2380,7 @@ async def _execute_outreach_if_needed(
     if not config.execute_outreach or action == "skip":
         return {"ok": False, "skipped": True, "action": action}
 
-    from app.services.social_roam.human.douyin.actions import (
-        human_follow_user,
-        human_open_profile_from_comment,
-        human_reply_comment,
-        human_send_dm,
-    )
+    from app.services.social_roam.human.douyin.actions import human_reply_comment
 
     parent_cid = _parent_comment_id_from_lead(lead)
 
@@ -2365,71 +2396,55 @@ async def _execute_outreach_if_needed(
             parent_comment_id=parent_cid,
         )
     if action in {"follow", "dm"} and lead.sec_uid:
+        do_follow = action == "follow"
+        do_dm = action == "dm" and bool(config.dm_text)
+        if action == "dm" and not config.dm_text:
+            return {"ok": False, "skipped": True, "action": action, "reason": "缺少私信文案"}
+
+        hint = "触达：warm 进主页点关注" if do_follow else "触达：warm 进主页点私信"
         await set_page_step_hint(
             page,
-            "触达：点头像进主页",
+            hint,
             sub=f"@{lead.username or lead.sec_uid[:16]}",
             title="Huoke · 抖音浏览",
         )
-        profile_page, open_meta = await human_open_profile_from_comment(
+        warm = await _warm_outreach_for_lead(
             page,
             settings,
             tenant_id=tenant_id,
-            comment_id=lead.comment_id,
-            comment_text=lead.comment_text,
-            parent_comment_id=parent_cid,
-            sec_uid=lead.sec_uid,
-            allow_sec_uid_fallback=False,
+            account_id=account_id,
+            lead=lead,
+            config=config,
+            do_follow=do_follow,
+            do_dm=do_dm,
         )
-        if not open_meta.get("ok"):
-            if config.reply_text:
-                reply_result = await human_reply_comment(
+        if action == "follow":
+            follow = warm.get("follow") if isinstance(warm.get("follow"), dict) else {}
+            ok = bool(warm.get("ok")) and bool(follow.get("ok"))
+            if not ok:
+                return await _fallback_reply_from_warm_failure(
                     page,
                     settings,
                     tenant_id=tenant_id,
-                    content_url=lead.video_url,
-                    reply_text=config.reply_text,
-                    comment_id=lead.comment_id,
-                    comment_text=lead.comment_text,
-                    parent_comment_id=parent_cid,
+                    lead=lead,
+                    config=config,
+                    failed_action=action,
+                    warm_result={**warm, "action": action},
                 )
-                if reply_result.get("ok"):
-                    return {**reply_result, "action": "reply", "fallback_from": action}
-            return {**open_meta, "action": action}
-        if action == "follow":
-            await set_page_step_hint(
-                page,
-                "触达：主页点关注",
-                sub=f"@{lead.username or lead.sec_uid[:16]}",
-                title="Huoke · 抖音浏览",
-            )
-            return await human_follow_user(
+            return {**follow, "ok": True, "action": "follow", "profile_url": warm.get("profile_url")}
+        dm = warm.get("dm") if isinstance(warm.get("dm"), dict) else {}
+        ok = bool(warm.get("ok")) and bool(dm.get("ok"))
+        if not ok:
+            return await _fallback_reply_from_warm_failure(
                 page,
                 settings,
                 tenant_id=tenant_id,
-                account_id=account_id,
-                sec_uid=lead.sec_uid,
-                user_id=lead.user_id,
-                username=lead.username,
-                profile_page=profile_page,
+                lead=lead,
+                config=config,
+                failed_action=action,
+                warm_result={**warm, "action": action},
             )
-        if action == "dm" and config.dm_text:
-            await set_page_step_hint(
-                page,
-                "触达：主页点私信",
-                sub=(config.dm_text or "")[:40],
-                title="Huoke · 抖音浏览",
-            )
-            return await human_send_dm(
-                page,
-                settings,
-                tenant_id=tenant_id,
-                account_id=account_id,
-                sec_uid=lead.sec_uid,
-                message=config.dm_text,
-                username=lead.username,
-                profile_page=profile_page,
-            )
+        return {**dm, "ok": True, "action": "dm", "profile_url": warm.get("profile_url")}
     return {"ok": False, "skipped": True, "action": action, "reason": "缺少触达文案或未实现"}
 
 
