@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 from app.core.antibot import headless_for_platform, human_delay, require_login
@@ -27,11 +29,62 @@ def is_profile_post_api(url: str) -> bool:
     return AWEME_POST_PATH.strip("/") in url or "/aweme/post/" in url
 
 
+def is_douyin_short_url(url: str) -> bool:
+    host = (urlparse(str(url or "").strip()).netloc or "").lower()
+    return host == "v.douyin.com"
+
+
+def resolve_douyin_short_url(url: str, *, timeout: float = 12.0) -> str | None:
+    """解析 v.douyin.com 短链首跳 Location（不请求落地页）。"""
+    raw = str(url or "").strip()
+    if not is_douyin_short_url(raw):
+        return None
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    req = urllib.request.Request(
+        raw,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+        },
+    )
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        opener.open(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {301, 302, 303, 307, 308}:
+            location = str(exc.headers.get("Location") or "").strip()
+            return location or None
+    except Exception:
+        return None
+    return None
+
+
 def parse_profile_input_url(url: str) -> dict[str, str]:
     """解析抖音主页/带 vid 的链接，返回 sec_uid、可选 vid、规范化 profile_url。"""
     raw = str(url or "").strip()
     if not raw:
         raise ValueError("缺少 profile_url")
+
+    if is_douyin_short_url(raw):
+        resolved = resolve_douyin_short_url(raw)
+        if resolved:
+            try:
+                return parse_profile_input_url(resolved)
+            except ValueError:
+                pass
+        return {
+            "sec_uid": "",
+            "vid": "",
+            "profile_url": raw,
+            "input_kind": "short_link",
+        }
+
     parsed = urlparse(raw)
     if "douyin.com" not in (parsed.netloc or ""):
         raise ValueError(f"非抖音链接: {raw}")

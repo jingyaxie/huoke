@@ -237,7 +237,7 @@ const effectiveIntent = computed(
 const urlLabel = computed(() => (effectiveIntent.value === "single_video" ? "视频链接" : "主页链接"));
 const urlPlaceholder = computed(() =>
   effectiveIntent.value === "account_home"
-    ? "粘贴博主账号主页链接，系统将从主页获取视频列表并抓取评论"
+    ? "粘贴博主账号主页链接（支持 v.douyin.com 短链），系统将从主页获取视频列表并抓取评论"
     : "粘贴单条视频详情页链接",
 );
 const isStandalone = computed(() => isStandaloneDouyinStrategy(form.agentStrategy));

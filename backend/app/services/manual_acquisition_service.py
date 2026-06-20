@@ -11,7 +11,7 @@ from app.services.supervisor_outreach import outreach_priority_from_brief
 MANUAL_ACQUISITION_MODES = frozenset({"single_video", "account_home"})
 
 _PROFILE_URL_PATTERNS: dict[str, tuple[str, ...]] = {
-    "douyin": (r"douyin\.com/user/", r"iesdouyin\.com/share/user/"),
+    "douyin": (r"douyin\.com/user/", r"iesdouyin\.com/share/user/", r"v\.douyin\.com/"),
     "xiaohongshu": (r"xiaohongshu\.com/user/profile/",),
     "kuaishou": (r"kuaishou\.com/profile/", r"v\.kuaishou\.com/"),
 }

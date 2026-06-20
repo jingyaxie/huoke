@@ -96,6 +96,12 @@ def test_infer_manual_url_mode_profile():
     assert infer_manual_url_mode(url, "douyin") == "account_home"
 
 
+def test_infer_manual_url_mode_douyin_short_link():
+    from app.services.manual_acquisition_service import infer_manual_url_mode
+
+    assert infer_manual_url_mode("https://v.douyin.com/fDELcUzXDCA/", "douyin") == "account_home"
+
+
 def test_enrich_manual_reconciles_profile_url_for_single_video_intent():
     brief = TaskBrief(title="手动", platform="douyin", goals={})
     profile = "https://www.douyin.com/user/MS4wLjABAAAAR-hiJNkDpOJIXZ7D"

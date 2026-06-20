@@ -1,5 +1,5 @@
 const PROFILE_URL_PATTERNS = {
-  douyin: [/douyin\.com\/user\//i, /iesdouyin\.com\/share\/user\//i],
+  douyin: [/douyin\.com\/user\//i, /iesdouyin\.com\/share\/user\//i, /v\.douyin\.com\//i],
   xiaohongshu: [/xiaohongshu\.com\/user\/profile\//i],
   kuaishou: [/kuaishou\.com\/profile\//i, /v\.kuaishou\.com\//i],
 };
