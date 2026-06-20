@@ -22,7 +22,6 @@ export const ACQUISITION_PLATFORM_OPTIONS = [
   { value: "", label: "全部平台" },
   { value: "douyin", label: "抖音" },
   { value: "xiaohongshu", label: "小红书" },
-  { value: "kuaishou", label: "快手" },
 ];
 
 function parseJsonMessage(message) {
