@@ -88,6 +88,86 @@ def effective_leads_collected(brief: TaskBrief, state: dict[str, Any]) -> int:
     return int(state.get("leads_collected") or 0)
 
 
+def effective_leads_qualified(state: dict[str, Any]) -> int:
+    return int(state.get("leads_qualified") or 0)
+
+
+def persisted_precise_comment_count(state: dict[str, Any]) -> int:
+    """standalone 入库清单：精准 comment_id 数以 job_persisted_comment_ids 为准。"""
+    raw = state.get("job_persisted_comment_ids")
+    if not isinstance(raw, list):
+        return 0
+    return len({str(x).strip() for x in raw if str(x).strip()})
+
+
+def standalone_outreach_incomplete(brief: TaskBrief, state: dict[str, Any]) -> bool:
+    """一体化浏览：精准线索已够，但成功触达数未达目标。"""
+    from app.services.standalone_browse_adapter import is_standalone_browse_brief
+
+    if not is_standalone_browse_brief(brief):
+        return False
+    if bool(brief.goals.get("outreach_validate_only")):
+        return False
+    target = int(brief.goals.get("target_leads") or 0)
+    if target <= 0:
+        return False
+    if effective_leads_qualified(state) < target:
+        return False
+    return effective_leads_collected(brief, state) < target
+
+
+def historical_qualified_peak_from_progress(job_result: dict[str, Any] | None) -> int:
+    """从 progress_events 取历史峰值（任务中断后未写入 state 时用于恢复展示）。"""
+    if not isinstance(job_result, dict):
+        return 0
+    events = job_result.get("progress_events")
+    if not isinstance(events, list):
+        return 0
+    best = 0
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("type") != "crawl_progress":
+            continue
+        data = ev.get("data")
+        if isinstance(data, dict):
+            best = max(best, int(data.get("leads_qualified") or 0))
+    return best
+
+
+def effective_live_leads_qualified(
+    state: dict[str, Any],
+    *,
+    job_result: dict[str, Any] | None = None,
+) -> int:
+    """任务进行中：优先已入库精准清单，其次 state / crawl_live（均为累计值，勿重复相加）。"""
+    persisted = persisted_precise_comment_count(state)
+    if persisted > 0:
+        return persisted
+    committed = effective_leads_qualified(state)
+    historical = historical_qualified_peak_from_progress(job_result)
+    crawl_live = state.get("crawl_live")
+    session_q = 0
+    if isinstance(crawl_live, dict):
+        session_q = int(crawl_live.get("leads_qualified") or 0)
+    return max(committed, historical, session_q)
+
+
+def uses_qualified_leads_goal(brief: TaskBrief) -> bool:
+    """standalone 一体化浏览：目标为精准线索数（leads_qualified），可超过 target。"""
+    from app.services.standalone_browse_adapter import is_standalone_browse_brief
+
+    if is_standalone_browse_brief(brief):
+        return True
+    if str(brief.goals.get("goal_metric") or "").strip().lower() == "leads_qualified":
+        return True
+    return False
+
+
+def effective_supervisor_goal_count(brief: TaskBrief, state: dict[str, Any]) -> int:
+    if uses_qualified_leads_goal(brief):
+        return effective_leads_qualified(state)
+    return effective_leads_collected(brief, state)
+
+
 def goal_reached_for_current_round(brief: TaskBrief, state: dict[str, Any]) -> bool:
     target = effective_target_leads(brief, state)
     if target <= 0:

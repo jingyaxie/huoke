@@ -99,11 +99,16 @@ DEFAULT_DESKTOP_PORT = 18765
 
 
 def _parse_args() -> argparse.Namespace:
-
-    parser = argparse.ArgumentParser(description="独立抖音关键词浏览（凑够精准线索为止）")
-
+    parser = argparse.ArgumentParser(description="独立抖音浏览（关键词 / 单视频 / 主页）")
+    parser.add_argument(
+        "--mode",
+        choices=["keyword", "video", "profile"],
+        default="keyword",
+        help="获客模式：keyword=关键词搜索，video=单视频，profile=账号主页",
+    )
     parser.add_argument("--keyword", default=DEFAULT_KEYWORD, help=f"搜索关键词（默认 {DEFAULT_KEYWORD}）")
-
+    parser.add_argument("--video-url", default="", help="单视频链接（--mode video）")
+    parser.add_argument("--profile-url", default="", help="账号主页链接（--mode profile）")
     parser.add_argument("--days", type=int, default=7, help="视频发布时间筛选（天）")
 
     parser.add_argument("--comment-days", type=int, default=None, help="评论时间窗口（天），默认与 --days 相同")
@@ -161,65 +166,32 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _build_config(args: argparse.Namespace) -> StandaloneKeywordBrowseConfig:
+    from app.platforms.douyin.standalone_keyword_browse import build_standalone_browse_config
 
     match_keywords = [k.strip() for k in args.match_keywords.split(",") if k.strip()]
-
-    if not match_keywords:
-
+    if not match_keywords and args.mode == "keyword":
         match_keywords = [args.keyword.strip(), "获客", "AI"]
-
     exclude_keywords = [k.strip() for k in args.exclude_keywords.split(",") if k.strip()]
-
-    target = max(1, int(args.target_leads or args.limit or DEFAULT_TARGET_LEADS))
-
-    return StandaloneKeywordBrowseConfig(
-
+    mode_map = {"keyword": "keyword_auto", "video": "single_video", "profile": "account_home"}
+    return build_standalone_browse_config(
+        acquisition_mode=mode_map.get(args.mode, "keyword_auto"),
         keyword=args.keyword.strip(),
-
+        video_url=args.video_url.strip(),
+        profile_url=args.profile_url.strip(),
         days=args.days,
-
+        video_publish_days=args.days if args.mode == "profile" else None,
         comment_days=args.comment_days,
-
-        content_limit=target,
-
-        target_precise_leads=target,
-
-        max_videos_to_browse=max(target, int(args.max_videos)),
-
+        target_precise_leads=max(1, int(args.target_leads or args.limit or DEFAULT_TARGET_LEADS)),
+        limit=args.limit,
+        max_videos_to_browse=int(args.max_videos),
         match_keywords=match_keywords,
-
         exclude_keywords=exclude_keywords,
-
         execute_outreach=not bool(args.no_outreach),
-
         test_all_outreach=not bool(args.no_outreach),
-
         reply_text=(args.reply_text or DEFAULT_REPLY).strip(),
-
         dm_text=(args.dm_text or DEFAULT_DM).strip(),
-
-        action_policy={
-
-            "comment_ratio": 34,
-
-            "dm_ratio": 33,
-
-            "follow_ratio": 33,
-
-            "interval_min_sec": 8,
-
-            "interval_max_sec": 18,
-
-        },
-
         persist_to_db=not bool(args.no_persist),
-
-        reuse_stable_session=True,
-
         close_browser_after=False,
-
-        min_comment_length=3,
-
     )
 
 

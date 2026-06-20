@@ -4,12 +4,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.task_brief_service import TaskBrief, is_skill_flow_brief
+from app.services.standalone_browse_adapter import (
+    is_standalone_browse_brief,
+    build_standalone_execution_plan,
+    upgrade_standalone_execution_plan,
+    _standalone_plan_needs_upgrade,
+)
 from app.services.manual_acquisition_service import build_manual_acquisition_plan, manual_acquisition_mode
 from app.services.task_round_service import (
     effective_leads_collected,
+    effective_leads_qualified,
+    effective_supervisor_goal_count,
     effective_target_leads,
     goal_reached_for_current_round,
     round_loop_enabled,
+    uses_qualified_leads_goal,
 )
 from app.services.task_skill_playbook import skill_id_for_supervisor_action
 from app.services.supervisor_crawl_helpers import (
@@ -97,6 +106,12 @@ def _plan_has_outreach_steps(plan: dict[str, Any]) -> bool:
 def ensure_supervisor_execution_plan(brief: TaskBrief, state: dict[str, Any]) -> dict[str, Any]:
     """生成或升级战术计划（skill_flow 旧计划补触达步）。"""
     plan = state.get("execution_plan")
+    if is_standalone_browse_brief(brief):
+        if not isinstance(plan, dict) or plan.get("pipeline") != "standalone_browse":
+            return build_standalone_execution_plan(brief, state)
+        if _standalone_plan_needs_upgrade(plan):
+            return upgrade_standalone_execution_plan(plan, brief, state)
+        return sync_supervisor_plan_from_state(plan, state)
     if is_skill_flow_brief(brief):
         if not isinstance(plan, dict) or not _plan_has_outreach_steps(plan):
             return build_supervisor_execution_plan(brief, state)
@@ -109,6 +124,8 @@ def ensure_supervisor_execution_plan(brief: TaskBrief, state: dict[str, Any]) ->
 def build_supervisor_execution_plan(brief: TaskBrief, state: dict[str, Any] | None = None) -> dict[str, Any]:
     """根据任务简报生成 Supervisor 战术执行计划（有序、不可跳步）。"""
     state = state or {}
+    if is_standalone_browse_brief(brief):
+        return build_standalone_execution_plan(brief, state)
     manual_plan = build_manual_acquisition_plan(brief, state)
     if manual_plan is not None:
         return manual_plan
@@ -466,6 +483,17 @@ def advance_supervisor_plan(
                 step["status"] = "completed"
         elif revisit_under_crawl:
             step["status"] = "in_progress"
+        elif (
+            action in CRAWL_SUPERVISOR_ACTIONS
+            and is_standalone_browse_brief(brief)
+            and not revisit_under_crawl
+        ):
+            target = int(brief.goals.get("target_leads") or state.get("_plan_target_leads") or 0)
+            qualified = int(state.get("leads_qualified") or 0)
+            if target > 0 and qualified < target and not state.get("crawl_search_exhausted"):
+                step["status"] = "in_progress"
+            else:
+                step["status"] = "completed"
         else:
             step["status"] = "completed"
     else:
@@ -556,9 +584,13 @@ def plan_driven_supervisor_decision(
             if revisit is not None:
                 step["status"] = "in_progress"
                 return revisit
+        reason = f"计划步骤「{step.get('label') or step_id}」失败，挂起等待人工处理"
+        err = str(state.get("last_crawl_error") or "").strip()
+        if err and action in CRAWL_SUPERVISOR_ACTIONS and is_standalone_browse_brief(brief):
+            reason = f"浏览步骤失败：{err[:220]}"
         return {
             "action": "suspend",
-            "reasoning": f"计划步骤「{step.get('label') or step_id}」失败，挂起等待人工处理",
+            "reasoning": reason,
             "resume_at": None,
             "params": {},
             "goal_progress": _goal_progress(brief, state),
@@ -685,8 +717,12 @@ def plan_driven_supervisor_decision(
 def _goal_progress(brief: TaskBrief, state: dict[str, Any]) -> dict[str, Any]:
     target = effective_target_leads(brief, state) or int(brief.goals.get("target_leads") or 50)
     leads = effective_leads_collected(brief, state)
+    qualified = effective_leads_qualified(state)
+    goal_count = effective_supervisor_goal_count(brief, state)
     progress = {
         "leads_collected": leads,
+        "leads_qualified": qualified,
+        "goal_leads": goal_count,
         "comments_captured": int(state.get("comments_captured") or 0),
         "target_leads": target,
         "crawl_done": bool(state.get("crawl_done")),
@@ -710,19 +746,26 @@ def supervisor_goal_reached(brief: TaskBrief, state: dict[str, Any]) -> bool:
     target = int(brief.goals.get("target_leads") or 0)
     if target <= 0:
         return True
-    return int(state.get("leads_collected") or 0) >= target
+    return effective_supervisor_goal_count(brief, state) >= target
 
 
 def build_plan_incomplete_suspend_decision(brief: TaskBrief, state: dict[str, Any]) -> dict[str, Any]:
     target = effective_target_leads(brief, state)
-    leads = effective_leads_collected(brief, state)
+    goal_count = effective_supervisor_goal_count(brief, state)
+    if uses_qualified_leads_goal(brief):
+        metric_label = "精准线索"
+    else:
+        metric_label = "线索触达"
+    resume_at = None
+    if is_standalone_browse_brief(brief) and standalone_can_auto_continue(brief, state):
+        resume_at = _short_resume_at_iso(minutes=3)
     return {
         "action": "suspend",
         "reasoning": (
-            f"战术计划步骤已跑完，但线索触达 {leads}/{target} 未达标，"
+            f"战术计划步骤已跑完，但{metric_label} {goal_count}/{target} 未达标，"
             "挂起等待继续执行（非目标达成）"
         ),
-        "resume_at": None,
+        "resume_at": resume_at,
         "params": {},
         "goal_progress": _goal_progress(brief, state),
         "plan_step_id": "finish",
@@ -750,6 +793,57 @@ def _default_resume_at_iso() -> str:
     return (datetime.now(timezone.utc) + timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     ).isoformat()
+
+
+def _short_resume_at_iso(*, minutes: int = 3) -> str:
+    from datetime import timedelta
+
+    return (datetime.now(timezone.utc) + timedelta(minutes=max(1, int(minutes)))).isoformat()
+
+
+def standalone_can_auto_continue(brief: TaskBrief, state: dict[str, Any]) -> bool:
+    """Standalone 未达目标但仍有视频/搜索进度可续扫。"""
+    if not is_standalone_browse_brief(brief):
+        return False
+    if state.get("crawl_search_exhausted"):
+        return False
+    target = effective_target_leads(brief, state)
+    goal = effective_supervisor_goal_count(brief, state)
+    if target > 0 and goal >= target:
+        return False
+    if int(state.get("standalone_browse_offset") or 0) > 0:
+        return True
+    if str(state.get("standalone_search_url") or "").strip():
+        return True
+    return int(state.get("videos_processed") or 0) > 0
+
+
+def prepare_standalone_auto_continue(state: dict[str, Any], brief: TaskBrief) -> None:
+    """重置计划到 crawl 步骤，同一次任务内自动续扫。"""
+    state.pop("suspended", None)
+    state.pop("resume_at", None)
+    state.pop("wake_reason", None)
+    state.pop("completion_outcome", None)
+    state["stale_cycles"] = 0
+    state.pop("crawl_done", None)
+    state.pop("stats_synced", None)
+    state.pop("evaluation_done", None)
+    plan = state.get("execution_plan") if isinstance(state.get("execution_plan"), dict) else None
+    if not isinstance(plan, dict):
+        state["execution_plan"] = ensure_supervisor_execution_plan(brief, state)
+        plan = state["execution_plan"]
+    steps = plan.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            action = str(step.get("action") or "")
+            if action == "crawl_keyword":
+                step["status"] = "in_progress"
+            elif action in {"query_stats", "complete"}:
+                step["status"] = "pending"
+        plan["current_index"] = 0
+        state["execution_plan"] = plan
 
 
 def format_resume_at_display(resume_at: str | None) -> str | None:

@@ -1,4 +1,7 @@
 import http from "./http";
+import {
+  resolveAgentStrategy,
+} from "../utils/acquisitionStrategy";
 
 export async function fetchExternalCapabilities(platform) {
   const resp = await http.get("/agent/external/capabilities", {
@@ -46,9 +49,8 @@ function resolvePresetContents(presets, selectedIds) {
   return presets.filter((row) => idSet.has(row.id)).map((row) => row.content).filter(Boolean);
 }
 
-function agentStrategyForPlatform(platform) {
-  if (platform === "xiaohongshu") return "skill-flow-xiaohongshu";
-  return "skill-flow-douyin";
+function agentStrategyForPlatform(platform, strategyId) {
+  return resolveAgentStrategy(platform, strategyId);
 }
 
 export function buildAutoTaskPayload({
@@ -67,6 +69,7 @@ export function buildAutoTaskPayload({
   dmPresets,
   evaluation,
   binding,
+  agentStrategy,
 }) {
   const taskId = `auto-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const scope = {
@@ -94,7 +97,7 @@ export function buildAutoTaskPayload({
     correlation: buildLocalCorrelation(taskId),
     auto_execute: true,
     auto_restart: true,
-    agent_strategy: agentStrategyForPlatform(platform),
+    agent_strategy: agentStrategyForPlatform(platform, agentStrategy),
   };
   if (evaluation && Object.keys(evaluation).length) {
     payload.evaluation = evaluation;
@@ -126,6 +129,8 @@ export function buildManualTaskPayload({
   commentPresets,
   dmPresets,
   evaluation,
+  agentStrategy,
+  targetCount,
 }) {
   const taskId = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const scope = {
@@ -135,6 +140,14 @@ export function buildManualTaskPayload({
   };
   if (intent === "account_home" && crawlVideoLimit) {
     scope.crawl_video_limit = crawlVideoLimit;
+  }
+  const resolvedStrategy = agentStrategyForPlatform(platform, agentStrategy);
+  if (resolvedStrategy === "standalone-browse-douyin") {
+    if (intent === "account_home" && crawlVideoLimit) {
+      scope.target_count = Math.max(1, Number(crawlVideoLimit) || 1);
+    } else if (intent === "single_video") {
+      scope.target_count = Math.max(1, Number(targetCount) || 5);
+    }
   }
   const outreach = {
     constraints: buildConstraints(settings, commentPresetIds, dmPresetIds),
@@ -151,7 +164,7 @@ export function buildManualTaskPayload({
     correlation: buildLocalCorrelation(taskId),
     auto_execute: true,
     auto_restart: true,
-    agent_strategy: agentStrategyForPlatform(platform),
+    agent_strategy: resolvedStrategy,
   };
   if (evaluation && Object.keys(evaluation).length) {
     payload.evaluation = evaluation;

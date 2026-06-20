@@ -1,24 +1,45 @@
-"""抖音关键词搜索 → 逐视频浏览评论 → 评估线索 → 分配触达动作。
+"""抖音独立浏览获客：关键词搜索 / 单视频 / 账号主页 → 评论 → 评估 → 触达。
 
-与 skill / 智能体 / DouyinCommentCrawler 彼此独立，固定 UI 流程：
+与 skill / 智能体 / DouyinCommentCrawler 彼此独立，固定 UI 流程。
+
+关键词模式 (keyword_auto)：
 1. 打开 https://www.douyin.com/
 2. 搜索框逐字输入关键词，Enter 搜索
 3. 点击筛选，按 days 选发布时间
 4. 按列表顺序点击视频（从第一个开始）
+
+手动模式 (single_video / account_home)：
+1. 打开抖音首页（复用稳定会话）
+2. 单视频：直达 video_url；主页：打开 profile_url 并采集作品列表
+3. 单视频 goto 详情；主页在作品网格上逐一点击进入详情（模拟人类）
+
+共用后续步骤：
 5. 打开评论侧栏，拦截 comment/list，评估符合意图的评论
 6. 慢速滚动评论；命中则按 action_policy 分配 reply/dm/follow，保存精准线索
-7. 评论过旧或看完 → 返回列表 → 下一个视频，重复 5–7
+7. 评论过旧或看完 → 下一个视频，重复 5–7
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
+import logging
 import random
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
+
+ProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
+
+from app.services.manual_acquisition_service import (
+    MANUAL_ACQUISITION_MODES,
+    infer_manual_url_mode,
+    reconcile_manual_acquisition_mode,
+)
+
+StandaloneAcquisitionMode = Literal["keyword_auto", "single_video", "account_home"]
 
 from playwright.async_api import Page
 from sqlalchemy.orm import Session
@@ -39,7 +60,7 @@ from app.platforms.douyin.video_comments_passive import (
     _merge_captured_pages,
     _newest_top_create_time_in_page,
     _page_signature,
-    _should_stop_for_time_window,
+    comment_scroll_stop_reason,
 )
 from app.services.outreach_policy import OutreachAction, choose_outreach_action, random_interval_sec
 from app.services.supervisor_outreach import persist_crawl_skill_result
@@ -50,8 +71,10 @@ from app.services.ui_flow.platforms.douyin.feed_ui import (
     activate_comment_sidebar_on_page,
     classify_douyin_page,
     close_feed_detail_on_page,
+    comment_list_end_marker_visible,
     feed_overlay_visible,
     is_feed_detail_open,
+    is_search_feed_overlay,
     scroll_comment_sidebar_on_page,
     search_list_visible,
     select_latest_comment_sort_on_page,
@@ -64,6 +87,17 @@ from app.services.ui_flow.platforms.douyin.browse_ui import (
     _resolve_aweme_id_at_index,
     click_search_poster,
 )
+from app.services.ui_flow.platforms.douyin.profile_ui import (
+    back_to_profile_list,
+    click_profile_video_at_index,
+    ensure_profile_item_index,
+)
+from app.platforms.search_filters import (
+    douyin_publish_time_ui_label,
+    filter_search_items,
+    normalize_days,
+    select_rows_after_filter,
+)
 from app.services.ui_flow.platforms.douyin.search_parse import (
     analyze_search_api_response,
     extract_aweme_items_from_json,
@@ -74,17 +108,98 @@ from app.services.ui_flow.platforms.douyin.search_parse import (
 )
 from app.services.ui_flow.platforms.douyin.search_ui import (
     _POSTER_SELECTORS,
+    _needs_ui_publish_filter,
+    apply_ui_publish_time_filter,
     collect_video_urls_from_page,
     page_has_search_posters,
     page_has_video_results,
     release_searchbar_focus,
+    reuse_search_results_if_ready,
     run_search,
     scroll_search_results_page,
 )
+from app.services.ui_flow.platforms.douyin.prepare_ui import run_prepare
 from app.services.ui_flow.platforms.douyin.ui_session import DouyinUiSession
 
 CAPTURE_METHOD = "standalone_keyword_browse"
+CAPTURE_METHOD_VIDEO = "standalone_video_browse"
+CAPTURE_METHOD_PROFILE = "standalone_profile_browse"
 DOUYIN_ENTRY_URL = "https://www.douyin.com/"
+DOUYIN_JINGXUAN_URL = "https://www.douyin.com/jingxuan"
+
+
+def capture_method_for_mode(mode: str) -> str:
+    normalized = str(mode or "keyword_auto").strip().lower()
+    if normalized == "single_video":
+        return CAPTURE_METHOD_VIDEO
+    if normalized == "account_home":
+        return CAPTURE_METHOD_PROFILE
+    return CAPTURE_METHOD
+
+
+def _is_keyword_mode(config: "StandaloneKeywordBrowseConfig") -> bool:
+    return str(config.acquisition_mode or "keyword_auto").strip().lower() == "keyword_auto"
+
+
+def _is_manual_mode(config: "StandaloneKeywordBrowseConfig") -> bool:
+    return str(config.acquisition_mode or "").strip().lower() in MANUAL_ACQUISITION_MODES
+
+
+def _result_subject(config: "StandaloneKeywordBrowseConfig") -> str:
+    if config.acquisition_mode == "single_video":
+        return str(config.video_url or "").strip()
+    if config.acquisition_mode == "account_home":
+        return str(config.profile_url or "").strip()
+    return str(config.keyword or "").strip()
+
+
+def validate_standalone_config(config: "StandaloneKeywordBrowseConfig") -> tuple[bool, str]:
+    mode = str(config.acquisition_mode or "keyword_auto").strip().lower()
+    if mode == "keyword_auto":
+        if not str(config.keyword or "").strip():
+            return False, "关键词模式需要 keyword"
+        return True, ""
+    if mode == "single_video":
+        if not str(config.video_url or "").strip():
+            return False, "单视频模式需要 video_url"
+        return True, ""
+    if mode == "account_home":
+        if not str(config.profile_url or "").strip():
+            return False, "主页模式需要 profile_url"
+        return True, ""
+    return False, f"不支持的 acquisition_mode: {mode}"
+
+
+def resolve_standalone_acquisition_mode(
+    *,
+    acquisition_mode: str | None,
+    input_url: str = "",
+    video_url: str = "",
+    profile_url: str = "",
+) -> tuple[str, str, str]:
+    """归一化手动/关键词模式与 URL 字段。"""
+    raw_mode = str(acquisition_mode or "keyword_auto").strip().lower()
+    resolved_video = str(video_url or "").strip()
+    resolved_profile = str(profile_url or "").strip()
+    resolved_input = str(input_url or "").strip()
+    if not resolved_video and raw_mode == "single_video":
+        resolved_video = resolved_input
+    if not resolved_profile and raw_mode == "account_home":
+        resolved_profile = resolved_input
+    if raw_mode in MANUAL_ACQUISITION_MODES:
+        source = resolved_video or resolved_profile or resolved_input
+        if source:
+            raw_mode = reconcile_manual_acquisition_mode(raw_mode, source, "douyin")
+            inferred = infer_manual_url_mode(source, "douyin")
+            if inferred == "single_video":
+                resolved_video = resolved_video or source
+            elif inferred == "account_home":
+                resolved_profile = resolved_profile or source
+    if raw_mode == "single_video" and not resolved_video and resolved_input:
+        resolved_video = resolved_input
+    if raw_mode == "account_home" and not resolved_profile and resolved_input:
+        resolved_profile = resolved_input
+    return raw_mode, resolved_video, resolved_profile
 
 
 def _on_search_results_url(url: str) -> bool:
@@ -95,16 +210,82 @@ def _on_search_results_url(url: str) -> bool:
 def _sync_search_aweme_ids_from_api(
     ctx: DouyinUiSession,
     api_items: dict[str, dict],
+    *,
+    days: int | None = None,
+    api_days_fallback: bool = False,
 ) -> list[str]:
     """用拦截到的 search/single API 顺序确定要点哪个视频（不依赖 DOM href）。"""
     if not api_items:
         return list(ctx.state.get("search_aweme_ids") or [])
     ranked = rank_search_items(list(api_items.values()), ctx.params.keyword)
+    nd = normalize_days(days)
+    if api_days_fallback and nd:
+        filtered, stats = filter_search_items(
+            ranked,
+            region=ctx.params.region,
+            days=nd,
+            platform="douyin",
+            limit=max(len(ranked), int(ctx.params.content_limit or 5) * 3),
+        )
+        filtered_ranked = select_rows_after_filter(
+            ranked,
+            filtered,
+            region=ctx.params.region,
+            limit=max(len(ranked), int(ctx.params.content_limit or 5) * 3),
+        )
+        ctx.phase_log.append(
+            "SEARCH_API_DAYS_FALLBACK "
+            f"matched={stats.get('matched', 0)}/{stats.get('scanned', 0)} days={nd}"
+        )
+        if filtered_ranked:
+            ranked = filtered_ranked
+        else:
+            ctx.phase_log.append("SEARCH_API_DAYS_FALLBACK empty_keep_dom_order")
     aweme_ids = [str(row.get("aweme_id") or "") for row in ranked if str(row.get("aweme_id") or "")]
     if aweme_ids:
         ctx.state["search_aweme_ids"] = aweme_ids
         ctx.state["search_poster_mode"] = True
     return aweme_ids
+
+
+def _publish_days_for_config(config: StandaloneKeywordBrowseConfig) -> int | None:
+    raw = config.video_publish_days if config.video_publish_days is not None else config.days
+    return normalize_days(raw)
+
+
+def _publish_filter_ui_label(config: StandaloneKeywordBrowseConfig) -> str | None:
+    return douyin_publish_time_ui_label(_publish_days_for_config(config))
+
+
+def _log_search_filter_state(ctx: DouyinUiSession) -> None:
+    applied = ctx.state.get("search_filter_applied")
+    verified = ctx.state.get("search_filter_verified")
+    steps = ctx.state.get("search_filter_steps") or []
+    parts: list[str] = []
+    if applied:
+        parts.append(f"label={applied}")
+    parts.append(f"verified={verified}")
+    if steps:
+        parts.append("steps=" + ">".join(str(s) for s in steps))
+    ctx.phase_log.append("SEARCH_FILTER " + " ".join(parts))
+
+
+def _filter_diagnostic_suffix(ctx: DouyinUiSession) -> str:
+    applied = ctx.state.get("search_filter_applied")
+    verified = ctx.state.get("search_filter_verified")
+    steps = ctx.state.get("search_filter_steps") or []
+    if applied:
+        suffix = f"；发布时间={applied}"
+        if verified:
+            return suffix + "（已确认）"
+        if steps and "verified=weak" in steps:
+            return suffix + "（弱确认）"
+        return suffix + "（未确认）"
+    if _needs_ui_publish_filter(ctx):
+        if steps:
+            return f"；筛选步骤={'>'.join(str(s) for s in steps)}"
+        return "；筛选未生效"
+    return ""
 
 
 async def _is_search_list_ready(
@@ -132,7 +313,41 @@ async def _page_phase_note(page: Page) -> str:
 
 
 async def _wait_feed_opened(page: Page, *, max_sec: float = 4.0) -> bool:
-    return await wait_feed_detail(page, max_sec=max_sec)
+    """等待搜索页 Feed 浮层（左视频右评论），不接受 /video/ 独立详情页。"""
+    deadline = asyncio.get_running_loop().time() + max_sec
+    while asyncio.get_running_loop().time() < deadline:
+        if await is_search_feed_overlay(page):
+            return True
+        await asyncio.sleep(0.15)
+    return False
+
+
+async def _wait_search_feed_overlay(
+    ctx: DouyinUiSession,
+    *,
+    aweme_hint: str = "",
+    max_sec: float = 5.0,
+) -> bool:
+    """等待搜索 Feed 浮层；若误入 /video/ 详情页则尝试 modal_id 恢复。"""
+    page = ctx.page
+    deadline = asyncio.get_running_loop().time() + max_sec
+    tried_modal_recovery = False
+    while asyncio.get_running_loop().time() < deadline:
+        if await is_search_feed_overlay(page):
+            ctx.state["feed_mode"] = True
+            return True
+        url = (page.url or "").lower()
+        if (
+            aweme_hint
+            and re.search(r"/video/\d+", url)
+            and not tried_modal_recovery
+        ):
+            tried_modal_recovery = True
+            if await _open_feed_via_modal_id(ctx, aweme_hint):
+                await asyncio.sleep(0.45)
+                continue
+        await asyncio.sleep(0.15)
+    return False
 
 
 async def _search_list_visible(page: Page) -> bool:
@@ -360,15 +575,23 @@ async def _scroll_search_until_card_index(
     ctx: DouyinUiSession,
     index: int,
     *,
-    max_scrolls: int = 12,
+    max_scrolls: int | None = None,
 ) -> list[dict[str, Any]]:
     """虚拟列表下滚动直到第 index 个可见卡片出现（仅在搜索列表页执行）。"""
     page = ctx.page
+    aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
+    if len(aweme_ids) > index:
+        return await _collect_visible_search_cards(page)
+
     if not await search_list_visible(page):
         return await _collect_visible_search_cards(page)
 
+    budget = max_scrolls
+    if budget is None:
+        budget = 2 if len(aweme_ids) > index else min(12, max(2, index + 1))
+
     cards: list[dict[str, Any]] = []
-    scroll_budget = 0 if index <= 0 else max_scrolls
+    scroll_budget = 0 if index <= 0 else budget
     for _ in range(scroll_budget + 1):
         cards = await _collect_visible_search_cards(page)
         if len(cards) > index:
@@ -546,24 +769,20 @@ async def _click_search_result_item(
 
     async def _confirm_feed_open(method: str) -> tuple[bool, str]:
         snap = await classify_douyin_page(page)
-        if await wait_feed_detail(page, max_sec=5.0):
-            ctx.state["feed_mode"] = True
+        if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_hint, max_sec=5.0):
             return True, (
                 f"{method} index={index} aweme={aweme_hint[:12] if aweme_hint else 'dom'} "
-                f"phase={snap.get('phase')}"
+                f"feed_overlay phase={snap.get('phase')}"
             )
+        snap = await classify_douyin_page(page)
         return False, (
-            f"{method}_no_feed index={index} phase={snap.get('phase')} "
-            f"feed={snap.get('feed_visible')} list={snap.get('list_visible')}"
+            f"{method}_no_feed_overlay index={index} phase={snap.get('phase')} "
+            f"feed={snap.get('feed_visible')} list={snap.get('list_visible')} "
+            f"url={(page.url or '')[:96]}"
         )
 
     if aweme_hint and await _open_feed_via_modal_id(ctx, aweme_hint):
         ok, note = await _confirm_feed_open("modal_open")
-        if ok:
-            return True, note
-
-    if aweme_hint and await _open_feed_via_video_url(ctx, aweme_hint):
-        ok, note = await _confirm_feed_open("video_url_open")
         if ok:
             return True, note
 
@@ -572,7 +791,8 @@ async def _click_search_result_item(
 
     last_note = f"未找到可点击的列表 item；api_aweme={aweme_hint or 'none'}"
 
-    if index > 0:
+    # 已有 aweme_id 时优先 modal 打开，避免在列表上反复滚动
+    if index > 0 and not aweme_hint:
         await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
         await asyncio.sleep(0.35)
 
@@ -662,11 +882,6 @@ async def _click_search_result_item(
         if ok:
             return True, note
 
-    if aweme_hint and await _open_feed_via_video_url(ctx, aweme_hint):
-        ok, note = await _confirm_feed_open("video_url_fallback")
-        if ok:
-            return True, note
-
     return False, f"{last_note}; {await _page_phase_note(page)}"
 
 
@@ -686,10 +901,15 @@ def _match_comment(comment_text: str, keywords: list[str], exclude: list[str] | 
 
 @dataclass
 class StandaloneKeywordBrowseConfig:
-    """独立关键词浏览任务配置（不依赖 skill / agent）。"""
+    """独立浏览任务配置（不依赖 skill / agent）。"""
 
-    keyword: str
+    keyword: str = ""
+    acquisition_mode: StandaloneAcquisitionMode = "keyword_auto"
+    video_url: str = ""
+    profile_url: str = ""
+    input_url: str = ""
     days: int = 7
+    video_publish_days: int | None = None
     content_limit: int = 5
     target_precise_leads: int = 3
     max_videos_to_browse: int = 50
@@ -698,8 +918,8 @@ class StandaloneKeywordBrowseConfig:
     match_keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
     min_comment_length: int = 4
-    max_comments_per_video: int = 120
-    comment_scroll_rounds: int = 24
+    max_comments_per_video: int = 300
+    comment_scroll_rounds: int = 60
     watch_seconds_min: int = 3
     watch_seconds_max: int = 8
     action_policy: dict[str, Any] = field(
@@ -721,6 +941,9 @@ class StandaloneKeywordBrowseConfig:
     task_brief: Any | None = None
     reuse_stable_session: bool = True
     close_browser_after: bool = False
+    start_video_index: int = 0
+    resume_search_url: str = ""
+    source_job_id: str = ""
 
 
 @dataclass
@@ -741,12 +964,16 @@ class PreciseLeadRecord:
     outreach_executed: bool = False
     outreach_result: dict[str, Any] = field(default_factory=dict)
     raw_comment: dict[str, Any] = field(default_factory=dict)
+    persisted: bool = False
+    persist_error: str = ""
 
 
 @dataclass
 class StandaloneKeywordBrowseResult:
     ok: bool
     keyword: str
+    acquisition_mode: str = "keyword_auto"
+    source_url: str = ""
     search_url: str = ""
     videos_processed: int = 0
     comments_scanned: int = 0
@@ -757,6 +984,11 @@ class StandaloneKeywordBrowseResult:
     output_file: str | None = None
     error: str | None = None
     target_reached: bool = False
+    search_exhausted: bool = False
+    comments_persisted: int = 0
+
+
+_logger = logging.getLogger(__name__)
 
 
 async def _count_search_posters(page: Page) -> int:
@@ -890,24 +1122,271 @@ async def _open_feed_via_video_url(ctx: DouyinUiSession, aweme_id: str) -> bool:
         return False
 
 
+async def _open_video_for_browse(
+    ctx: DouyinUiSession,
+    video_url: str,
+    *,
+    video_index: int,
+) -> tuple[bool, str]:
+    """手动模式：直达视频页并等待详情就绪。"""
+    page = ctx.page
+    settings = ctx.settings
+    tenant_id = ctx.tenant_id
+    url = str(video_url or "").strip()
+    if not url:
+        return False, f"视频 {video_index + 1} 缺少 URL"
+    try:
+        aweme_id = _extract_aweme_id(url)
+    except ValueError:
+        aweme_id = ""
+    if aweme_id and "/video/" not in url:
+        url = f"https://www.douyin.com/video/{aweme_id}"
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
+        await assert_douyin_human_ready(
+            page,
+            settings,
+            tenant_id=tenant_id,
+            stage="video_url",
+        )
+        ctx.state["feed_mode"] = True
+        if await wait_feed_detail(page, max_sec=6.0) or "/video/" in (page.url or ""):
+            return True, f"open_video index={video_index + 1} url={url[:96]}"
+        return False, f"视频页未就绪；{await _page_phase_note(page)}"
+    except HumanBrowseGuardError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, f"打开视频失败: {exc}"
+
+
+async def _prepare_manual_video_queue(
+    ctx: DouyinUiSession,
+    config: StandaloneKeywordBrowseConfig,
+    store: DouyinSessionStore,
+) -> tuple[bool, str, list[str]]:
+    """单视频 / 主页模式：解析待浏览视频 URL 列表。"""
+    mode = str(config.acquisition_mode or "").strip().lower()
+    if mode == "single_video":
+        url = str(config.video_url or config.input_url or "").strip()
+        if not url:
+            return False, "缺少 video_url", []
+        return True, "", [url]
+
+    if mode != "account_home":
+        return False, f"不支持的手动模式: {mode}", []
+
+    profile_url = str(config.profile_url or config.input_url or "").strip()
+    if not profile_url:
+        return False, "缺少 profile_url", []
+
+    from app.platforms.douyin.profile_videos import DouyinProfileVideosTool
+
+    limit = max(1, min(int(config.max_videos_to_browse), int(config.content_limit)))
+    publish_days = config.video_publish_days if config.video_publish_days is not None else config.days
+    tool = DouyinProfileVideosTool(
+        ctx.settings,
+        ctx.tenant_id,
+        store,
+        account_id=ctx.account_id,
+    )
+    captured_urls: list[str] = []
+    await _report_step(
+        ctx,
+        "步骤 2/7：打开账号主页",
+        sub=profile_url[:64],
+        log=False,
+    )
+    videos, diagnostic, _capture = await tool.collect_videos_on_page(
+        ctx.page,
+        profile_url=profile_url,
+        limit=limit,
+        days=publish_days,
+        captured_api_urls=captured_urls,
+    )
+    urls = [str(row.get("video_url") or "").strip() for row in videos if str(row.get("video_url") or "").strip()]
+    if not urls:
+        return False, diagnostic or "主页未采集到可浏览视频", []
+    profile_aweme_ids: list[str] = []
+    for url in urls:
+        try:
+            profile_aweme_ids.append(_extract_aweme_id(url))
+        except ValueError:
+            profile_aweme_ids.append(url.rstrip("/").split("/")[-1])
+    ctx.state["profile_url"] = profile_url
+    ctx.state["manual_video_urls"] = urls
+    ctx.state["profile_aweme_ids"] = profile_aweme_ids
+    ctx.phase_log.append(f"PROFILE_VIDEOS count={len(urls)} days={publish_days}")
+    return True, diagnostic or "", urls
+
+
+async def _enter_video_for_browse(
+    ctx: DouyinUiSession,
+    *,
+    config: StandaloneKeywordBrowseConfig,
+    video_index: int,
+    video_url: str,
+) -> tuple[bool, str]:
+    """进入目标视频详情（关键词/主页列表点击 or 单视频直链）。"""
+    mode = str(config.acquisition_mode or "").strip().lower()
+    if mode == "account_home":
+        if video_index > 0:
+            if not await back_to_profile_list(ctx):
+                return False, "未能返回主页列表，无法点下一个视频"
+        else:
+            await asyncio.sleep(random.uniform(0.12, 0.28))
+
+        if not await ensure_profile_item_index(ctx, video_index):
+            return False, f"主页列表第 {video_index + 1} 项不可用（滚动后仍不足）"
+
+        aweme_hint = ""
+        with contextlib.suppress(ValueError):
+            aweme_hint = _extract_aweme_id(video_url)
+        clicked, click_note = await click_profile_video_at_index(
+            ctx,
+            video_index,
+            aweme_id=aweme_hint,
+        )
+        if not clicked:
+            await _report_step(ctx, f"视频 {video_index + 1}：点击失败", sub=click_note, log=False)
+            return False, f"未能点击主页第 {video_index + 1} 个视频；{click_note}"
+
+        snap_after = await classify_douyin_page(ctx.page)
+        ctx.phase_log.append(
+            f"PAGE_AFTER_PROFILE_CLICK phase={snap_after.get('phase')} feed={snap_after.get('feed_visible')} "
+            f"url={str(ctx.page.url or '')[:96]}"
+        )
+        if not await wait_feed_detail(ctx.page, max_sec=4.0):
+            await _report_step(ctx, "详情页未就绪", sub=await _page_phase_note(ctx.page), log=False)
+            return False, f"点击主页视频后 Feed 未就绪；{await _page_phase_note(ctx.page)}"
+
+        ctx.phase_log.append(f"PROFILE_ITEM_CLICK index={video_index} {click_note}")
+        await _report_step(
+            ctx,
+            f"步骤 4/7：点击主页第 {video_index + 1} 个视频",
+            sub=click_note[:48] if click_note else "进入详情…",
+            log=False,
+        )
+        return True, click_note
+
+    if mode == "single_video":
+        opened, note = await _open_video_for_browse(ctx, video_url, video_index=video_index)
+        if opened:
+            await _report_step(
+                ctx,
+                f"步骤 3/7：打开视频 {video_index + 1}",
+                sub=note[:48] if note else "进入详情…",
+                log=False,
+            )
+        return opened, note
+
+    if not await _back_to_search_list(ctx):
+        return False, "未能返回搜索列表，无法点下一个视频"
+
+    aweme_hint = ""
+    with contextlib.suppress(ValueError):
+        aweme_hint = _extract_aweme_id(video_url) if video_url else ""
+    if not aweme_hint:
+        aweme_hint = await _resolve_aweme_id_at_index(ctx, video_index)
+
+    if aweme_hint and await _open_feed_via_modal_id(ctx, aweme_hint):
+        if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_hint, max_sec=5.0):
+            note = f"modal_open index={video_index + 1} aweme={aweme_hint[:12]}"
+            ctx.phase_log.append(f"ITEM_CLICK {note}")
+            await _report_step(
+                ctx,
+                f"步骤 4/7：打开第 {video_index + 1} 个视频",
+                sub="Feed 浮层 · modal_id",
+                log=False,
+            )
+            return True, note
+
+    if not await _ensure_search_item_index(ctx, video_index):
+        return False, f"搜索列表第 {video_index + 1} 项不可用（滚动后仍不足）"
+
+    clicked, click_note = await _click_search_result_item(ctx, video_index, skip_back=True)
+    if not clicked:
+        await _report_step(ctx, f"视频 {video_index + 1}：点击失败", sub=click_note, log=False)
+        return False, f"未能点击第 {video_index + 1} 个视频；{click_note}"
+
+    snap_after = await classify_douyin_page(ctx.page)
+    ctx.phase_log.append(
+        f"PAGE_AFTER_CLICK phase={snap_after.get('phase')} feed={snap_after.get('feed_visible')} "
+        f"list={snap_after.get('list_visible')} url={str(ctx.page.url or '')[:96]}"
+    )
+    if snap_after.get("on_video"):
+        aweme_recover = ""
+        with contextlib.suppress(ValueError):
+            aweme_recover = _extract_aweme_id(video_url) if video_url else ""
+        if not aweme_recover:
+            aweme_recover = await _resolve_aweme_id_at_index(ctx, video_index)
+        if aweme_recover and await _open_feed_via_modal_id(ctx, aweme_recover):
+            if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_recover, max_sec=5.0):
+                ctx.phase_log.append(f"RECOVERED feed_overlay from video_page aweme={aweme_recover[:12]}")
+            else:
+                await _report_step(ctx, "详情页未就绪", sub="误入 /video/ 页且 modal 恢复失败", log=False)
+                return False, f"误入独立视频详情页，Feed 浮层恢复失败；{click_note}"
+        else:
+            await _report_step(ctx, "详情页未就绪", sub="误入 /video/ 独立详情页", log=False)
+            return False, f"误入独立视频详情页（评论在视频下方），请重试；{click_note}"
+
+    if not await _wait_search_feed_overlay(ctx, aweme_hint=await _resolve_aweme_id_at_index(ctx, video_index), max_sec=4.0):
+        await _report_step(ctx, "Feed 浮层未就绪", sub=await _page_phase_note(ctx.page), log=False)
+        return False, f"进详情后 Feed 浮层未就绪；{await _page_phase_note(ctx.page)}"
+
+    ctx.phase_log.append(f"ITEM_CLICK index={video_index} {click_note}")
+    await _report_step(
+        ctx,
+        f"步骤 4/7：点击第 {video_index + 1} 个视频",
+        sub=click_note[:48] if click_note else "进入详情…",
+        log=False,
+    )
+    return True, click_note
+
+
 async def _ensure_search_item_index(ctx: DouyinUiSession, index: int) -> bool:
     """列表 item 不足时滚动加载，直到 index 可点或达到尝试上限。"""
     page = ctx.page
     aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
-    if len(aweme_ids) > index:
-        return True
-    if not await search_list_visible(page):
-        return len(aweme_ids) > index
-    if await _count_search_posters(page) > index:
-        return True
-    for _ in range(4):
-        if not await search_list_visible(page):
-            break
+
+    async def _index_ready() -> bool:
+        ids = list(ctx.state.get("search_aweme_ids") or [])
+        if len(ids) > index:
+            return True
         if await _count_search_posters(page) > index:
             return True
+        synced = await _sync_search_aweme_ids_from_dom(ctx)
+        return len(synced) > index
+
+    if await _index_ready():
+        return True
+    if not await search_list_visible(page):
+        return len(list(ctx.state.get("search_aweme_ids") or [])) > index
+
+    max_scroll_attempts = max(6, min(16, (index + 4) // 2 + 2))
+    for _ in range(max_scroll_attempts):
+        if await _index_ready():
+            return True
+        if not await search_list_visible(page):
+            break
         await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
         await asyncio.sleep(random.uniform(0.5, 1.0))
-    return len(aweme_ids) > index or await _count_search_posters(page) > index
+        aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
+
+    return await _index_ready()
+
+
+def _resolve_lead_aweme_id(lead: PreciseLeadRecord) -> str:
+    aid = str(lead.aweme_id or "").strip()
+    if aid:
+        return aid
+    url = str(lead.video_url or "").strip()
+    if not url:
+        return ""
+    with contextlib.suppress(ValueError):
+        return _extract_aweme_id(url)
+    part = url.rstrip("/").split("/")[-1]
+    return part if re.fullmatch(r"\d{8,22}", part) else ""
 
 
 def _persist_precise_lead(
@@ -917,28 +1396,203 @@ def _persist_precise_lead(
     tenant_id: str,
     lead: PreciseLeadRecord,
     config: StandaloneKeywordBrowseConfig,
-) -> int:
-    """单条精准线索入库。"""
+) -> tuple[int, str | None]:
+    """单条精准线索入库，返回 (写入行数, 失败原因)。"""
     if not lead.comment_id:
-        return 0
+        return 0, "missing comment_id"
+    aweme_id = _resolve_lead_aweme_id(lead)
+    if not aweme_id:
+        return 0, "missing aweme_id/content_id"
+    if aweme_id != lead.aweme_id:
+        lead.aweme_id = aweme_id
+    raw = dict(lead.raw_comment) if isinstance(lead.raw_comment, dict) else {}
+    raw.setdefault("comment_id", lead.comment_id)
+    raw.setdefault("comment", lead.comment_text)
+    raw.setdefault("username", lead.username)
     block = {
         "platform": PLATFORM,
-        "aweme_id": lead.aweme_id,
-        "video_url": lead.video_url,
-        "comments": [lead.raw_comment],
-        "keyword_context": {"keyword": config.keyword, "capture_mode": CAPTURE_METHOD, "status": "precise"},
+        "aweme_id": aweme_id,
+        "video_url": lead.video_url or f"https://www.douyin.com/video/{aweme_id}",
+        "comments": [raw],
+        "keyword_context": {
+            "keyword": config.keyword or _result_subject(config),
+            "capture_mode": capture_method_for_mode(config.acquisition_mode),
+            "status": "precise",
+        },
     }
+    jid = str(config.source_job_id or "").strip()
     try:
-        return persist_crawl_skill_result(
+        saved = persist_crawl_skill_result(
             db_session,
             settings,
             tenant_id=tenant_id,
             platform=PLATFORM,
             skill_result={"results": [block]},
+            source_job_id=jid or None,
             source_keyword=config.keyword,
         )
-    except Exception:
+        if saved <= 0:
+            return 0, "db merge returned 0 (duplicate or empty payload)"
+        return saved, None
+    except Exception as exc:
+        return 0, str(exc)
+
+
+def _persist_lead_immediate(
+    *,
+    db_session: Session | None,
+    settings: Settings,
+    tenant_id: str,
+    lead: PreciseLeadRecord,
+    config: StandaloneKeywordBrowseConfig,
+    phase_log: list[str] | None = None,
+) -> int:
+    """命中后立即入库；失败写入 phase_log / logger。"""
+    if not config.persist_to_db or db_session is None:
         return 0
+    if lead.persisted:
+        return 0
+    saved, err = _persist_precise_lead(
+        db_session,
+        settings,
+        tenant_id=tenant_id,
+        lead=lead,
+        config=config,
+    )
+    cid_short = (lead.comment_id or "")[:8]
+    if saved > 0:
+        lead.persisted = True
+        lead.persist_error = ""
+        msg = f"SAVED lead cid={cid_short} rows={saved} user=@{lead.username}"
+        _logger.info(msg)
+    else:
+        lead.persist_error = err or "unknown"
+        msg = f"PERSIST_FAIL cid={cid_short} user=@{lead.username} reason={lead.persist_error}"
+        _logger.warning(msg)
+    if phase_log is not None:
+        phase_log.append(msg)
+    return saved
+
+
+def _flush_unpersisted_leads(
+    *,
+    db_session: Session | None,
+    settings: Settings,
+    tenant_id: str,
+    config: StandaloneKeywordBrowseConfig,
+    leads: list[PreciseLeadRecord],
+    phase_log: list[str] | None = None,
+) -> int:
+    """补入库尚未 persisted 的线索（异常/中断 salvage）。"""
+    total = 0
+    pending = [lead for lead in leads if not lead.persisted]
+    if not pending:
+        return 0
+    for lead in pending:
+        total += _persist_lead_immediate(
+            db_session=db_session,
+            settings=settings,
+            tenant_id=tenant_id,
+            lead=lead,
+            config=config,
+            phase_log=phase_log,
+        )
+    if total and phase_log is not None:
+        phase_log.append(f"SALVAGE_FLUSH pending={len(pending)} rows={total}")
+    return total
+
+
+def _apply_partial_salvage(
+    result: StandaloneKeywordBrowseResult,
+    all_leads: list[PreciseLeadRecord],
+    *,
+    exc: BaseException | None,
+    ctx: DouyinUiSession,
+    config: StandaloneKeywordBrowseConfig,
+    db_session: Session | None,
+    dedupe_stats: dict[str, int],
+    target: int,
+    error_code: str = "E_GUARD",
+) -> None:
+    flushed = _flush_unpersisted_leads(
+        db_session=db_session,
+        settings=ctx.settings,
+        tenant_id=ctx.tenant_id,
+        config=config,
+        leads=all_leads,
+        phase_log=ctx.phase_log,
+    )
+    result.precise_leads = all_leads
+    result.comments_persisted = sum(1 for lead in all_leads if lead.persisted)
+    result.duplicates_skipped = int(dedupe_stats.get("duplicates_skipped") or 0)
+    result.target_reached = len(all_leads) >= target
+    result.ok = bool(all_leads) or result.videos_processed > 0
+    result.phase_log = list(ctx.phase_log)
+    msg = str(exc).strip() if exc else ""
+    if all_leads:
+        parts = [f"已保留 {len(all_leads)} 条精准线索"]
+        if flushed:
+            parts.append(f"补入库 {flushed} 条")
+        if msg:
+            parts.insert(0, msg)
+        result.diagnostic = "；".join(parts) + "，可继续续扫"
+    else:
+        result.error = error_code
+        result.diagnostic = msg or error_code
+
+
+async def _close_video_browse(ctx: DouyinUiSession) -> None:
+    """关闭当前视频浮层/侧栏，回到可点下一个视频的状态。"""
+    page = ctx.page
+    for _ in range(2):
+        with contextlib.suppress(Exception):
+            await page.keyboard.press("Escape")
+        await asyncio.sleep(0.15)
+    await close_feed_detail_on_page(page, ctx.settings, tenant_id=ctx.tenant_id)
+    ctx.state["feed_mode"] = False
+    await human_delay(page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
+
+
+async def _run_lead_outreach_safe(
+    page: Page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    account_id: str,
+    action: OutreachAction,
+    lead: PreciseLeadRecord,
+    config: StandaloneKeywordBrowseConfig,
+) -> dict[str, Any]:
+    """触达失败（含登录/Cookie 门禁）不中断整段浏览，仅跳过本条触达。"""
+    try:
+        if config.test_all_outreach:
+            return await _execute_all_outreach_for_lead(
+                page,
+                settings,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                lead=lead,
+                config=config,
+            )
+        return await _execute_outreach_if_needed(
+            page,
+            settings,
+            tenant_id=tenant_id,
+            account_id=account_id,
+            action=action,
+            lead=lead,
+            config=config,
+        )
+    except HumanBrowseGuardError as exc:
+        return {"ok": False, "error": str(exc), "guard": True, "action": str(action or "skip")}
+    except Exception as exc:
+        _logger.warning("outreach failed cid=%s: %s", (lead.comment_id or "")[:12], exc)
+        return {"ok": False, "error": str(exc), "action": str(action or "skip")}
+
+
+def _parent_comment_id_from_lead(lead: PreciseLeadRecord) -> str:
+    raw = lead.raw_comment if isinstance(lead.raw_comment, dict) else {}
+    return str(raw.get("parent_comment_id") or "").strip()
 
 
 async def _execute_all_outreach_for_lead(
@@ -965,6 +1619,8 @@ async def _execute_all_outreach_for_lead(
         int(policy.get("interval_max_sec") or 18),
     )
 
+    parent_cid = _parent_comment_id_from_lead(lead)
+
     if config.reply_text:
         await set_page_step_hint(
             page,
@@ -980,17 +1636,27 @@ async def _execute_all_outreach_for_lead(
             reply_text=config.reply_text,
             comment_id=lead.comment_id,
             comment_text=lead.comment_text,
+            parent_comment_id=parent_cid,
         )
         await asyncio.sleep(interval())
 
     profile_page = None
     if lead.sec_uid:
+        await set_page_step_hint(
+            page,
+            "触达：点头像进主页",
+            sub=f"@{lead.username or lead.sec_uid[:16]}",
+            title="Huoke · 抖音浏览",
+        )
         profile_page, open_meta = await human_open_profile_from_comment(
             page,
             settings,
             tenant_id=tenant_id,
             comment_id=lead.comment_id,
             comment_text=lead.comment_text,
+            parent_comment_id=parent_cid,
+            sec_uid=lead.sec_uid,
+            allow_sec_uid_fallback=False,
         )
         results["open_profile"] = open_meta
         if not open_meta.get("ok"):
@@ -998,7 +1664,7 @@ async def _execute_all_outreach_for_lead(
         await asyncio.sleep(interval())
 
     if lead.sec_uid:
-        await set_page_step_hint(page, "触达：关注用户", sub=lead.username or lead.sec_uid[:16])
+        await set_page_step_hint(page, "触达：主页点关注", sub=lead.username or lead.sec_uid[:16])
         results["follow"] = await human_follow_user(
             page,
             settings,
@@ -1012,7 +1678,7 @@ async def _execute_all_outreach_for_lead(
         await asyncio.sleep(interval())
 
     if config.dm_text and lead.sec_uid:
-        await set_page_step_hint(page, "触达：发送私信", sub=config.dm_text)
+        await set_page_step_hint(page, "触达：主页点私信", sub=config.dm_text)
         results["dm"] = await human_send_dm(
             page,
             settings,
@@ -1062,15 +1728,21 @@ def _build_ui_session(
     config: StandaloneKeywordBrowseConfig,
 ) -> DouyinUiSession:
     raw: dict[str, Any] = {
-        "keyword": config.keyword,
+        "keyword": str(config.keyword or _result_subject(config) or "manual"),
         "content_limit": max(1, int(config.content_limit)),
-        "days": config.days,
-        "ui_search_only": True,
+        "days": config.video_publish_days if config.video_publish_days is not None else config.days,
+        "ui_search_only": _is_keyword_mode(config),
         "inline_ui_outreach": False,
-        "platform_options": {"entry": "home"},
+        "platform_options": {"entry": "jingxuan"} if _is_keyword_mode(config) else {"entry": "home"},
     }
     if config.region:
         raw["region"] = config.region
+    if _is_manual_mode(config):
+        raw["acquisition_mode"] = config.acquisition_mode
+        if config.video_url:
+            raw["video_url"] = config.video_url
+        if config.profile_url:
+            raw["profile_url"] = config.profile_url
     params = parse_ui_flow_params(raw, platform="douyin")
     return DouyinUiSession(
         settings=settings,
@@ -1081,18 +1753,83 @@ def _build_ui_session(
     )
 
 
+async def _emit_crawl_progress(
+    ctx: DouyinUiSession,
+    message: str,
+    *,
+    sub: str = "",
+    force: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """向 Supervisor / 任务 job 推送中间进度（节流，避免频繁写库）。"""
+    cb = ctx.state.get("_on_progress")
+    if not callable(cb):
+        return
+    now = asyncio.get_running_loop().time()
+    last = float(ctx.state.get("_progress_last_emit") or 0.0)
+    key = f"{message}|{sub}"
+    if not force and now - last < 2.0 and ctx.state.get("_progress_last_key") == key:
+        return
+    ctx.state["_progress_last_emit"] = now
+    ctx.state["_progress_last_key"] = key
+    payload: dict[str, Any] = {
+        "phase": message,
+        "sub": sub,
+        "action": "crawl_keyword",
+    }
+    if extra:
+        payload.update(extra)
+    maybe = cb("crawl_progress", payload)
+    if asyncio.iscoroutine(maybe):
+        await maybe
+
+
 async def _report_step(
     ctx: DouyinUiSession,
     message: str,
     *,
     sub: str = "",
     log: bool = True,
+    progress_force: bool = False,
+    progress_extra: dict[str, Any] | None = None,
+    detail: str | None = None,
 ) -> None:
-    """右上角步骤条 + phase_log 同步更新。"""
+    """右上角步骤条 + phase_log + 任务进度同步更新。"""
     if log:
         line = message if not sub else f"{message} | {sub}"
         ctx.phase_log.append(line[:240])
-    await set_page_step_hint(ctx.page, message, sub=sub, title="Huoke · 抖音浏览")
+    await set_page_step_hint(ctx.page, message, sub=sub, title="Huoke · 抖音浏览", detail=detail)
+    await _emit_crawl_progress(
+        ctx,
+        message,
+        sub=sub,
+        force=progress_force,
+        extra=progress_extra,
+    )
+
+
+async def _sleep_with_overlay(
+    ctx: DouyinUiSession,
+    seconds: float,
+    message: str,
+    sub: str,
+) -> None:
+    """长等待期间每秒刷新 overlay，避免看起来像卡住。"""
+    if seconds <= 0:
+        return
+    end = asyncio.get_running_loop().time() + seconds
+    while True:
+        remain = end - asyncio.get_running_loop().time()
+        if remain <= 0:
+            break
+        remain_int = max(1, int(remain + 0.99))
+        await set_page_step_hint(
+            ctx.page,
+            message,
+            sub=f"{sub} · 还需 {remain_int}s",
+            title="Huoke · 抖音浏览",
+        )
+        await asyncio.sleep(min(1.0, remain))
 
 
 async def _wait_captcha_if_needed(
@@ -1118,6 +1855,139 @@ async def _wait_captcha_if_needed(
     raise HumanBrowseGuardError("验证码等待超时，请在浏览器中完成人机验证后重试")
 
 
+async def _attempt_search_reuse(
+    ctx: DouyinUiSession,
+    config: StandaloneKeywordBrowseConfig,
+) -> tuple[bool, str]:
+    """续扫/继续浏览：已在搜索列表则跳过重搜与回精选。"""
+    if not _is_keyword_mode(config) or not ctx.state.get("reuse_search_session"):
+        return False, ""
+
+    page = ctx.page
+    if not _on_search_results_url(page.url or "") or await feed_overlay_visible(page):
+        if not await _back_to_search_list(ctx):
+            if not _on_search_results_url(page.url or ""):
+                return False, ""
+
+    reused = await reuse_search_results_if_ready(
+        ctx,
+        limit=max(1, int(config.content_limit)),
+    )
+    if reused is None:
+        return False, ""
+
+    publish_days = _publish_days_for_config(config)
+    api_days_fallback = _needs_ui_publish_filter(ctx) and not ctx.state.get("search_filter_verified")
+    aweme_ids = _sync_search_aweme_ids_from_api(
+        ctx,
+        {},
+        days=publish_days,
+        api_days_fallback=api_days_fallback,
+    )
+    if not aweme_ids:
+        aweme_ids = await _sync_search_aweme_ids_from_dom(ctx)
+        if aweme_ids:
+            ctx.state["search_aweme_ids"] = aweme_ids
+
+    filter_suffix = _filter_diagnostic_suffix(ctx)
+    diag = (reused.diagnostic or "复用搜索页") + filter_suffix
+    ctx.phase_log.append(f"SEARCH_REUSE {diag[:180]} url={str(page.url or '')[:96]}")
+    filter_label = _publish_filter_ui_label(config)
+    sub = f"「{config.keyword}」"
+    if filter_label:
+        sub += f" · 发布时间 {filter_label}"
+    await _report_step(
+        ctx,
+        "复用搜索列表",
+        sub=f"{sub} · 跳过重新搜索",
+        log=False,
+        progress_force=True,
+    )
+    return True, diag
+
+
+async def _attempt_resume_saved_search(
+    ctx: DouyinUiSession,
+    config: StandaloneKeywordBrowseConfig,
+    *,
+    page: Page,
+    settings: Settings,
+    tenant_id: str,
+    account_id: str,
+    store: DouyinSessionStore,
+    headless: bool = False,
+    stable_session: Any | None = None,
+) -> tuple[bool, str]:
+    """续扫：stable 会话内 goto 已保存搜索页，跳过重灌 Cookie + 重搜。"""
+    resume_url = str(config.resume_search_url or "").strip()
+    start_idx = max(0, int(config.start_video_index or 0))
+    if not resume_url or start_idx <= 0 or not _is_keyword_mode(config):
+        return False, ""
+    if "/search/" not in resume_url.lower():
+        return False, ""
+
+    ctx.state["search_url"] = resume_url
+    ctx.state.setdefault("search_submitted", True)
+
+    if stable_session is not None:
+        with contextlib.suppress(Exception):
+            await page.bring_to_front()
+
+    if await feed_overlay_visible(page):
+        await _back_to_search_list(ctx)
+
+    if not _on_search_results_url(page.url or ""):
+        try:
+            await page.goto(resume_url, wait_until="domcontentloaded", timeout=45000)
+            await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
+        except Exception as exc:
+            ctx.phase_log.append(f"RESUME_SEARCH goto failed={str(exc)[:120]}")
+            return False, str(exc)
+
+    await _wait_captcha_if_needed(page, settings, tenant_id=tenant_id, headless=headless)
+    await assert_douyin_human_ready(
+        page,
+        settings,
+        tenant_id=tenant_id,
+        account_id=account_id,
+        store=store,
+        stage="home",
+        goto_home=False,
+    )
+
+    reused, reuse_diag = await _attempt_search_reuse(ctx, config)
+    if reused:
+        filter_label = _publish_filter_ui_label(config)
+        sub = f"从第 {start_idx + 1} 个视频继续"
+        if filter_label:
+            sub += f" · 发布时间 {filter_label}"
+        await _report_step(
+            ctx,
+            "续扫：恢复搜索列表",
+            sub=f"{sub} · 跳过重新搜索",
+            log=False,
+            progress_force=True,
+            progress_extra={"start_video_index": start_idx, "resume_search_url": resume_url[:120]},
+        )
+        return True, reuse_diag or "续扫：恢复已保存搜索页"
+
+    if _on_search_results_url(page.url or "") and await page_has_search_posters(page):
+        ctx.state["search_url"] = page.url or resume_url
+        diag = f"续扫：已打开搜索页 url={str(page.url or '')[:96]}"
+        ctx.phase_log.append(diag)
+        await _report_step(
+            ctx,
+            "续扫：恢复搜索列表",
+            sub=f"从第 {start_idx + 1} 个视频继续",
+            log=False,
+            progress_force=True,
+            progress_extra={"start_video_index": start_idx},
+        )
+        return True, diag
+
+    return False, ""
+
+
 async def _open_douyin_home(
     page: Page,
     settings: Settings,
@@ -1127,24 +1997,31 @@ async def _open_douyin_home(
     store: DouyinSessionStore,
     headless: bool = False,
     stable_session: Any | None = None,
+    entry_url: str = DOUYIN_ENTRY_URL,
+    step_title: str = "步骤 1/7：打开抖音首页",
+    reuse_search: bool = False,
+    search_ctx: DouyinUiSession | None = None,
 ) -> None:
     """步骤 1：打开抖音首页并等待加载完成。
 
     稳定基座模式下若当前标签已在抖音首页，则跳过 goto，复用桌面已登录会话。
+    关键词模式默认从精选页进入，与 skill-flow 搜索框路径一致。
     """
     from app.services.browser_workbench import is_douyin_home_like, should_skip_stable_goto
+    from app.services.ui_flow.platforms.douyin.search_ui import page_ready_for_search_reuse
 
-    await set_page_step_hint(page, "步骤 1/7：打开抖音首页", title="Huoke · 抖音浏览")
-    skip_goto = False
-    if stable_session is not None:
-        skip, reason = should_skip_stable_goto(stable_session, DOUYIN_ENTRY_URL)
-        if skip:
-            skip_goto = True
-        elif is_douyin_home_like(page.url or ""):
-            skip_goto = True
-            reason = "already_on_home"
-        if skip_goto:
-            await set_page_step_hint(page, "步骤 1/7：复用已打开首页", sub=reason or "")
+    await set_page_step_hint(page, step_title, title="Huoke · 抖音浏览")
+    if reuse_search and search_ctx is not None:
+        if await feed_overlay_visible(page):
+            if await _back_to_search_list(search_ctx):
+                page = search_ctx.page
+        if await page_ready_for_search_reuse(search_ctx):
+            await set_page_step_hint(
+                page,
+                step_title.replace("打开", "复用"),
+                sub="已在搜索列表，跳过回精选",
+                title="Huoke · 抖音浏览",
+            )
             await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
             await _wait_captcha_if_needed(page, settings, tenant_id=tenant_id, headless=headless)
             await assert_douyin_human_ready(
@@ -1158,7 +2035,30 @@ async def _open_douyin_home(
             )
             return
 
-    await page.goto(DOUYIN_ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
+    skip_goto = False
+    if stable_session is not None:
+        skip, reason = should_skip_stable_goto(stable_session, entry_url)
+        if skip:
+            skip_goto = True
+        elif is_douyin_home_like(page.url or ""):
+            skip_goto = True
+            reason = "already_on_home"
+        if skip_goto:
+            await set_page_step_hint(page, step_title.replace("打开", "复用"), sub=reason or "")
+            await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
+            await _wait_captcha_if_needed(page, settings, tenant_id=tenant_id, headless=headless)
+            await assert_douyin_human_ready(
+                page,
+                settings,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                store=store,
+                stage="home",
+                goto_home=False,
+            )
+            return
+
+    await page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
     await human_delay(page, settings, tenant_id=tenant_id, profile="page_load")
     await _wait_captcha_if_needed(page, settings, tenant_id=tenant_id, headless=headless)
     await assert_douyin_human_ready(
@@ -1177,18 +2077,34 @@ async def _run_search_phase(
     *,
     config: StandaloneKeywordBrowseConfig,
 ) -> tuple[bool, str]:
-    """步骤 2–3：逐字搜索 + 时间筛选。
+    """步骤 2–3：精选页搜索框输入 + 发布时间筛选（与 skill-flow search_ui 对齐）。
 
     成功判定：搜索页 URL + 列表已展示（DOM 或 search API），不依赖 video_urls。
     """
-    del config
     page = ctx.page
+    publish_days = _publish_days_for_config(config)
+    filter_label = _publish_filter_ui_label(config)
+    search_sub = f"「{ctx.params.keyword}」"
+    if filter_label:
+        search_sub += f" · 发布时间 {filter_label}"
+
     await _report_step(
         ctx,
         "步骤 2/7：搜索关键词",
-        sub=f"「{ctx.params.keyword}」· 筛选 {ctx.params.days} 天内",
-        log=False,
+        sub=search_sub,
+        log=True,
     )
+
+    reused, reuse_diag = await _attempt_search_reuse(ctx, config)
+    if reused:
+        return True, reuse_diag
+
+    prepare = await run_prepare(ctx)
+    if not prepare.ok:
+        diag = prepare.diagnostic or prepare.error or "精选页搜索框未就绪"
+        ctx.phase_log.append(f"SEARCH_PREP failed={diag[:160]}")
+        return False, diag
+
     api_items: dict[str, dict] = {}
     search_flags: dict[str, Any] = {}
 
@@ -1217,6 +2133,23 @@ async def _run_search_phase(
     try:
         await _report_step(ctx, "正在输入搜索词并提交…", log=False)
         search_result = await run_search(ctx)
+        _log_search_filter_state(ctx)
+
+        needs_filter = _needs_ui_publish_filter(ctx)
+        if needs_filter and not ctx.state.get("search_filter_applied"):
+            ctx.phase_log.append("SEARCH_FILTER retry")
+            retry_label = await apply_ui_publish_time_filter(ctx)
+            if retry_label:
+                ctx.state["search_filter_applied"] = retry_label
+                api_items.clear()
+                search_flags.pop("api_complete", None)
+                search_flags.pop("api_complete_reason", None)
+                for _ in range(16):
+                    if api_items:
+                        break
+                    await asyncio.sleep(0.35)
+            _log_search_filter_state(ctx)
+
         for _ in range(12):
             if api_items:
                 break
@@ -1225,28 +2158,45 @@ async def _run_search_phase(
             result_ids = search_result.data.get("search_aweme_ids") or []
             if result_ids:
                 ctx.state["search_aweme_ids"] = [str(i) for i in result_ids if str(i)]
-        aweme_ids = _sync_search_aweme_ids_from_api(ctx, api_items)
+        api_days_fallback = needs_filter and not ctx.state.get("search_filter_verified")
+        aweme_ids = _sync_search_aweme_ids_from_api(
+            ctx,
+            api_items,
+            days=publish_days,
+            api_days_fallback=api_days_fallback,
+        )
         list_ready = await _is_search_list_ready(page, api_items, ctx=ctx)
+        filter_suffix = _filter_diagnostic_suffix(ctx)
 
         if search_result.ok:
             if not aweme_ids:
-                _sync_search_aweme_ids_from_api(ctx, api_items)
+                aweme_ids = _sync_search_aweme_ids_from_api(
+                    ctx,
+                    api_items,
+                    days=publish_days,
+                    api_days_fallback=api_days_fallback,
+                )
             ctx.state["search_ready"] = True
             ctx.state.setdefault("search_url", page.url)
             ctx.state["search_poster_mode"] = True
             api_count = len(api_items)
             api_reason = ctx.state.get("search_api_complete_reason") or search_flags.get("api_complete_reason")
-            diag = search_result.diagnostic or "搜索完成"
+            diag = (search_result.diagnostic or "搜索完成") + filter_suffix
             if api_count:
                 diag += f"；api_videos={api_count}"
             if api_reason:
                 diag += f"；api_status={api_reason}"
+            filter_sub = filter_suffix.lstrip("；") or f"已识别 {api_count or len(aweme_ids)} 个视频"
+            if api_reason and filter_sub == filter_suffix.lstrip("；"):
+                filter_sub += f" · {api_reason}"
             await _report_step(
                 ctx,
                 "步骤 3/7：搜索完成",
-                sub=f"已识别 {api_count or len(aweme_ids)} 个视频"
-                + (f" · {api_reason}" if api_reason else ""),
-                log=False,
+                sub=filter_sub if filter_suffix else (
+                    f"已识别 {api_count or len(aweme_ids)} 个视频"
+                    + (f" · {api_reason}" if api_reason else "")
+                ),
+                log=True,
             )
             return True, diag
 
@@ -1255,7 +2205,7 @@ async def _run_search_phase(
             ctx.state["search_url"] = ctx.state.get("search_url") or page.url
             ctx.state["search_poster_mode"] = True
             ctx.phase_log.append(
-                f"SEARCH_FALLBACK list_visible api={len(api_items)} url={page.url}"
+                f"SEARCH_FALLBACK list_visible api={len(api_items)} url={page.url}{filter_suffix}"
             )
             await release_searchbar_focus(page)
             await _report_step(
@@ -1268,16 +2218,17 @@ async def _run_search_phase(
                         if ctx.state.get("search_api_complete_reason")
                         else ""
                     )
+                    + filter_suffix
                     + "，准备点击视频"
                 ),
-                log=False,
+                log=True,
             )
             return True, (
-                f"列表已展示，按 DOM 顺序点击（api={len(api_items)}）；"
+                f"列表已展示，按 DOM 顺序点击（api={len(api_items)}）{filter_suffix}；"
                 f"原判定={search_result.error or search_result.diagnostic or 'unknown'}"
             )
 
-        return False, search_result.diagnostic or search_result.error or "搜索失败"
+        return False, (search_result.diagnostic or search_result.error or "搜索失败") + filter_suffix
     finally:
         try:
             page.remove_listener("response", on_search_response)
@@ -1289,7 +2240,11 @@ def _keyword_matches_comment(config: StandaloneKeywordBrowseConfig, text: str) -
     comment = (text or "").strip()
     if len(comment) < max(1, int(config.min_comment_length)):
         return False
-    keywords = config.match_keywords or [config.keyword]
+    keywords = list(config.match_keywords)
+    if not keywords and str(config.keyword or "").strip():
+        keywords = [str(config.keyword).strip()]
+    if not keywords:
+        return len(comment) >= max(1, int(config.min_comment_length))
     return _match_comment(comment, keywords, config.exclude_keywords)
 
 
@@ -1389,9 +2344,16 @@ async def _execute_outreach_if_needed(
     if not config.execute_outreach or action == "skip":
         return {"ok": False, "skipped": True, "action": action}
 
-    if action == "reply" and config.reply_text:
-        from app.services.social_roam.human.douyin.actions import human_reply_comment
+    from app.services.social_roam.human.douyin.actions import (
+        human_follow_user,
+        human_open_profile_from_comment,
+        human_reply_comment,
+        human_send_dm,
+    )
 
+    parent_cid = _parent_comment_id_from_lead(lead)
+
+    if action == "reply" and config.reply_text:
         return await human_reply_comment(
             page,
             settings,
@@ -1400,24 +2362,47 @@ async def _execute_outreach_if_needed(
             reply_text=config.reply_text,
             comment_id=lead.comment_id,
             comment_text=lead.comment_text,
+            parent_comment_id=parent_cid,
         )
     if action in {"follow", "dm"} and lead.sec_uid:
-        from app.services.social_roam.human.douyin.actions import (
-            human_follow_user,
-            human_open_profile_from_comment,
-            human_send_dm,
+        await set_page_step_hint(
+            page,
+            "触达：点头像进主页",
+            sub=f"@{lead.username or lead.sec_uid[:16]}",
+            title="Huoke · 抖音浏览",
         )
-
         profile_page, open_meta = await human_open_profile_from_comment(
             page,
             settings,
             tenant_id=tenant_id,
             comment_id=lead.comment_id,
             comment_text=lead.comment_text,
+            parent_comment_id=parent_cid,
+            sec_uid=lead.sec_uid,
+            allow_sec_uid_fallback=False,
         )
         if not open_meta.get("ok"):
+            if config.reply_text:
+                reply_result = await human_reply_comment(
+                    page,
+                    settings,
+                    tenant_id=tenant_id,
+                    content_url=lead.video_url,
+                    reply_text=config.reply_text,
+                    comment_id=lead.comment_id,
+                    comment_text=lead.comment_text,
+                    parent_comment_id=parent_cid,
+                )
+                if reply_result.get("ok"):
+                    return {**reply_result, "action": "reply", "fallback_from": action}
             return {**open_meta, "action": action}
         if action == "follow":
+            await set_page_step_hint(
+                page,
+                "触达：主页点关注",
+                sub=f"@{lead.username or lead.sec_uid[:16]}",
+                title="Huoke · 抖音浏览",
+            )
             return await human_follow_user(
                 page,
                 settings,
@@ -1429,6 +2414,12 @@ async def _execute_outreach_if_needed(
                 profile_page=profile_page,
             )
         if action == "dm" and config.dm_text:
+            await set_page_step_hint(
+                page,
+                "触达：主页点私信",
+                sub=(config.dm_text or "")[:40],
+                title="Huoke · 抖音浏览",
+            )
             return await human_send_dm(
                 page,
                 settings,
@@ -1459,48 +2450,27 @@ async def _browse_video_comments(
     leads: list[PreciseLeadRecord] = []
     comment_days = config.comment_days if config.comment_days is not None else config.days
     cutoff_ts = _days_cutoff_ts(comment_days)
-    max_comments = max(1, int(config.max_comments_per_video))
-    max_rounds = max(8, min(40, int(config.comment_scroll_rounds)))
+    # 翻页不因条数上限停止，仅按有效时间窗 + 无更多分页；上限仅防极端死循环
+    filter_cap = max(10_000, int(config.max_comments_per_video or 0) * 20)
+    safety_max_rounds = max(120, int(config.comment_scroll_rounds or 60) * 4)
     target = max(1, int(config.target_precise_leads))
 
-    if not await _back_to_search_list(ctx):
-        return leads, 0, "未能返回搜索列表，无法点下一个视频"
-
-    if not await _ensure_search_item_index(ctx, video_index):
-        return leads, 0, f"搜索列表第 {video_index + 1} 项不可用（滚动后仍不足）"
-
-    clicked, click_note = await _click_search_result_item(ctx, video_index, skip_back=True)
-    if not clicked:
-        await _report_step(ctx, f"视频 {video_index + 1}：点击失败", sub=click_note, log=False)
-        return leads, 0, f"未能点击第 {video_index + 1} 个视频；{click_note}"
-
-    snap_after = await classify_douyin_page(page)
-    ctx.phase_log.append(
-        f"PAGE_AFTER_CLICK phase={snap_after.get('phase')} feed={snap_after.get('feed_visible')} "
-        f"list={snap_after.get('list_visible')} url={str(page.url or '')[:96]}"
-    )
-    if snap_after.get("list_visible") and not snap_after.get("feed_visible"):
-        return leads, 0, f"点击后仍在搜索列表，未进详情；{click_note}"
-
-    if not await wait_feed_detail(page, max_sec=4.0):
-        await _report_step(ctx, "详情页未就绪", sub=await _page_phase_note(page), log=False)
-        return leads, 0, f"进详情后 Feed 未就绪；{await _page_phase_note(page)}"
-
-    ctx.phase_log.append(f"ITEM_CLICK index={video_index} {click_note}")
-    await _report_step(
+    entered, enter_note = await _enter_video_for_browse(
         ctx,
-        f"步骤 4/7：点击第 {video_index + 1} 个视频",
-        sub=click_note[:48] if click_note else "进入详情…",
-        log=False,
+        config=config,
+        video_index=video_index,
+        video_url=video_url,
     )
+    if not entered:
+        return leads, 0, enter_note
 
     await _report_step(ctx, f"步骤 5/7：打开评论侧栏", sub=f"视频 {video_index + 1}", log=False)
 
     # 进详情后尽快点评论：短暂停留即点，避免干等 watch_seconds
     await asyncio.sleep(random.uniform(0.8, 1.6))
 
-    if not await is_feed_detail_open(page):
-        return leads, 0, f"打开评论前不在详情页；{await _page_phase_note(page)}"
+    if not await is_search_feed_overlay(page) and not await is_feed_detail_open(page):
+        return leads, 0, f"打开评论前不在 Feed 浮层；{await _page_phase_note(page)}"
 
     captured_pages: list[dict[str, Any]] = []
     seen_signatures: set[str] = set()
@@ -1539,11 +2509,9 @@ async def _browse_video_comments(
 
     stop_reason = ""
     scanned = 0
-    stale_scrolls = 0
-    prev_filtered = 0
 
     try:
-        for round_idx in range(max_rounds + 1):
+        for round_idx in range(safety_max_rounds + 1):
             if round_idx > 0 and not await _comment_sidebar_active(page):
                 stop_reason = "评论侧栏已关闭，停止滚动"
                 break
@@ -1552,16 +2520,20 @@ async def _browse_video_comments(
             filtered = _filter_comments_by_days(
                 comments_map,
                 cutoff_ts=cutoff_ts,
-                max_comments=max_comments,
+                max_comments=filter_cap,
             )
             scanned = len(comments_map)
-            if round_idx > 0 and round_idx % 4 == 0:
-                await _report_step(
-                    ctx,
-                    "步骤 6/7：滚动评论",
-                    sub=f"第 {round_idx} 轮 · 已扫描 {scanned} 条",
-                    log=False,
-                )
+            in_window = len(filtered)
+            await _report_step(
+                ctx,
+                "步骤 6/7：扫描评论",
+                sub=(
+                    f"第 {round_idx + 1} 轮 · 累计 {scanned} 条"
+                    f" · {comment_days}天内 {in_window} 条"
+                    f" · 精准 {leads_before + len(leads)}/{target}"
+                ),
+                log=False,
+            )
             last_page = _last_list_page(captured_pages)
 
             candidate_rows = [
@@ -1570,49 +2542,79 @@ async def _browse_video_comments(
             new_rows, dup_skipped = _take_unique_comments(candidate_rows, seen_comment_ids)
             dedupe_stats["duplicates_skipped"] = dedupe_stats.get("duplicates_skipped", 0) + dup_skipped
             if new_rows:
-                eval_map = await _evaluate_comments_batch(new_rows, config, ctx.settings)
-                for row in new_rows:
-                    cid = _comment_id_from_row(row)
-                    if not cid or cid not in eval_map:
-                        continue
-
-                    eval_row = eval_map[cid]
-                    action = await _decide_outreach_action(config, outreach_stats)
-                    lead = PreciseLeadRecord(
-                        comment_id=cid,
-                        comment_text=str(row.get("comment") or ""),
-                        username=str(row.get("username") or ""),
-                        user_id=str(row.get("user_id") or ""),
-                        sec_uid=str(row.get("sec_uid") or ""),
-                        video_url=video_url or page.url,
-                        aweme_id=aweme_id,
-                        create_time=int(row.get("create_time") or 0),
-                        match_score=float(eval_row.get("score") or 0),
-                        match_reason=str(eval_row.get("reason") or ""),
-                        planned_action=action,
-                        raw_comment=row,
+                await _report_step(
+                    ctx,
+                    "步骤 6/7：AI 评估",
+                    sub=f"第 {round_idx + 1} 轮 · {len(new_rows)} 条新评论待分析",
+                    log=False,
+                )
+                try:
+                    eval_map = await _evaluate_comments_batch(new_rows, config, ctx.settings)
+                except Exception as exc:
+                    ctx.phase_log.append(f"EVAL_BATCH_ERR video={video_index + 1} {str(exc)[:120]}")
+                    eval_map = {}
+                    await _report_step(
+                        ctx,
+                        "步骤 6/7：评估失败",
+                        sub=f"第 {round_idx + 1} 轮 · {str(exc)[:48]} · 继续滚动",
+                        log=False,
                     )
+                else:
+                    await _report_step(
+                        ctx,
+                        "步骤 6/7：评估完成",
+                        sub=(
+                            f"第 {round_idx + 1} 轮 · 本批 {len(new_rows)} 条"
+                            f" · 精准 {len(eval_map)} 条"
+                        ),
+                        log=False,
+                    )
+                guard_hit = False
+                for row in new_rows:
+                    if guard_hit:
+                        break
+                    try:
+                        cid = _comment_id_from_row(row)
+                        if not cid or cid not in eval_map:
+                            continue
 
-                    outreach_result: dict[str, Any] = {}
-                    if config.execute_outreach:
-                        if config.test_all_outreach:
-                            outreach_result = await _execute_all_outreach_for_lead(
-                                page,
-                                ctx.settings,
-                                tenant_id=ctx.tenant_id,
-                                account_id=ctx.account_id,
-                                lead=lead,
-                                config=config,
+                        eval_row = eval_map[cid]
+                        action = await _decide_outreach_action(config, outreach_stats)
+                        lead = PreciseLeadRecord(
+                            comment_id=cid,
+                            comment_text=str(row.get("comment") or ""),
+                            username=str(row.get("username") or ""),
+                            user_id=str(row.get("user_id") or ""),
+                            sec_uid=str(row.get("sec_uid") or ""),
+                            video_url=video_url or page.url,
+                            aweme_id=aweme_id,
+                            create_time=int(row.get("create_time") or 0),
+                            match_score=float(eval_row.get("score") or 0),
+                            match_reason=str(eval_row.get("reason") or ""),
+                            planned_action=action,
+                            raw_comment=row,
+                        )
+
+                        outreach_result: dict[str, Any] = {}
+                        _persist_lead_immediate(
+                            db_session=db_session,
+                            settings=ctx.settings,
+                            tenant_id=ctx.tenant_id,
+                            lead=lead,
+                            config=config,
+                            phase_log=ctx.phase_log,
+                        )
+
+                        if config.execute_outreach:
+                            action_labels = {"reply": "回复", "dm": "私信", "follow": "关注", "skip": "跳过"}
+                            action_label = action_labels.get(str(action or "skip"), str(action or "触达"))
+                            await _report_step(
+                                ctx,
+                                "步骤 6/7：触达线索",
+                                sub=f"{action_label} @{lead.username} · {lead.comment_text[:20]}",
+                                log=False,
                             )
-                            lead.outreach_executed = bool(outreach_result.get("ok"))
-                            if outreach_result.get("reply", {}).get("ok"):
-                                outreach_stats["replies"] = outreach_stats.get("replies", 0) + 1
-                            if outreach_result.get("dm", {}).get("ok"):
-                                outreach_stats["dms"] = outreach_stats.get("dms", 0) + 1
-                            if outreach_result.get("follow", {}).get("ok"):
-                                outreach_stats["follows"] = outreach_stats.get("follows", 0) + 1
-                        else:
-                            outreach_result = await _execute_outreach_if_needed(
+                            outreach_result = await _run_lead_outreach_safe(
                                 page,
                                 ctx.settings,
                                 tenant_id=ctx.tenant_id,
@@ -1622,116 +2624,156 @@ async def _browse_video_comments(
                                 config=config,
                             )
                             lead.outreach_executed = bool(outreach_result.get("ok"))
-                            if lead.outreach_executed:
+                            if config.test_all_outreach:
+                                if outreach_result.get("reply", {}).get("ok"):
+                                    outreach_stats["replies"] = outreach_stats.get("replies", 0) + 1
+                                if outreach_result.get("dm", {}).get("ok"):
+                                    outreach_stats["dms"] = outreach_stats.get("dms", 0) + 1
+                                if outreach_result.get("follow", {}).get("ok"):
+                                    outreach_stats["follows"] = outreach_stats.get("follows", 0) + 1
+                            elif lead.outreach_executed:
                                 if action == "reply":
                                     outreach_stats["replies"] = outreach_stats.get("replies", 0) + 1
                                 elif action == "dm":
                                     outreach_stats["dms"] = outreach_stats.get("dms", 0) + 1
                                 elif action == "follow":
                                     outreach_stats["follows"] = outreach_stats.get("follows", 0) + 1
-                        lead.outreach_result = outreach_result
+                            lead.outreach_result = outreach_result
 
-                    if config.persist_to_db and db_session is not None:
-                        saved = _persist_precise_lead(
-                            db_session,
-                            ctx.settings,
-                            tenant_id=ctx.tenant_id,
-                            lead=lead,
-                            config=config,
+                        leads.append(lead)
+                        ctx.phase_log.append(
+                            f"LEAD video={video_index + 1} cid={cid[:8]} action={action} "
+                            f"score={lead.match_score:.2f} persisted={lead.persisted}"
                         )
-                        if saved:
-                            ctx.phase_log.append(f"SAVED lead cid={cid[:8]} rows={saved}")
+                        await _report_step(
+                            ctx,
+                            f"精准线索 {leads_before + len(leads)}/{target}",
+                            sub=f"@{lead.username} · {lead.comment_text[:24]}",
+                            log=False,
+                            progress_force=True,
+                            progress_extra={
+                                "leads_qualified": leads_before + len(leads),
+                                "target_leads": target,
+                                "comments_scanned": scanned,
+                            },
+                        )
 
-                    leads.append(lead)
-                    ctx.phase_log.append(
-                        f"LEAD video={video_index + 1} cid={cid[:8]} action={action} score={lead.match_score:.2f}"
-                    )
-                    await _report_step(
-                        ctx,
-                        f"精准线索 {leads_before + len(leads)}/{target}",
-                        sub=f"@{lead.username} · {lead.comment_text[:24]}",
-                        log=False,
-                    )
+                        if leads_before + len(leads) >= target:
+                            stop_reason = f"已达目标精准线索 {target} 条"
+                            break
 
-                    if leads_before + len(leads) >= target:
-                        stop_reason = f"已达目标精准线索 {target} 条"
-                        break
-
-                    policy = config.action_policy or {}
-                    interval = random_interval_sec(
-                        int(policy.get("interval_min_sec") or 10),
-                        int(policy.get("interval_max_sec") or 30),
-                    )
-                    await asyncio.sleep(interval)
+                        policy = config.action_policy or {}
+                        interval = random_interval_sec(
+                            int(policy.get("interval_min_sec") or 10),
+                            int(policy.get("interval_max_sec") or 30),
+                        )
+                        await _sleep_with_overlay(
+                            ctx,
+                            interval,
+                            "步骤 6/7：触达间隔",
+                            f"@{lead.username} 后冷却",
+                        )
+                    except HumanBrowseGuardError as exc:
+                        ctx.phase_log.append(
+                            f"GUARD_LEAD video={video_index + 1} cid={_comment_id_from_row(row)[:8]} "
+                            f"{str(exc)[:80]}"
+                        )
+                        stop_reason = f"本视频浏览中断：{exc}"
+                        guard_hit = True
+                    except Exception as exc:
+                        cid_hint = _comment_id_from_row(row)[:8]
+                        ctx.phase_log.append(f"LEAD_ERR video={video_index + 1} cid={cid_hint} {str(exc)[:100]}")
+                        _logger.warning("lead processing failed cid=%s: %s", cid_hint, exc)
+                if guard_hit or stop_reason:
+                    break
 
             if stop_reason:
                 break
 
-            if _should_stop_for_time_window(
-                cutoff_ts=cutoff_ts,
-                round_idx=round_idx,
-                filtered_count=len(filtered),
-                last_page=last_page,
-                min_scroll_before_time_stop=min_time_rounds,
-            ):
-                stop_reason = f"评论已超过 {comment_days} 天，结束本视频"
+            if await comment_list_end_marker_visible(page):
+                stop_reason = "评论已全部加载（暂时没有更多评论）"
                 await _report_step(
                     ctx,
-                    f"视频 {video_index + 1}：评论过旧",
-                    sub=f"超过 {comment_days} 天窗口，切换下一个视频",
+                    "步骤 6/7：评论到底",
+                    sub=f"第 {round_idx + 1} 轮 · 共扫描 {scanned} 条 · 切换下一视频",
                     log=False,
                 )
                 ctx.phase_log.append(
-                    f"TIME_STOP video={video_index + 1} days={comment_days} scanned={scanned}"
+                    f"PAGINATION_END video={video_index + 1} scanned={scanned} reason=dom_no_more"
                 )
                 break
 
-            top_count = len([r for r in filtered if not r.get("parent_comment_id")])
-            if top_count >= max_comments:
-                stop_reason = f"已浏览 {top_count} 条评论"
+            scroll_stop = comment_scroll_stop_reason(
+                cutoff_ts=cutoff_ts,
+                round_idx=round_idx,
+                last_page=last_page,
+                captured_pages=captured_pages,
+                min_scroll_before_time_stop=min_time_rounds,
+                comment_days=comment_days,
+            )
+            if scroll_stop:
+                stop_reason = scroll_stop
+                if "有效窗口" in scroll_stop or "有效时间" in scroll_stop:
+                    await _report_step(
+                        ctx,
+                        f"视频 {video_index + 1}：评论过旧",
+                        sub=f"超过 {comment_days} 天窗口，切换下一个视频",
+                        log=False,
+                    )
+                    ctx.phase_log.append(
+                        f"TIME_STOP video={video_index + 1} days={comment_days} scanned={scanned}"
+                    )
+                else:
+                    ctx.phase_log.append(
+                        f"PAGINATION_END video={video_index + 1} scanned={scanned} reason={scroll_stop}"
+                    )
                 break
 
-            has_more = int(last_page.get("has_more") or 0)
-            if not has_more and round_idx > 1 and captured_pages:
-                stop_reason = "评论已全部加载"
+            if round_idx >= safety_max_rounds:
+                stop_reason = f"已达安全滚动上限 {safety_max_rounds} 轮"
                 break
 
-            if round_idx >= max_rounds:
-                stop_reason = f"达到最大滚动轮次 {max_rounds}"
-                break
-
-            if len(filtered) == prev_filtered:
-                stale_scrolls += 1
-            else:
-                stale_scrolls = 0
-            prev_filtered = len(filtered)
-            if stale_scrolls >= 2 and not captured_pages:
-                stop_reason = "评论侧栏无数据（可能未点开评论）"
-                break
-            if stale_scrolls >= 3:
-                stop_reason = "连续滚动无新评论"
-                break
-
+            await _report_step(
+                ctx,
+                "步骤 6/7：向下滚动",
+                sub=f"第 {round_idx + 1} 轮 · 加载更多评论…",
+                log=False,
+            )
             await scroll_comment_sidebar_on_page(
                 page,
                 ctx.settings,
                 tenant_id=ctx.tenant_id,
                 rounds=1,
             )
-            await asyncio.sleep(random.uniform(1.8, 3.5))
+            await _sleep_with_overlay(
+                ctx,
+                random.uniform(1.8, 3.5),
+                "步骤 6/7：等待加载",
+                f"第 {round_idx + 1} 轮 · 等 comment/list",
+            )
+    except HumanBrowseGuardError as exc:
+        stop_reason = f"本视频浏览中断：{exc}"
+        ctx.phase_log.append(f"GUARD_STOP video={video_index + 1} {str(exc)[:120]}")
+    except Exception as exc:
+        stop_reason = f"本视频异常：{exc}"
+        ctx.phase_log.append(f"VIDEO_ERR video={video_index + 1} {str(exc)[:120]}")
+        _logger.warning("video comment browse error index=%s: %s", video_index + 1, exc)
     finally:
         try:
             page.remove_listener("response", handler)
         except Exception:
             pass
 
-    for _ in range(2):
-        with contextlib.suppress(Exception):
-            await page.keyboard.press("Escape")
-        await asyncio.sleep(0.15)
-    await close_feed_detail_on_page(page, ctx.settings, tenant_id=ctx.tenant_id)
-    ctx.state["feed_mode"] = False
-    await human_delay(page, ctx.settings, tenant_id=ctx.tenant_id, profile="fast")
+    _flush_unpersisted_leads(
+        db_session=db_session,
+        settings=ctx.settings,
+        tenant_id=ctx.tenant_id,
+        config=config,
+        leads=leads,
+        phase_log=ctx.phase_log,
+    )
+    with contextlib.suppress(Exception):
+        await _close_video_browse(ctx)
 
     if not stop_reason and _newest_top_create_time_in_page(_last_list_page(captured_pages)) is None:
         stop_reason = "未拦截到评论数据"
@@ -1754,6 +2796,8 @@ def _serialize_leads(leads: list[PreciseLeadRecord]) -> list[dict[str, Any]]:
             "planned_action": lead.planned_action,
             "outreach_executed": lead.outreach_executed,
             "outreach_result": lead.outreach_result,
+            "persisted": lead.persisted,
+            "persist_error": lead.persist_error,
             "status": "precise",
             "capture_method": CAPTURE_METHOD,
         }
@@ -1786,8 +2830,21 @@ async def run_standalone_keyword_browse(
     db_session: Session | None = None,
     headless: bool = False,
     stable_session: Any | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> StandaloneKeywordBrowseResult:
-    """独立抖音关键词浏览主入口（固定 UI 流程，全程模拟人类操作）。"""
+    """独立抖音浏览主入口（关键词 / 单视频 / 主页，固定 UI 流程）。"""
+    valid, valid_err = validate_standalone_config(config)
+    if not valid:
+        subject = _result_subject(config) or "standalone"
+        return StandaloneKeywordBrowseResult(
+            ok=False,
+            keyword=subject,
+            acquisition_mode=str(config.acquisition_mode or "keyword_auto"),
+            source_url=_result_subject(config),
+            error="E_CONFIG",
+            diagnostic=valid_err,
+        )
+
     store = DouyinSessionStore(settings)
     ctx = _build_ui_session(
         page,
@@ -1796,96 +2853,252 @@ async def run_standalone_keyword_browse(
         account_id=account_id,
         config=config,
     )
-    result = StandaloneKeywordBrowseResult(ok=False, keyword=config.keyword)
+    if on_progress is not None:
+        ctx.state["_on_progress"] = on_progress
+    if _is_keyword_mode(config):
+        ctx.state["reuse_search_session"] = True
+    subject = _result_subject(config)
+    target = max(1, int(config.target_precise_leads))
+    result = StandaloneKeywordBrowseResult(
+        ok=False,
+        keyword=subject,
+        acquisition_mode=str(config.acquisition_mode or "keyword_auto"),
+        source_url=subject,
+    )
     seen_comment_ids: set[str] = set()
     outreach_stats: dict[str, int] = {"replies": 0, "dms": 0, "follows": 0}
     dedupe_stats: dict[str, int] = {"duplicates_skipped": 0}
     all_leads: list[PreciseLeadRecord] = []
+    manual_video_urls: list[str] = []
 
     try:
+        mode_label = {
+            "keyword_auto": f"关键词「{config.keyword}」",
+            "single_video": "单视频",
+            "account_home": "账号主页",
+        }.get(str(config.acquisition_mode), "浏览")
         await _report_step(
             ctx,
             "准备开始",
-            sub=f"关键词「{config.keyword}」· {config.content_limit} 个视频",
+            sub=f"{mode_label} · 目标 {config.target_precise_leads} 条精准线索",
             log=False,
+            progress_force=True,
+            progress_extra={
+                "target_leads": target,
+                "start_video_index": max(0, int(config.start_video_index or 0)),
+            },
         )
         ctx.phase_log.append("STEP1 open_home")
-        await _open_douyin_home(
-            page,
-            settings,
-            tenant_id=tenant_id,
-            account_id=account_id,
-            store=store,
-            headless=headless,
-            stable_session=stable_session,
-        )
-
-        ctx.phase_log.append("STEP2 search")
-        search_ok, search_diag = await _run_search_phase(ctx, config=config)
-        if not search_ok:
-            result.error = "E_SEARCH"
-            result.diagnostic = search_diag
-            result.phase_log = list(ctx.phase_log)
-            await _report_step(ctx, "搜索失败", sub=search_diag or "", log=False)
-            return result
-
-        result.search_url = str(ctx.state.get("search_url") or page.url)
-        ctx.phase_log.append(f"STEP3 search_ok url={result.search_url}")
-
-        list_prepared = await _prepare_search_list_for_browse(ctx)
-        poster_n = await _count_search_posters(page)
-        aweme_n = len(ctx.state.get("search_aweme_ids") or [])
-        ctx.phase_log.append(
-            f"STEP3b list_prepared={list_prepared} posters={poster_n} aweme_ids={aweme_n}"
-        )
-        if not list_prepared:
-            result.error = "E_NO_LIST"
-            result.diagnostic = (
-                f"搜索完成但列表不可点（海报={poster_n}，api_aweme={aweme_n}）；"
-                f"url={page.url}"
+        search_phase_done = False
+        if _is_keyword_mode(config):
+            resumed, resume_diag = await _attempt_resume_saved_search(
+                ctx,
+                config,
+                page=page,
+                settings=settings,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                store=store,
+                headless=headless,
+                stable_session=stable_session,
             )
-            result.phase_log = list(ctx.phase_log)
-            await _report_step(ctx, "列表未就绪", sub=result.diagnostic, log=False)
-            return result
+            if resumed:
+                search_phase_done = True
+                result.search_url = str(ctx.state.get("search_url") or config.resume_search_url or "")
+                result.source_url = result.search_url
+                ctx.phase_log.append(f"STEP2 search_resume {resume_diag[:120]}")
 
-        target = max(1, int(config.target_precise_leads))
-        max_videos = max(target, int(config.max_videos_to_browse))
+        if not search_phase_done:
+            home_entry = DOUYIN_JINGXUAN_URL if _is_keyword_mode(config) else DOUYIN_ENTRY_URL
+            home_title = "步骤 1/7：打开抖音精选" if _is_keyword_mode(config) else "步骤 1/7：打开抖音首页"
+            await _open_douyin_home(
+                page,
+                settings,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                store=store,
+                headless=headless,
+                stable_session=stable_session,
+                entry_url=home_entry,
+                step_title=home_title,
+                reuse_search=_is_keyword_mode(config),
+                search_ctx=ctx if _is_keyword_mode(config) else None,
+            )
+
+        if _is_keyword_mode(config) and not search_phase_done:
+            ctx.phase_log.append("STEP2 search")
+            search_ok, search_diag = await _run_search_phase(ctx, config=config)
+            if not search_ok:
+                result.error = "E_SEARCH"
+                result.diagnostic = search_diag
+                result.phase_log = list(ctx.phase_log)
+                await _report_step(ctx, "搜索失败", sub=search_diag or "", log=False)
+                return result
+
+            result.search_url = str(ctx.state.get("search_url") or page.url)
+            result.source_url = result.search_url
+            ctx.phase_log.append(f"STEP3 search_ok url={result.search_url}")
+
+        if _is_keyword_mode(config):
+            list_prepared = await _prepare_search_list_for_browse(ctx)
+            poster_n = await _count_search_posters(page)
+            aweme_n = len(ctx.state.get("search_aweme_ids") or [])
+            ctx.phase_log.append(
+                f"STEP3b list_prepared={list_prepared} posters={poster_n} aweme_ids={aweme_n} "
+                f"url={str(page.url or '')[:96]}"
+            )
+            if not list_prepared:
+                result.error = "E_NO_LIST"
+                result.diagnostic = (
+                    f"搜索完成但列表不可点（海报={poster_n}，api_aweme={aweme_n}）；"
+                    f"识别规则：需 search URL + (API 有数据 或 DOM 海报>0 或 search_aweme_ids)；"
+                    f"url={page.url}"
+                )
+                result.phase_log = list(ctx.phase_log)
+                await _report_step(ctx, "列表未就绪", sub=result.diagnostic, log=False)
+                return result
+        else:
+            ctx.phase_log.append(f"STEP2 manual mode={config.acquisition_mode}")
+            manual_ok, manual_diag, manual_video_urls = await _prepare_manual_video_queue(
+                ctx,
+                config,
+                store,
+            )
+            if not manual_ok:
+                result.error = "E_MANUAL_PREPARE"
+                result.diagnostic = manual_diag
+                result.phase_log = list(ctx.phase_log)
+                await _report_step(ctx, "手动获客准备失败", sub=manual_diag or "", log=False)
+                return result
+            result.source_url = str(config.video_url or config.profile_url or subject)
+            if manual_diag:
+                ctx.phase_log.append(f"STEP2b manual_note={manual_diag[:120]}")
+
+        batch_limit = max(1, int(config.max_videos_to_browse))
+        start_video_index = max(0, int(config.start_video_index or 0))
+        batch_end = start_video_index + batch_limit
         aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
-        video_index = 0
+        video_index = start_video_index
         stop_browse_reason = ""
+        ran_out_of_list = False
 
-        while len(all_leads) < target and video_index < max_videos:
-            ctx.phase_log.append(f"STEP4 video_index={video_index}")
+        if _is_keyword_mode(config) and start_video_index > 0:
+            ctx.phase_log.append(
+                f"STEP3c resume_from_index={start_video_index} "
+                f"aweme_ids={len(aweme_ids)} posters={await _count_search_posters(page)}"
+            )
+            if not await _ensure_search_item_index(ctx, start_video_index):
+                ctx.phase_log.append(
+                    f"LIST_SCROLL miss index={start_video_index} "
+                    f"posters={await _count_search_posters(page)}"
+                )
+                await _report_step(
+                    ctx,
+                    f"续扫：列表滚动到第 {start_video_index + 1} 个视频失败",
+                    sub="将尝试直接点击该序号",
+                    log=False,
+                    progress_force=True,
+                )
+            else:
+                aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
+                await _report_step(
+                    ctx,
+                    f"续扫：从第 {start_video_index + 1} 个视频继续",
+                    sub=f"列表已就绪 · 已浏览 {start_video_index} 个",
+                    log=False,
+                    progress_force=True,
+                    progress_extra={"start_video_index": start_video_index},
+                )
+
+        while len(all_leads) < target and video_index < batch_end:
+            ctx.phase_log.append(
+                f"STEP4 video_index={video_index} "
+                f"aweme_ids={len(aweme_ids)} posters={await _count_search_posters(page)}"
+            )
             await _report_step(
                 ctx,
                 f"步骤 4/7：浏览视频 {video_index + 1}",
                 sub=f"精准线索 {len(all_leads)}/{target} · 继续直到凑够",
                 log=False,
+                progress_force=True,
+                progress_extra={
+                    "video_index": video_index,
+                    "videos_processed": result.videos_processed,
+                    "leads_qualified": len(all_leads),
+                    "comments_scanned": result.comments_scanned,
+                    "target_leads": target,
+                },
             )
-            if video_index < len(ctx.video_urls):
+            if _is_manual_mode(config):
+                if video_index < len(manual_video_urls):
+                    video_url = manual_video_urls[video_index]
+                else:
+                    break
+            elif video_index < len(ctx.video_urls):
                 video_url = ctx.video_urls[video_index]
             elif video_index < len(aweme_ids) and aweme_ids[video_index]:
                 video_url = f"https://www.douyin.com/video/{aweme_ids[video_index]}"
             else:
                 video_url = ""
+                if _is_keyword_mode(config):
+                    if not await _ensure_search_item_index(ctx, video_index):
+                        ctx.phase_log.append(
+                            f"LIST_EXHAUSTED index={video_index} "
+                            f"aweme={len(list(ctx.state.get('search_aweme_ids') or []))} "
+                            f"posters={await _count_search_posters(page)}"
+                        )
+                        ran_out_of_list = True
+                        break
+                else:
+                    ran_out_of_list = True
+                    break
 
-            video_leads, scanned, stop_note = await _browse_video_comments(
-                ctx,
-                config=config,
-                video_index=video_index,
-                video_url=video_url,
-                seen_comment_ids=seen_comment_ids,
-                outreach_stats=outreach_stats,
-                dedupe_stats=dedupe_stats,
-                db_session=db_session,
-                leads_before=len(all_leads),
-            )
+            try:
+                video_leads, scanned, stop_note = await _browse_video_comments(
+                    ctx,
+                    config=config,
+                    video_index=video_index,
+                    video_url=video_url,
+                    seen_comment_ids=seen_comment_ids,
+                    outreach_stats=outreach_stats,
+                    dedupe_stats=dedupe_stats,
+                    db_session=db_session,
+                    leads_before=len(all_leads),
+                )
+            except HumanBrowseGuardError as exc:
+                ctx.phase_log.append(f"GUARD_VIDEO index={video_index + 1} {str(exc)[:120]}")
+                video_leads, scanned, stop_note = [], 0, f"本视频浏览中断：{exc}"
+                with contextlib.suppress(Exception):
+                    await _close_video_browse(ctx)
+            except Exception as exc:
+                ctx.phase_log.append(f"VIDEO_SKIP index={video_index + 1} {str(exc)[:120]}")
+                _logger.warning("browse video failed index=%s: %s", video_index + 1, exc)
+                video_leads, scanned, stop_note = [], 0, f"本视频异常：{exc}"
+                with contextlib.suppress(Exception):
+                    await _close_video_browse(ctx)
             all_leads.extend(video_leads)
             result.comments_scanned += scanned
             result.videos_processed += 1
             ctx.phase_log.append(
                 f"STEP7 video={video_index + 1} leads={len(video_leads)} "
                 f"total={len(all_leads)}/{target} scanned={scanned} note={stop_note}"
+            )
+            await _report_step(
+                ctx,
+                f"视频 {video_index + 1} 评论扫描完成",
+                sub=(
+                    f"本视频 +{len(video_leads)} 精准 · 累计 {len(all_leads)}/{target} · "
+                    f"扫描 {scanned} 条评论"
+                ),
+                log=False,
+                progress_force=True,
+                progress_extra={
+                    "video_index": video_index,
+                    "videos_processed": result.videos_processed,
+                    "leads_qualified": len(all_leads),
+                    "comments_scanned": result.comments_scanned,
+                    "target_leads": target,
+                },
             )
             await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
 
@@ -1898,9 +3111,29 @@ async def run_standalone_keyword_browse(
             video_index += 1
 
         result.target_reached = len(all_leads) >= target
+        _flush_unpersisted_leads(
+            db_session=db_session,
+            settings=settings,
+            tenant_id=tenant_id,
+            config=config,
+            leads=all_leads,
+            phase_log=ctx.phase_log,
+        )
         result.precise_leads = all_leads
+        result.comments_persisted = sum(1 for lead in all_leads if lead.persisted)
         result.duplicates_skipped = int(dedupe_stats.get("duplicates_skipped") or 0)
-        result.ok = result.target_reached
+        result.ok = result.target_reached or bool(all_leads) or result.videos_processed > 0
+        result.search_exhausted = (
+            not result.target_reached
+            and (
+                ran_out_of_list
+                or (
+                    _is_manual_mode(config)
+                    and video_index >= len(manual_video_urls)
+                    and len(all_leads) < target
+                )
+            )
+        )
         result.phase_log = list(ctx.phase_log)
         if result.target_reached:
             result.diagnostic = (
@@ -1910,11 +3143,16 @@ async def run_standalone_keyword_browse(
             if stop_browse_reason:
                 result.diagnostic += f"；{stop_browse_reason}"
         else:
-            result.error = result.error or "E_TARGET_NOT_MET"
+            if result.search_exhausted:
+                result.error = result.error or "E_TARGET_NOT_MET"
             result.diagnostic = (
                 f"未凑够目标：精准线索 {len(all_leads)}/{target}，"
-                f"已浏览 {result.videos_processed} 个视频（上限 {max_videos}）"
+                f"已浏览 {result.videos_processed} 个视频"
             )
+            if not result.search_exhausted:
+                result.diagnostic += "；搜索结果内仍有视频，将继续浏览直至达成目标或列表耗尽"
+            elif ran_out_of_list:
+                result.diagnostic += "；搜索列表已耗尽"
         await _report_step(
             ctx,
             "步骤 7/7：完成" if result.target_reached else "未达目标",
@@ -1924,9 +3162,13 @@ async def run_standalone_keyword_browse(
 
         payload = {
             "platform": PLATFORM,
-            "keyword": config.keyword,
+            "keyword": config.keyword or subject,
+            "acquisition_mode": config.acquisition_mode,
+            "source_url": result.source_url,
+            "video_url": config.video_url or None,
+            "profile_url": config.profile_url or None,
             "search_url": result.search_url,
-            "capture_method": CAPTURE_METHOD,
+            "capture_method": capture_method_for_mode(config.acquisition_mode),
             "videos_processed": result.videos_processed,
             "comments_scanned": result.comments_scanned,
             "duplicates_skipped": result.duplicates_skipped,
@@ -1948,17 +3190,142 @@ async def run_standalone_keyword_browse(
         result.output_file = str(output)
 
     except HumanBrowseGuardError as exc:
-        result.error = "E_GUARD"
-        result.diagnostic = str(exc)
-        result.phase_log = list(ctx.phase_log)
-        await _report_step(ctx, "已停止", sub=str(exc), log=False)
+        _apply_partial_salvage(
+            result,
+            all_leads,
+            exc=exc,
+            ctx=ctx,
+            config=config,
+            db_session=db_session,
+            dedupe_stats=dedupe_stats,
+            target=target,
+            error_code="E_GUARD",
+        )
+        await _report_step(
+            ctx,
+            "会话门禁中断" if not all_leads else f"会话中断 · 已保留 {len(all_leads)} 条线索",
+            sub=(result.diagnostic or str(exc))[:120],
+            log=False,
+        )
     except Exception as exc:
-        result.error = "E_RUNTIME"
-        result.diagnostic = str(exc)
-        result.phase_log = list(ctx.phase_log)
-        await _report_step(ctx, "运行出错", sub=str(exc)[:120], log=False)
+        _apply_partial_salvage(
+            result,
+            all_leads,
+            exc=exc,
+            ctx=ctx,
+            config=config,
+            db_session=db_session,
+            dedupe_stats=dedupe_stats,
+            target=target,
+            error_code="E_RUNTIME",
+        )
+        await _report_step(ctx, "运行出错（已尽量保留线索）", sub=str(exc)[:120], log=False)
+        _logger.exception("standalone browse aborted: %s", exc)
 
     return result
+
+
+def build_standalone_browse_config(
+    *,
+    acquisition_mode: str = "keyword_auto",
+    keyword: str = "",
+    video_url: str = "",
+    profile_url: str = "",
+    input_url: str = "",
+    days: int = 7,
+    video_publish_days: int | None = None,
+    comment_days: int | None = None,
+    target_precise_leads: int = 3,
+    limit: int | None = None,
+    max_videos_to_browse: int | None = None,
+    max_comments_per_video: int | None = None,
+    comment_scroll_rounds: int | None = None,
+    match_keywords: list[str] | None = None,
+    exclude_keywords: list[str] | None = None,
+    execute_outreach: bool = False,
+    test_all_outreach: bool = False,
+    reply_text: str = "",
+    dm_text: str = "",
+    comment_ratio: int = 50,
+    dm_ratio: int = 30,
+    follow_ratio: int = 20,
+    persist_to_db: bool = False,
+    start_video_index: int | None = None,
+    resume_search_url: str = "",
+    source_job_id: str = "",
+    close_browser_after: bool = False,
+) -> StandaloneKeywordBrowseConfig:
+    mode, resolved_video, resolved_profile = resolve_standalone_acquisition_mode(
+        acquisition_mode=acquisition_mode,
+        input_url=input_url,
+        video_url=video_url,
+        profile_url=profile_url,
+    )
+    target = max(1, int(target_precise_leads or limit or 3))
+    if mode == "account_home":
+        max_videos = max(1, int(max_videos_to_browse or 10))
+        search_content_limit = max_videos
+    else:
+        max_videos = max(1, int(max_videos_to_browse or 50))
+        search_content_limit = max(10, min(30, max_videos))
+    comments_cap = max(
+        120,
+        int(max_comments_per_video or 0) or max(300, target * 40),
+    )
+    scroll_rounds = max(
+        24,
+        int(comment_scroll_rounds or 0) or max(60, comments_cap // 5),
+    )
+    return StandaloneKeywordBrowseConfig(
+        keyword=str(keyword or "").strip(),
+        acquisition_mode=mode,  # type: ignore[arg-type]
+        video_url=resolved_video,
+        profile_url=resolved_profile,
+        input_url=str(input_url or resolved_video or resolved_profile or "").strip(),
+        days=int(days),
+        video_publish_days=video_publish_days,
+        comment_days=comment_days,
+        content_limit=search_content_limit,
+        target_precise_leads=target,
+        max_videos_to_browse=max_videos,
+        max_comments_per_video=comments_cap,
+        comment_scroll_rounds=scroll_rounds,
+        match_keywords=list(match_keywords or []),
+        exclude_keywords=list(exclude_keywords or []),
+        execute_outreach=bool(execute_outreach),
+        test_all_outreach=bool(test_all_outreach),
+        reply_text=str(reply_text or "").strip(),
+        dm_text=str(dm_text or "").strip(),
+        action_policy={
+            "comment_ratio": int(comment_ratio),
+            "dm_ratio": int(dm_ratio),
+            "follow_ratio": int(follow_ratio),
+            "interval_min_sec": 10,
+            "interval_max_sec": 30,
+        },
+        persist_to_db=bool(persist_to_db),
+        reuse_stable_session=True,
+        close_browser_after=bool(close_browser_after),
+        start_video_index=max(0, int(start_video_index or 0)),
+        resume_search_url=str(resume_search_url or "").strip(),
+        source_job_id=str(source_job_id or "").strip(),
+    )
+
+
+def standalone_result_to_response_data(result: StandaloneKeywordBrowseResult) -> dict[str, Any]:
+    return {
+        "acquisition_mode": result.acquisition_mode,
+        "keyword": result.keyword,
+        "source_url": result.source_url,
+        "search_url": result.search_url,
+        "videos_processed": result.videos_processed,
+        "comments_scanned": result.comments_scanned,
+        "duplicates_skipped": result.duplicates_skipped,
+        "precise_lead_count": len(result.precise_leads),
+        "target_reached": result.target_reached,
+        "phase_log": result.phase_log[-20:],
+        "error": result.error,
+    }
 
 
 async def run_standalone_keyword_browse_with_browser(
@@ -1969,6 +3336,7 @@ async def run_standalone_keyword_browse_with_browser(
     config: StandaloneKeywordBrowseConfig,
     db_session: Session | None = None,
     headless: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> StandaloneKeywordBrowseResult:
     """自带浏览器会话的便捷入口（调试 / 脚本调用）。
 
@@ -2001,6 +3369,7 @@ async def run_standalone_keyword_browse_with_browser(
                 db_session=db_session,
                 headless=resolved_headless,
                 stable_session=session,
+                on_progress=on_progress,
             )
         finally:
             await _persist_session_storage(
@@ -2030,4 +3399,5 @@ async def run_standalone_keyword_browse_with_browser(
             config=config,
             db_session=db_session,
             headless=resolved_headless,
+            on_progress=on_progress,
         )

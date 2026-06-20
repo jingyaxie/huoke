@@ -73,6 +73,7 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="evaluation_reason" label="评估说明" min-width="180" show-overflow-tooltip />
         <el-table-column prop="reply_content" label="评论内容" min-width="140" show-overflow-tooltip />
         <el-table-column prop="dm_content" label="私信内容" min-width="140" show-overflow-tooltip />
         <el-table-column v-if="showOutreachStatus" label="触达状态" width="100">

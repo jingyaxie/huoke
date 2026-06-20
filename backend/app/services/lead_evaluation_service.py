@@ -20,7 +20,8 @@ EVALUATION_MODE_LLM_INTENT = "llm_intent"
 EVALUATION_STYLE_USAGE_EXPERIENCE = "usage_experience"
 _LLM_BATCH_SIZE = 12
 
-DEFAULT_THRESHOLDS = {"precise": 0.72, "outreach": 0.55}
+DEFAULT_THRESHOLDS = {"precise": 0.60, "outreach": 0.55}
+LEGACY_COMPILED_PRECISE = 0.72
 
 
 def _utc_now_iso() -> str:
@@ -239,6 +240,22 @@ def min_comment_digg_from_brief(brief: TaskBrief) -> int:
     return 0
 
 
+def precise_threshold_from_spec(spec: dict[str, Any]) -> float:
+    """精准入库/展示阈值；未自定义的旧任务（编译默认 0.72）随产品默认值下调。"""
+    thresholds = spec.get("thresholds") if isinstance(spec.get("thresholds"), dict) else {}
+    try:
+        raw = float(thresholds.get("precise") or DEFAULT_THRESHOLDS["precise"])
+    except (TypeError, ValueError):
+        raw = DEFAULT_THRESHOLDS["precise"]
+    if abs(raw - LEGACY_COMPILED_PRECISE) < 0.001 and DEFAULT_THRESHOLDS["precise"] < LEGACY_COMPILED_PRECISE:
+        raw = DEFAULT_THRESHOLDS["precise"]
+    try:
+        outreach = float(thresholds.get("outreach") or DEFAULT_THRESHOLDS["outreach"])
+    except (TypeError, ValueError):
+        outreach = DEFAULT_THRESHOLDS["outreach"]
+    return max(outreach, raw)
+
+
 def accept_evaluation_result(result: dict[str, Any], spec: dict[str, Any]) -> bool:
     if not isinstance(result, dict):
         return False
@@ -260,8 +277,7 @@ def accept_evaluation_result(result: dict[str, Any], spec: dict[str, Any]) -> bo
 def is_precise_lead(result: dict[str, Any], spec: dict[str, Any]) -> bool:
     if not accept_evaluation_result(result, spec):
         return False
-    thresholds = spec.get("thresholds") if isinstance(spec.get("thresholds"), dict) else {}
-    precise_min = float(thresholds.get("precise") or DEFAULT_THRESHOLDS["precise"])
+    precise_min = precise_threshold_from_spec(spec)
     try:
         score = float(result.get("score") or 0)
     except (TypeError, ValueError):
@@ -327,7 +343,7 @@ def _build_evaluate_system_prompt(spec: dict[str, Any], brief: TaskBrief) -> str
     lines.extend(
         [
             f"【触达阈值】{thresholds.get('outreach', DEFAULT_THRESHOLDS['outreach'])} "
-            f"【精准阈值】{thresholds.get('precise', DEFAULT_THRESHOLDS['precise'])}",
+            f"【精准阈值】{precise_threshold_from_spec(spec)}",
             '输出 JSON：{"results":[{"comment_id","is_lead","score","intent_type",'
             '"confidence","worth_outreach","reason"}]}。',
             "intent_type 建议：usage_experience|practical_inquiry|interest_signal|social_gesture|spam_ad|off_topic。",

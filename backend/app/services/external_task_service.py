@@ -274,7 +274,14 @@ def enrich_brief_from_external_config(brief, config: dict[str, Any]):
     """手动获客 brief 补全（供 submit_async 复用）。"""
     mode = str(config.get("acquisition_mode") or "").strip().lower()
     if mode in {"single_video", "account_home"}:
-        return enrich_manual_acquisition_brief(brief, config)
+        enriched = enrich_manual_acquisition_brief(brief, config)
+        target = config.get("target_count") or config.get("target_leads")
+        if target is not None:
+            try:
+                enriched.goals["target_leads"] = int(target)
+            except (TypeError, ValueError):
+                pass
+        return enriched
     target = config.get("target_count") or config.get("requested_target") or config.get("target_leads")
     if target is not None:
         try:

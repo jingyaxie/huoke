@@ -158,6 +158,38 @@ class DouyinStandaloneKeywordBrowseRequest(BaseModel):
     close_browser_after: bool = False
 
 
+class DouyinStandaloneManualBrowseBase(BaseModel):
+    """手动获客 standalone 浏览（单视频 / 主页）共用字段。"""
+
+    input_url: str = Field(default="", description="视频或主页链接（可与下方专用字段二选一）")
+    days: int = Field(default=7, ge=1, le=30, description="视频发布时间筛选（主页模式）")
+    video_publish_days: Optional[int] = Field(default=None, ge=1, le=30)
+    limit: int = Field(default=3, ge=1, le=50, description="兼容字段；优先用 target_precise_leads")
+    target_precise_leads: int = Field(default=3, ge=1, le=20)
+    max_videos_to_browse: int = Field(default=20, ge=1, le=100)
+    comment_days: Optional[int] = Field(default=None, ge=1, le=30)
+    match_keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(default_factory=list)
+    execute_outreach: bool = False
+    test_all_outreach: bool = False
+    reply_text: str = ""
+    dm_text: str = ""
+    comment_ratio: int = Field(default=50, ge=0, le=100)
+    dm_ratio: int = Field(default=30, ge=0, le=100)
+    follow_ratio: int = Field(default=20, ge=0, le=100)
+    persist_to_db: bool = False
+    close_browser_after: bool = False
+
+
+class DouyinStandaloneVideoBrowseRequest(DouyinStandaloneManualBrowseBase):
+    video_url: str = Field(default="", description="抖音单条视频链接")
+
+
+class DouyinStandaloneProfileBrowseRequest(DouyinStandaloneManualBrowseBase):
+    profile_url: str = Field(default="", description="抖音用户主页链接")
+    max_videos_to_browse: int = Field(default=10, ge=1, le=30, description="主页最多浏览视频数")
+
+
 class DouyinToolResponse(BaseModel):
     """统一响应信封：业务数据放 data，诊断信息放 diagnostic。"""
 

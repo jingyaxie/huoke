@@ -353,6 +353,37 @@ def test_guard_complete_keeps_complete_when_goal_reached():
     assert decision.get("completion_outcome") == "goal_reached"
 
 
+def test_guard_complete_uses_qualified_for_eval_task():
+    brief = TaskBrief(
+        keyword="健身",
+        goals={"target_leads": 5, "agent_strategy": "standalone-browse-douyin"},
+        platform="douyin",
+    )
+    decision = guard_supervisor_complete_decision(
+        brief,
+        {"leads_collected": 0, "leads_qualified": 5, "evaluation_done": True},
+        {"action": "complete", "reasoning": "done", "params": {}},
+    )
+    assert decision["action"] == "complete"
+    assert decision.get("completion_outcome") == "goal_reached"
+
+
+def test_plan_incomplete_suspend_uses_qualified_metric():
+    brief = TaskBrief(
+        keyword="健身",
+        goals={"target_leads": 5, "agent_strategy": "standalone-browse-douyin"},
+        platform="douyin",
+    )
+    from app.services.task_execution_plan import build_plan_incomplete_suspend_decision
+
+    decision = build_plan_incomplete_suspend_decision(
+        brief,
+        {"leads_collected": 2, "leads_qualified": 1},
+    )
+    assert decision["action"] == "suspend"
+    assert "精准线索 1/5" in decision["reasoning"]
+
+
 def test_infer_suspend_next_action_skill_flow_crawl_done_branch():
   brief = TaskBrief(
       keyword="淋浴房",
@@ -399,3 +430,101 @@ def test_round_mode_goal_uses_current_round_progress():
     )
     state = {"round_index": 1, "round_leads_collected": 2, "leads_collected": 2}
     assert supervisor_goal_reached(brief, state) is True
+
+
+def test_standalone_can_auto_continue_with_saved_progress():
+    from app.services.agent_strategy.registry import STANDALONE_BROWSE_DOUYIN
+    from app.services.task_execution_plan import (
+        build_plan_incomplete_suspend_decision,
+        standalone_can_auto_continue,
+    )
+
+    brief = TaskBrief(
+        keyword="健身",
+        goals={"target_leads": 5, "agent_strategy": STANDALONE_BROWSE_DOUYIN.id},
+        platform="douyin",
+    )
+    state = {
+        "standalone_browse_offset": 12,
+        "standalone_search_url": "https://www.douyin.com/search/健身",
+        "leads_qualified": 0,
+        "videos_processed": 12,
+    }
+    assert standalone_can_auto_continue(brief, state) is True
+    decision = build_plan_incomplete_suspend_decision(brief, state)
+    assert decision["completion_outcome"] == "plan_incomplete"
+    assert decision["resume_at"] is not None
+    assert "T" in str(decision["resume_at"])
+
+
+def test_prepare_standalone_auto_continue_resets_crawl_step():
+    from app.services.agent_strategy.registry import STANDALONE_BROWSE_DOUYIN
+    from app.services.task_execution_plan import (
+        build_standalone_execution_plan,
+        prepare_standalone_auto_continue,
+    )
+
+    brief = TaskBrief(
+        keyword="健身",
+        goals={"target_leads": 5, "agent_strategy": STANDALONE_BROWSE_DOUYIN.id},
+        platform="douyin",
+    )
+    state = {
+        "suspended": True,
+        "completion_outcome": "plan_incomplete",
+        "crawl_done": True,
+        "stats_synced": True,
+        "standalone_browse_offset": 8,
+        "execution_plan": build_standalone_execution_plan(brief, {}),
+    }
+    for step in state["execution_plan"]["steps"]:
+        step["status"] = "completed"
+    prepare_standalone_auto_continue(state, brief)
+    assert state.get("suspended") is None
+    assert state.get("crawl_done") is None
+    crawl = next(s for s in state["execution_plan"]["steps"] if s["action"] == "crawl_keyword")
+    assert crawl["status"] == "in_progress"
+    assert state["execution_plan"]["current_index"] == 0
+
+
+def test_effective_live_leads_qualified_merges_history_and_crawl_live():
+    from app.services.task_round_service import effective_live_leads_qualified
+
+    job_result = {
+        "progress_events": [
+            {"type": "crawl_progress", "data": {"leads_qualified": 4}},
+        ]
+    }
+    state = {
+        "leads_qualified": 0,
+        "crawl_live": {"leads_qualified": 5},
+    }
+    assert effective_live_leads_qualified(state, job_result=job_result) == 5
+
+
+def test_effective_live_leads_qualified_prefers_persisted_ids():
+    from app.services.task_round_service import effective_live_leads_qualified
+
+    state = {
+        "leads_qualified": 36,
+        "job_persisted_comment_ids": ["a", "b", "c", "d", "e"],
+        "crawl_live": {"leads_qualified": 5},
+    }
+    assert effective_live_leads_qualified(state) == 5
+
+
+def test_standalone_outreach_incomplete_when_qualified_but_not_collected():
+    from app.services.standalone_browse_adapter import is_standalone_browse_brief
+    from app.services.task_brief_service import TaskBrief
+    from app.services.task_round_service import standalone_outreach_incomplete
+
+    brief = TaskBrief(
+        keyword="健身",
+        title="上海健身",
+        goals={"target_leads": 5, "agent_strategy": "standalone-browse-douyin"},
+    )
+    assert is_standalone_browse_brief(brief)
+    state = {"leads_qualified": 5, "leads_collected": 0, "job_persisted_comment_ids": ["c1", "c2"]}
+    assert standalone_outreach_incomplete(brief, state) is True
+    state["leads_collected"] = 5
+    assert standalone_outreach_incomplete(brief, state) is False

@@ -844,6 +844,54 @@ async def _already_on_search_results(ctx: DouyinUiSession, keyword: str) -> bool
     return await _search_page_has_results(ctx.page)
 
 
+async def page_ready_for_search_reuse(ctx: DouyinUiSession) -> bool:
+    """当前标签是否已在目标关键词的综合搜索列表（非视频浮层、非验证码页）。"""
+    from app.platforms.douyin.human_guards import is_captcha_page
+    from app.services.ui_flow.platforms.douyin.feed_ui import feed_overlay_visible
+
+    keyword = str(ctx.params.keyword or "").strip()
+    if not keyword:
+        return False
+    if await is_captcha_page(ctx.page):
+        return False
+    if await feed_overlay_visible(ctx.page):
+        return False
+    return await _already_on_search_results(ctx, keyword)
+
+
+async def reuse_search_results_if_ready(
+    ctx: DouyinUiSession,
+    *,
+    limit: int | None = None,
+) -> UiStepResult | None:
+    """已在正确搜索页时复用列表，跳过搜索框重提交（降低 verify_check / 验证码风险）。"""
+    if not await page_ready_for_search_reuse(ctx):
+        return None
+
+    resolved_limit = max(1, int(limit or ctx.params.content_limit or 10))
+    flags: dict[str, bool] = {}
+    api_items: dict[str, dict] = {}
+    ctx.state["search_submitted"] = True
+    ctx.state.setdefault("search_url", ctx.page.url)
+    if _needs_ui_publish_filter(ctx):
+        from app.platforms.search_filters import douyin_publish_time_ui_label, normalize_days
+
+        label = douyin_publish_time_ui_label(normalize_days(ctx.params.days))
+        if label:
+            ctx.state.setdefault("search_filter_applied", label)
+
+    result = await _finalize_search_success(
+        ctx,
+        api_items=api_items,
+        limit=resolved_limit,
+        capture_method=f"{CAPTURE_METHOD_PREFIX}search_ui_reuse",
+        diagnostic="复用当前搜索页（跳过搜索框重提交）",
+        allow_scroll=False,
+        flags=flags,
+    )
+    return result if result.ok else None
+
+
 async def _submit_search(ctx: DouyinUiSession, *, keyword: str | None = None) -> None:
     if ctx.state.get("search_submitted"):
         return
@@ -1397,6 +1445,11 @@ async def run_search(ctx: DouyinUiSession) -> UiStepResult:
     flags: dict[str, bool] = {"verify_check": False}
     needs_filter = _needs_ui_publish_filter(ctx)
     collect_api = {"enabled": False}
+
+    if ctx.state.get("reuse_search_session"):
+        reused = await reuse_search_results_if_ready(ctx, limit=limit)
+        if reused is not None:
+            return reused
 
     def _should_collect_response() -> bool:
         if needs_filter:

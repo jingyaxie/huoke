@@ -76,6 +76,33 @@ def extract_crawl_payloads(skill_result: dict[str, Any]) -> list[dict[str, Any]]
     return payloads
 
 
+def extract_comment_ids_from_skill_result(skill_result: dict[str, Any]) -> list[str]:
+    """从抓取结果提取 comment_id（用于任务级入库清单）。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for payload in extract_crawl_payloads(skill_result):
+        for row in payload.get("comments") or []:
+            if not isinstance(row, dict):
+                continue
+            cid = str(row.get("comment_id") or "").strip()
+            if cid and cid not in seen:
+                seen.add(cid)
+                ids.append(cid)
+    return ids
+
+
+def merge_job_persisted_comment_ids(state: dict[str, Any], skill_result: dict[str, Any]) -> None:
+    """记录本任务本次抓取写入/更新的 comment_id，供前端按 job 展示。"""
+    ids = extract_comment_ids_from_skill_result(skill_result)
+    if not ids:
+        return
+    existing = {
+        str(x).strip() for x in (state.get("job_persisted_comment_ids") or []) if str(x).strip()
+    }
+    existing.update(ids)
+    state["job_persisted_comment_ids"] = sorted(existing)[-5000:]
+
+
 def count_crawl_comments(skill_result: dict[str, Any]) -> int:
     count = sum(len(payload.get("comments") or []) for payload in extract_crawl_payloads(skill_result))
     if count > 0:
@@ -146,6 +173,15 @@ def crawl_search_phase_succeeded(skill_result: dict[str, Any]) -> bool:
 
 
 def validate_crawl_skill_result(skill_result: dict[str, Any]) -> tuple[bool, str, int]:
+    if skill_result.get("standalone_browse"):
+        count = int(skill_result.get("precise_lead_count") or 0)
+        videos = int(skill_result.get("videos_processed") or 0)
+        scanned = int(skill_result.get("comments_scanned") or skill_result.get("total_comments_captured") or 0)
+        if videos > 0 or count > 0 or scanned > 0:
+            return True, "", max(count, scanned)
+        if str(skill_result.get("status") or "").lower() in {"completed", "partial"}:
+            return True, "", count
+        return False, str(skill_result.get("error") or skill_result.get("diagnostic") or "standalone 浏览未产生有效结果"), 0
     videos = int(skill_result.get("videos_processed") or 0)
     count = count_crawl_comments(skill_result)
     if videos > 0 and count >= 0:

@@ -23,6 +23,12 @@ from app.services.task_round_service import (
     start_next_round,
 )
 from app.services.task_supervisor_service import TaskSupervisorService
+from app.services.standalone_browse_adapter import (
+    STANDALONE_PIPELINE,
+    brief_to_standalone_config,
+    is_standalone_browse_brief,
+)
+from app.services.supervisor_crawl_helpers import CRAWL_SUPERVISOR_ACTIONS
 
 
 @dataclass
@@ -115,6 +121,48 @@ def make_failure_result(message: str = "模拟步骤超时") -> dict[str, Any]:
     return {"status": "failed", "error": message}
 
 
+def mock_standalone_crawl_result(
+    action: str,
+    brief: TaskBrief,
+    *,
+    target: int = 0,
+) -> dict[str, Any]:
+    """模拟 standalone 一体化抓取结果（不启动浏览器）。"""
+    target = target or int(brief.goals.get("target_leads") or 3)
+    precise = 3 if target > 20 else target
+    videos = 3 if action == "crawl_keyword" else (int(brief.goals.get("crawl_video_limit") or 5) if action == "crawl_profile" else 1)
+    return {
+        "status": "completed",
+        "standalone_browse": True,
+        "action": action,
+        "summary": f"[sim] standalone 浏览 {videos} 个视频，精准线索 {precise}/{target}",
+        "videos_processed": videos,
+        "comments_scanned": 30,
+        "raw_comments_scanned": 30,
+        "total_comments_captured": 30,
+        "precise_lead_count": precise,
+        "target_reached": precise >= target,
+        "inline_outreach": {
+            "replies": min(precise, 2),
+            "dms": min(precise, 1),
+            "follows": 0,
+            "executed": precise,
+        },
+        "outreach_executed_count": precise,
+        "results": [
+            {
+                "platform": "douyin",
+                "aweme_id": f"sim-{i}",
+                "video_url": f"https://www.douyin.com/video/sim-{i}",
+                "comments": [{"comment_id": f"c{i}", "comment": "模拟询价评论", "username": "u1"}],
+                "keyword_context": {"keyword": brief.keyword or "", "status": "precise"},
+            }
+            for i in range(precise)
+        ],
+        "crawl_search_exhausted": True,
+    }
+
+
 def mock_skill_result(
     action: str,
     brief: TaskBrief,
@@ -129,6 +177,8 @@ def mock_skill_result(
         if remaining > 0:
             return make_failure_result(fault_profile.error_message)
     target = effective_target_leads(brief, state) or int(brief.goals.get("target_leads") or 0)
+    if is_standalone_browse_brief(brief) and action in CRAWL_SUPERVISOR_ACTIONS:
+        return mock_standalone_crawl_result(action, brief, target=target)
     if action == "crawl_keyword":
         return {
             "status": "completed",

@@ -12,6 +12,7 @@ from app.services.task_brief_service import TaskBrief
 from app.services.supervisor_crawl_helpers import effective_crawl_video_limit
 from app.services.task_round_service import (
     effective_leads_collected,
+    effective_live_leads_qualified,
     effective_target_leads,
     max_rounds_from_brief,
     round_loop_enabled,
@@ -198,6 +199,7 @@ def build_data_snapshot(
 
     progress = {
         "leads_collected": leads_collected,
+        "leads_qualified": effective_live_leads_qualified(supervisor_state, job_result=job_result),
         "comments_captured": int(supervisor_state.get("comments_captured") or 0),
         "crawl_video_limit": crawl_video_limit,
         "videos_processed": int(supervisor_state.get("videos_processed") or 0),

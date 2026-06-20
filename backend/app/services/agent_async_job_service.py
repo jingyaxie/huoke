@@ -206,6 +206,23 @@ class AgentAsyncJobService:
     def _enqueue_job(self, job: AgentAsyncJob) -> None:
         self._queue.put_nowait((job.priority, time.time(), job.tenant_id, job.job_id))
 
+    @staticmethod
+    def _standalone_boot_resume_eligible(job: AgentAsyncJob) -> bool:
+        """后端重启后：Standalone 未达目标的任务立即重新入队，不必等到次日 resume_at。"""
+        result = job.result if isinstance(job.result, dict) else {}
+        state = result.get("supervisor_state") if isinstance(result.get("supervisor_state"), dict) else {}
+        if job.status != "pending" or not state.get("suspended") or state.get("manual_pause"):
+            return False
+        plan = state.get("execution_plan") if isinstance(state.get("execution_plan"), dict) else {}
+        if plan.get("pipeline") != "standalone_browse":
+            return False
+        if str(state.get("completion_outcome") or "") == "plan_incomplete":
+            return True
+        return (
+            int(state.get("standalone_browse_offset") or 0) > 0
+            or bool(str(state.get("standalone_search_url") or "").strip())
+        )
+
     def _recover_active_jobs_on_startup(self) -> None:
         if self._boot_recovered:
             return
@@ -218,6 +235,15 @@ class AgentAsyncJobService:
                 self._append_progress(job, "status", {
                     "message": f"服务启动恢复任务（原状态 {previous}）",
                     "previous_status": previous,
+                })
+                self.save(job)
+                self._enqueue_job(job)
+            elif self._standalone_boot_resume_eligible(job):
+                self._clear_suspend_for_manual_start(job)
+                job.status = "queued"
+                self._append_progress(job, "status", {
+                    "message": "服务启动：Standalone 任务自动续扫入队",
+                    "boot_auto_resume": True,
                 })
                 self.save(job)
                 self._enqueue_job(job)
@@ -273,6 +299,12 @@ class AgentAsyncJobService:
         if event_type == "supervisor_act":
             ok = data.get("ok", True)
             return f"Skill 执行 · {data.get('action', '')} ({'成功' if ok else '失败'})"
+        if event_type == "crawl_progress":
+            phase = str(data.get("phase") or "").strip()
+            sub = str(data.get("sub") or "").strip()
+            if phase and sub:
+                return f"{phase} · {sub}"
+            return phase or sub or "浏览进行中"
         if event_type == "status":
             return str(data.get("message") or data.get("status") or "状态更新")
         if event_type == "done":
@@ -426,9 +458,47 @@ class AgentAsyncJobService:
                                 "supervisor_decide": "plan",
                                 "supervisor_act_start": "act",
                                 "supervisor_act": "act",
+                                "crawl_progress": "act",
                             }
                             job.stage = stage_map.get(event_type, job.stage)
                             self._append_progress(job, event_type, data)
+                            if event_type == "crawl_progress":
+                                result = job.result if isinstance(job.result, dict) else {}
+                                ss = result.get("supervisor_state")
+                                if not isinstance(ss, dict):
+                                    ss = {}
+                                live: dict[str, Any] = {}
+                                for key in (
+                                    "videos_processed",
+                                    "leads_qualified",
+                                    "comments_scanned",
+                                    "target_leads",
+                                    "start_video_index",
+                                    "video_index",
+                                ):
+                                    if key in data:
+                                        live[key] = data[key]
+                                if live:
+                                    ss["crawl_live"] = {
+                                        **(ss.get("crawl_live") if isinstance(ss.get("crawl_live"), dict) else {}),
+                                        **live,
+                                        "phase": data.get("phase") or "",
+                                        "sub": data.get("sub") or "",
+                                        "at": _utc_now().isoformat(),
+                                    }
+                                    if "leads_qualified" in data:
+                                        from app.services.task_round_service import (
+                                            historical_qualified_peak_from_progress,
+                                        )
+
+                                        session_q = int(data.get("leads_qualified") or 0)
+                                        if session_q > 0:
+                                            ss["leads_qualified"] = max(
+                                                int(ss.get("leads_qualified") or 0),
+                                                session_q,
+                                            )
+                                    result["supervisor_state"] = ss
+                                    job.result = result
                             self._apply_orchestration(job, settings)
                             self.save(job)
 

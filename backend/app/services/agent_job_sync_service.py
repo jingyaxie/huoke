@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.services.agent_async_job_service import AgentAsyncJob
-from app.services.lead_evaluation_service import accept_evaluation_result
+from app.services.lead_evaluation_service import accept_evaluation_result, is_precise_lead
 from app.services.task_execution_plan import build_suspend_brief
+from app.services.task_round_service import effective_live_leads_qualified
 from app.services.task_sandbox_service import TaskSandboxService
 
 SYNC_SCHEMA_VERSION = "huoke.agent_job_sync.v1"
@@ -149,7 +150,7 @@ class AgentJobSyncService:
                 "total_leads_collected": int(supervisor_state.get("total_leads_collected") or progress.get("leads_collected") or 0),
                 "comments_captured": int(supervisor_state.get("comments_captured") or sandbox.get("summary", {}).get("crawl_comments_total") or 0),
                 "comments_evaluated": int(supervisor_state.get("comments_evaluated") or 0),
-                "leads_qualified": int(supervisor_state.get("leads_qualified") or 0),
+                "leads_qualified": effective_live_leads_qualified(supervisor_state, job_result=result),
                 "completion_outcome": result.get("completion_outcome") or supervisor_state.get("completion_outcome"),
                 "resume_at": supervisor_state.get("resume_at"),
                 "wake_reason": supervisor_state.get("wake_reason"),
@@ -234,6 +235,11 @@ class AgentJobSyncService:
             job_id=str(job.job_id or "").strip(),
             task_keyword=task_keyword,
         )
+        persisted_ids = {
+            str(x).strip()
+            for x in (supervisor_state.get("job_persisted_comment_ids") or [])
+            if str(x).strip()
+        }
         rows: list[dict[str, Any]] = []
         for comment_id in sorted(scoped_comment_ids):
             evaluation = evaluation_cache.get(comment_id)
@@ -247,6 +253,7 @@ class AgentJobSyncService:
                     snapshot=snapshot_map.get(str(comment_id)),
                     outreach=outreach_by_comment.get(str(comment_id), {}),
                     eval_spec=eval_spec,
+                    job_persisted=comment_id in persisted_ids,
                 )
             )
 
@@ -297,6 +304,7 @@ class AgentJobSyncService:
         snapshot: dict[str, Any] | None = None,
         outreach: dict[str, Any],
         eval_spec: dict[str, Any],
+        job_persisted: bool = False,
     ) -> dict[str, Any]:
         nickname = str(record.nickname or "").strip() if record is not None else ""
         comment_text = str(record.comment_text or "").strip() if record is not None else ""
@@ -328,6 +336,21 @@ class AgentJobSyncService:
             comment_at = record.last_seen_at.isoformat()
 
         avatar_url = AgentJobSyncService._comment_avatar_url(record, snapshot)
+        precise_from_ctx = False
+        if isinstance(snapshot, dict):
+            ctx = snapshot.get("keyword_context")
+            if isinstance(ctx, dict) and str(ctx.get("status") or "").strip().lower() == "precise":
+                precise_from_ctx = True
+        if record is not None and isinstance(record.raw_data, dict):
+            ctx = record.raw_data.get("keyword_context")
+            if isinstance(ctx, dict) and str(ctx.get("status") or "").strip().lower() == "precise":
+                precise_from_ctx = True
+        if eval_spec:
+            is_precise = is_precise_lead(evaluation, eval_spec) or precise_from_ctx or job_persisted
+        elif evaluation:
+            is_precise = bool(evaluation.get("worth_outreach")) or precise_from_ctx or job_persisted
+        else:
+            is_precise = precise_from_ctx or job_persisted
         return {
             "id": str(comment_id),
             "comment_id": str(comment_id),
@@ -339,9 +362,7 @@ class AgentJobSyncService:
             "video_title": video_title,
             "video_url": content_url,
             "content_id": content_id,
-            "is_precise": accept_evaluation_result(evaluation, eval_spec) if eval_spec else bool(
-                evaluation.get("worth_outreach")
-            ),
+            "is_precise": is_precise,
             "evaluation_score": float(evaluation.get("score") or 0),
             "evaluation_reason": str(evaluation.get("reason") or ""),
             "reply_content": outreach.get("reply_content") or "",
@@ -470,6 +491,15 @@ class AgentJobSyncService:
         return ""
 
     @staticmethod
+    def _content_comment_belongs_to_job(record: Any, job_id: str) -> bool:
+        if not job_id:
+            return True
+        raw = record.raw_data if isinstance(getattr(record, "raw_data", None), dict) else {}
+        meta = raw.get("_agent_meta") if isinstance(raw.get("_agent_meta"), dict) else {}
+        stored = str(meta.get("source_job_id") or "").strip()
+        return stored == job_id
+
+    @staticmethod
     def _comment_row_belongs_to_job(row: dict[str, Any], *, job_id: str, file_belongs: bool) -> bool:
         if not file_belongs:
             return False
@@ -479,7 +509,7 @@ class AgentJobSyncService:
         stored_job_id = str(meta.get("source_job_id") or "").strip()
         if stored_job_id:
             return stored_job_id == job_id
-        return True
+        return file_belongs
 
     @staticmethod
     def _report_payload_belongs_to_job(
@@ -579,16 +609,17 @@ class AgentJobSyncService:
         *,
         db_session: Session,
     ) -> set[str] | None:
-        explicit = supervisor_state.get("job_evaluation_comment_ids")
-        if isinstance(explicit, list) and explicit:
-            return {str(x).strip() for x in explicit if str(x).strip()}
-
+        job_id = str(job.job_id or "").strip()
         platform = str(job.platform or "douyin")
         content_ids = self._job_content_ids(job, supervisor_state)
         task_keyword = self._task_keyword(job)
-        job_id = str(job.job_id or "").strip()
 
         scoped: set[str] = set()
+        for key in ("job_persisted_comment_ids", "job_evaluation_comment_ids"):
+            raw = supervisor_state.get(key)
+            if isinstance(raw, list):
+                scoped.update(str(x).strip() for x in raw if str(x).strip())
+
         for event in outreach_events:
             if not isinstance(event, dict):
                 continue
@@ -604,7 +635,40 @@ class AgentJobSyncService:
             task_keyword=task_keyword,
         )
 
-        if content_ids:
+        evaluation_cache = supervisor_state.get("evaluation_cache")
+        explicit_eval = supervisor_state.get("job_evaluation_comment_ids")
+        has_explicit_eval = isinstance(explicit_eval, list) and bool(explicit_eval)
+        if isinstance(evaluation_cache, dict) and evaluation_cache and not has_explicit_eval:
+            eval_ids = {str(k).strip() for k in evaluation_cache if str(k).strip()}
+            if eval_ids:
+                from app.repositories.content_comment_repository import ContentCommentRepository
+
+                repo = ContentCommentRepository(db_session, job.tenant_id)
+                for row in repo.list_by_comment_ids(
+                    platform=platform,
+                    comment_ids=sorted(eval_ids),
+                    limit=500,
+                ):
+                    row_content_id = str(row.content_id or "").strip()
+                    if content_ids and row_content_id and row_content_id not in content_ids:
+                        continue
+                    if job_id and not self._content_comment_belongs_to_job(row, job_id):
+                        raw = row.raw_data if isinstance(row.raw_data, dict) else {}
+                        meta = raw.get("_agent_meta") if isinstance(raw.get("_agent_meta"), dict) else {}
+                        if str(meta.get("source_job_id") or "").strip():
+                            continue
+                    scoped.add(str(row.comment_id))
+                if not content_ids:
+                    scoped |= self._comment_ids_from_reports_for_job(
+                        tenant_id=job.tenant_id,
+                        platform=platform,
+                        job_id=job_id,
+                        content_ids=content_ids,
+                        task_keyword=task_keyword,
+                        candidate_ids=eval_ids,
+                    )
+
+        if content_ids and job_id:
             from app.repositories.content_comment_repository import ContentCommentRepository
 
             repo = ContentCommentRepository(db_session, job.tenant_id)
@@ -612,12 +676,13 @@ class AgentJobSyncService:
                 platform=platform,
                 content_ids=sorted(content_ids),
             )
-            scoped |= {str(row.comment_id) for row in rows}
+            for row in rows:
+                if self._content_comment_belongs_to_job(row, job_id):
+                    scoped.add(str(row.comment_id))
 
         if scoped:
             return scoped
 
-        evaluation_cache = supervisor_state.get("evaluation_cache")
         if isinstance(evaluation_cache, dict) and evaluation_cache:
             evaluated_ids = {str(k).strip() for k in evaluation_cache if str(k).strip()}
             report_scoped = self._comment_ids_from_reports_for_job(
@@ -630,6 +695,8 @@ class AgentJobSyncService:
             )
             if report_scoped:
                 return report_scoped
+            if evaluated_ids and not content_ids:
+                return evaluated_ids
 
         if content_ids:
             return set()

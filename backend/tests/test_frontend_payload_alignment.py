@@ -114,6 +114,31 @@ def build_manual_task_payload_like_frontend():
     }
 
 
+STANDALONE_STRATEGY = "standalone-browse-douyin"
+
+
+def build_auto_task_payload_standalone_like_frontend():
+    payload = build_auto_task_payload_like_frontend()
+    payload["agent_strategy"] = STANDALONE_STRATEGY
+    payload["scope"]["target_count"] = 5
+    return payload
+
+
+def build_manual_task_payload_standalone_like_frontend():
+    payload = build_manual_task_payload_like_frontend()
+    payload["agent_strategy"] = STANDALONE_STRATEGY
+    payload["scope"]["target_count"] = 3
+    return payload
+
+
+def build_account_home_payload_standalone_like_frontend():
+    from tests.test_external_task_agent_e2e import build_account_home_payload_like_frontend
+
+    payload = build_account_home_payload_like_frontend()
+    payload["agent_strategy"] = STANDALONE_STRATEGY
+    return payload
+
+
 def test_frontend_auto_payload_validates_and_normalizes():
     raw = build_auto_task_payload_like_frontend()
     request = ExternalTaskCreateRequest.model_validate(raw)

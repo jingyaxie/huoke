@@ -145,6 +145,33 @@ function isMeaningfulOutreachRow(row) {
   return Boolean(row?.reply_content || row?.dm_content);
 }
 
+function getPersistedPreciseCount(job) {
+  const supervisor =
+    job?.result?.supervisor_state && typeof job.result.supervisor_state === "object"
+      ? job.result.supervisor_state
+      : {};
+  const ids = supervisor.job_persisted_comment_ids;
+  if (Array.isArray(ids) && ids.length) {
+    return ids.filter((x) => String(x || "").trim()).length;
+  }
+  return 0;
+}
+
+function getLiveLeadsQualified(job) {
+  const persisted = getPersistedPreciseCount(job);
+  if (persisted > 0) return persisted;
+  const progress = job?.sync?.progress && typeof job.sync.progress === "object" ? job.sync.progress : {};
+  const supervisor =
+    job?.result?.supervisor_state && typeof job.result.supervisor_state === "object"
+      ? job.result.supervisor_state
+      : {};
+  const crawlLive =
+    supervisor?.crawl_live && typeof supervisor.crawl_live === "object" ? supervisor.crawl_live : {};
+  const committed = Number(progress.leads_qualified || supervisor.leads_qualified || 0);
+  const sessionLive = Number(crawlLive.leads_qualified || 0);
+  return Math.max(committed, sessionLive);
+}
+
 export function getJobMetrics(job) {
   const config = getJobConfig(job);
   const sync = job?.sync && typeof job.sync === "object" ? job.sync : {};
@@ -201,14 +228,19 @@ export function getJobMetrics(job) {
       || (Array.isArray(sync.leads) ? sync.leads.length : 0)
       || 0,
     );
+  const liveQualified = getLiveLeadsQualified(job);
+  const persistedPrecise = getPersistedPreciseCount(job);
   const progressPrecise = hasRowData
-    ? viewCounts[OUTREACH_METRIC_VIEWS.PRECISE]
-    : Number(progress.leads_qualified || 0);
+    ? Math.max(viewCounts[OUTREACH_METRIC_VIEWS.PRECISE], persistedPrecise)
+    : Math.max(persistedPrecise, liveQualified);
+  const cappedPrecise = hasRowData
+    ? Math.min(progressPrecise, viewCounts[OUTREACH_METRIC_VIEWS.ALL] || progressPrecise)
+    : progressPrecise;
 
   return {
     requested_target: requestedTarget,
     produced_total: producedTotal,
-    progress_precise: progressPrecise,
+    progress_precise: cappedPrecise,
     comment_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.REPLY] : replyOk,
     dm_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.DM] : dmOk,
     follow_count: hasRowData ? viewCounts[OUTREACH_METRIC_VIEWS.FOLLOW] : followOk,
@@ -543,6 +575,8 @@ export function getOutreachRows(job) {
       video_title: row.video_title || "",
       comment_content: row.comment_content || row.source_comment || row.comment_text || "",
       is_precise: row.is_precise ?? row.precise ?? false,
+      evaluation_score: row.evaluation_score ?? null,
+      evaluation_reason: row.evaluation_reason || "",
       reply_content: row.reply_content || "",
       dm_content: row.dm_content || "",
       location_text: row.location_text || row.location || "",

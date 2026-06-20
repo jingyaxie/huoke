@@ -404,6 +404,66 @@ def test_captured_comments_exclude_other_task_keyword_reports(tmp_path, db_sessi
     assert {row["comment_id"] for row in payload["captured_comments"]} == {"cmt-ai"}
 
 
+def test_captured_comments_exclude_other_job_same_video(tmp_path, db_session):
+    from datetime import datetime, timezone
+
+    settings = _test_settings(tmp_path)
+    now = datetime.now(timezone.utc)
+    job_a = "job-alpha"
+    job_b = "job-beta"
+    for comment_id, job_id, text in (
+        ("cmt-a", job_a, "任务A评论"),
+        ("cmt-b", job_b, "任务B评论"),
+    ):
+        db_session.add(
+            ContentComment(
+                tenant_id="default",
+                platform="douyin",
+                content_id="vid-shared",
+                comment_id=comment_id,
+                nickname=f"用户-{comment_id}",
+                comment_text=text,
+                digg_count=0,
+                create_time=1_700_000_000,
+                content_url="https://example.test/video/shared",
+                raw_data={"_agent_meta": {"source_job_id": job_id}},
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+        )
+    db_session.commit()
+
+    spec = {
+        "schema": "huoke.lead_evaluation.v1",
+        "version": 1,
+        "thresholds": {"precise": 0.72, "outreach": 0.55},
+    }
+    job = AgentAsyncJob(
+        job_id=job_a,
+        tenant_id="default",
+        platform="douyin",
+        account_id="default",
+        message="共享视频任务A",
+        status="pending",
+        result={
+            "orchestration": {"task_brief": {"constraints": {"lead_evaluation": spec}}},
+            "supervisor_state": {
+                "job_content_ids": ["vid-shared"],
+                "job_persisted_comment_ids": ["cmt-a"],
+                "evaluation_cache": {
+                    "cmt-a": {"score": 0.8, "worth_outreach": True, "reason": "A有意向"},
+                    "cmt-b": {"score": 0.9, "worth_outreach": True, "reason": "B不应出现"},
+                },
+            },
+        },
+    )
+
+    payload = AgentJobSyncService(settings).build_payload(job, event="job.snapshot", db_session=db_session)
+
+    assert len(payload["captured_comments"]) == 1
+    assert payload["captured_comments"][0]["comment_id"] == "cmt-a"
+
+
 def test_sync_payload_includes_suspend_brief(tmp_path):
     settings = _test_settings(tmp_path)
     job = AgentAsyncJob(

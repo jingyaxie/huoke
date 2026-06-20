@@ -20,6 +20,7 @@ from app.platforms.douyin.js_constants import (
 from app.services.supervisor_outreach import persist_crawl_skill_result
 from app.services.ui_flow.platforms.douyin.feed_ui import (
     activate_comment_sidebar_on_page,
+    comment_list_end_marker_visible,
     scroll_comment_sidebar_on_page,
     select_latest_comment_sort_on_page,
 )
@@ -124,6 +125,31 @@ def _should_stop_for_time_window(
     return newest_in_last < cutoff_ts
 
 
+def comment_scroll_stop_reason(
+    *,
+    cutoff_ts: int | None,
+    round_idx: int,
+    last_page: dict[str, Any],
+    captured_pages: list[dict[str, Any]],
+    min_scroll_before_time_stop: int = 1,
+    comment_days: int | None = None,
+) -> str | None:
+    """评论翻页结束条件：DOM 无更多标记、超出有效时间窗、或接口无更多分页。"""
+    if _should_stop_for_time_window(
+        cutoff_ts=cutoff_ts,
+        round_idx=round_idx,
+        filtered_count=0,
+        last_page=last_page,
+        min_scroll_before_time_stop=min_scroll_before_time_stop,
+    ):
+        if comment_days is not None:
+            return f"评论已超过 {comment_days} 天有效窗口"
+        return "评论已超出有效时间窗口"
+    if captured_pages and round_idx > 0 and not int(last_page.get("has_more") or 0):
+        return "评论已全部加载（无更多分页）"
+    return None
+
+
 def _last_list_page(captured_pages: list[dict[str, Any]]) -> dict[str, Any]:
     for data in reversed(captured_pages):
         if isinstance(data, dict) and ("has_more" in data or isinstance(data.get("comments"), list)):
@@ -225,9 +251,6 @@ async def crawl_video_url_comments(
         await select_latest_comment_sort_on_page(page, settings, tenant_id=tenant_id)
         await asyncio.sleep(random.uniform(1.0, 2.0))
 
-        stale_scrolls = 0
-        prev_count = 0
-
         for round_idx in range(max_scroll_rounds + 1):
             comments_map, api_total = _merge_captured_pages(captured_pages)
             filtered = _filter_comments_by_days(
@@ -235,42 +258,26 @@ async def crawl_video_url_comments(
                 cutoff_ts=cutoff_ts,
                 max_comments=max_comments,
             )
-            current_count = len(filtered)
             last_page = _last_list_page(captured_pages)
-            has_more = int(last_page.get("has_more") or 0)
 
-            if _should_stop_for_time_window(
+            if await comment_list_end_marker_visible(page):
+                stop_reason = "评论已全部加载（暂时没有更多评论）"
+                break
+
+            scroll_stop = comment_scroll_stop_reason(
                 cutoff_ts=cutoff_ts,
                 round_idx=round_idx,
-                filtered_count=current_count,
                 last_page=last_page,
-            ):
-                stop_reason = f"已翻到 {days} 天前的评论，停止滚动"
-                break
-
-            if current_count >= max_comments:
-                stop_reason = f"已采集 {current_count} 条符合时间要求的评论"
-                break
-
-            if not has_more and round_idx > 0:
-                stop_reason = "评论接口已无更多分页"
+                captured_pages=captured_pages,
+                min_scroll_before_time_stop=1,
+                comment_days=days,
+            )
+            if scroll_stop:
+                stop_reason = scroll_stop
                 break
 
             if round_idx >= max_scroll_rounds:
-                stop_reason = f"已达最大滚动轮次 {max_scroll_rounds}"
-                break
-
-            if current_count == prev_count:
-                stale_scrolls += 1
-            else:
-                stale_scrolls = 0
-            prev_count = current_count
-
-            if stale_scrolls >= 3:
-                stop_reason = "连续滚动未加载新评论"
-                break
-
-            if round_idx == max_scroll_rounds:
+                stop_reason = f"已达安全滚动上限 {max_scroll_rounds} 轮"
                 break
 
             await scroll_comment_sidebar_on_page(

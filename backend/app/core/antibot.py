@@ -754,6 +754,10 @@ async def ensure_platform_login_state(
     if context.pages and context.pages[0] is not page and not page.is_closed():
         page = context.pages[0]
 
+    if await _context_has_login_markers(context, platform=platform):
+        if not await _detect_login_wall(page):
+            return page
+
     if not await _context_has_login_markers(context, platform=platform):
         await _seed_storage_from_state(context, state, replace=True)
         with contextlib.suppress(Exception):

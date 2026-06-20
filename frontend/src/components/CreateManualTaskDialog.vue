@@ -34,12 +34,23 @@
           <p v-if="selectedMode?.description" class="field-hint">{{ selectedMode.description }}</p>
         </el-form-item>
 
+        <TaskAcquisitionStrategyField
+          v-if="form.platform === 'douyin'"
+          v-model="form.agentStrategy"
+          :platform="form.platform"
+        />
+
         <BrowserModeField v-model="form.browserMode" />
 
         <el-form-item :label="urlLabel" required>
           <el-input v-model="form.inputUrl" :placeholder="urlPlaceholder" />
           <p v-if="urlHint" class="field-hint">{{ urlHint }}</p>
           <p v-if="urlError" class="field-hint error">{{ urlError }}</p>
+        </el-form-item>
+
+        <el-form-item v-if="showManualTargetCount" label="目标精准线索">
+          <el-input-number v-model="form.targetCount" :min="1" :max="100" />
+          <p class="field-hint">一体化浏览模式下，从当前链接采集并触达的目标线索条数。</p>
         </el-form-item>
 
         <el-form-item v-if="effectiveIntent === 'account_home'" label="扫描视频数">
@@ -122,6 +133,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import BrowserModeField from "./BrowserModeField.vue";
+import TaskAcquisitionStrategyField from "./TaskAcquisitionStrategyField.vue";
 import TaskEvaluationSection from "./TaskEvaluationSection.vue";
 import TaskInteractionFields from "./TaskInteractionFields.vue";
 import TaskPresetSelect from "./TaskPresetSelect.vue";
@@ -153,6 +165,7 @@ import {
   validateRequiredScopeFields,
 } from "../utils/huokeTaskForm";
 import { buildManualPreflightPayload } from "../utils/huokeTaskPreflight";
+import { isStandaloneDouyinStrategy } from "../utils/acquisitionStrategy";
 import { deriveManualTaskName, detectManualUrlIntent, manualUrlIntentHint, validateManualTaskUrl } from "../utils/manualTaskForm";
 import { validateTaskPresetSelection } from "../utils/presetSelection";
 
@@ -178,9 +191,11 @@ const settings = ref({ ...DEFAULT_INTERACTION_SETTINGS });
 const form = reactive({
   intent: "account_home",
   platform: "douyin",
+  agentStrategy: "",
   browserMode: "headed",
   inputUrl: "",
   crawlVideoLimit: 10,
+  targetCount: 5,
   publishTimeRange: "unlimited",
   commentDays: 3,
   evalExpanded: false,
@@ -225,6 +240,8 @@ const urlPlaceholder = computed(() =>
     ? "粘贴博主账号主页链接，系统将从主页获取视频列表并抓取评论"
     : "粘贴单条视频详情页链接",
 );
+const isStandalone = computed(() => isStandaloneDouyinStrategy(form.agentStrategy));
+const showManualTargetCount = computed(() => isStandalone.value && effectiveIntent.value === "single_video");
 
 const canSubmit = computed(() => {
   if (submitting.value || preflightLoading.value) return false;
@@ -321,6 +338,8 @@ watch(
     form.commentDays,
     form.publishTimeRange,
     form.browserMode,
+    form.agentStrategy,
+    form.targetCount,
     form.evalTemplateId,
     form.targetCustomer,
     form.acceptDescription,
@@ -356,6 +375,8 @@ watch(
           commentPresetIds: selectedCommentPresetIds.value,
           dmPresetIds: selectedDmPresetIds.value,
           evaluation: evaluationPayload(),
+          agentStrategy: form.agentStrategy,
+          targetCount: form.targetCount,
         });
         preflight.value = await preflightExternalTask(payload);
       } catch (err) {
@@ -373,9 +394,11 @@ watch(
 function resetForm() {
   form.intent = "account_home";
   form.platform = "douyin";
+  form.agentStrategy = "";
   form.browserMode = "headed";
   form.inputUrl = "";
   form.crawlVideoLimit = 10;
+  form.targetCount = 5;
   form.publishTimeRange = "unlimited";
   form.commentDays = 3;
   form.evalExpanded = false;
@@ -444,6 +467,8 @@ async function submit() {
       commentPresets: commentPresets.value,
       dmPresets: dmPresets.value,
       evaluation: evaluationPayload(),
+      agentStrategy: form.agentStrategy,
+      targetCount: form.targetCount,
     });
     const job = await createExternalTask(payload);
     ElMessage.success("任务已创建");

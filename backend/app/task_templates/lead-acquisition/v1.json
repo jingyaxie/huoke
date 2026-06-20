@@ -27,7 +27,7 @@
       "force_refresh": false
     },
     "evaluation": {
-      "precise_threshold": 0.72,
+      "precise_threshold": 0.60,
       "outreach_threshold": 0.55
     },
     "action_policy": {

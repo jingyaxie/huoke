@@ -13,3 +13,4 @@ def test_overlay_constants():
     assert OVERLAY_ELEMENT_ID in _SET_STEP_OVERLAY_JS
     assert "pointerEvents" in _SET_STEP_OVERLAY_JS
     assert "2147483646" in _SET_STEP_OVERLAY_JS
+    assert "__detail" in _SET_STEP_OVERLAY_JS

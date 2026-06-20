@@ -90,10 +90,41 @@ class DouyinDmTool:
         result["output_file"] = str(output)
         return result
 
-    async def send_message_on_page(self, page, *, sec_uid: str, message: str, username: str = "") -> dict:
+    async def send_message_on_page(
+        self,
+        page,
+        *,
+        sec_uid: str,
+        message: str,
+        username: str = "",
+        require_on_profile: bool = False,
+    ) -> dict:
         """在已打开的用户主页 page 上发送私信（不重复 goto）。"""
         on_profile = sec_uid and sec_uid in (page.url or "")
-        profile_url = page.url if on_profile else await self._profile.open_profile(page, sec_uid)
+        if not on_profile:
+            with contextlib.suppress(Exception):
+                on_profile = await page.locator(
+                    '[data-e2e="user-detail"], [data-e2e="user-info-follow-btn"]'
+                ).count() > 0
+        if not on_profile:
+            if require_on_profile:
+                return {
+                    "platform": PLATFORM,
+                    "tenant_id": self.tenant_id,
+                    "username": username,
+                    "user_id": "",
+                    "sec_uid": sec_uid,
+                    "profile_url": page.url,
+                    "page_url": page.url,
+                    "capture_method": "profile_dm_ui",
+                    "message": {
+                        "ok": False,
+                        "error": "须先点击评论头像进入用户主页后再私信",
+                    },
+                }
+            profile_url = await self._profile.open_profile(page, sec_uid)
+        else:
+            profile_url = page.url
         resolved_username = username
         if not resolved_username:
             with contextlib.suppress(Exception):

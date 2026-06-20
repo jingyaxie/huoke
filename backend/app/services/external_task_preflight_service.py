@@ -26,6 +26,8 @@ from app.services.skill_store import SkillStore, resolve_skill_id
 from app.services.task_brief_service import TaskBrief
 from app.services.task_config_update_service import update_task_config
 from app.services.task_execution_plan import build_supervisor_execution_plan
+from app.services.standalone_browse_adapter import STANDALONE_PIPELINE, is_standalone_browse_brief
+from app.services.supervisor_crawl_helpers import CRAWL_SUPERVISOR_ACTIONS
 from app.services.task_skill_playbook import skill_id_for_supervisor_action
 
 INTERNAL_SUPERVISOR_ACTIONS = frozenset(
@@ -135,8 +137,11 @@ def _collect_missing_skills(
     store._ensure_global_defaults()
     enabled_ids = {s.id for s in store.list_enabled(tenant_id)}
     missing: list[str] = []
+    standalone = strategy_id == "standalone-browse-douyin"
     for action in step_actions:
         if action in INTERNAL_SUPERVISOR_ACTIONS:
+            continue
+        if standalone and action in CRAWL_SUPERVISOR_ACTIONS:
             continue
         skill_id = skill_id_for_supervisor_action(action, platform, strategy_id=strategy_id)
         if not skill_id:
@@ -197,11 +202,12 @@ def _orchestration_check(
 
     wants_evaluation = bool(config.get("evaluation"))
     has_evaluate_step = "evaluate_leads" in actions
+    standalone_flow = is_standalone_browse_brief(brief) or plan.get("pipeline") == STANDALONE_PIPELINE
     keyword_flow = intent == "keyword_auto" and "crawl_keyword" in actions
     manual_flow = intent in {"single_video", "account_home"} and any(
         action in actions for action in ("crawl_content_url", "crawl_profile")
     )
-    if (keyword_flow or manual_flow) and not has_evaluate_step:
+    if not standalone_flow and (keyword_flow or manual_flow) and not has_evaluate_step:
         return (
             _check(
                 check_id="orchestration",
@@ -212,7 +218,7 @@ def _orchestration_check(
             ),
             preview,
         )
-    if wants_evaluation and not has_evaluate_step:
+    if wants_evaluation and not has_evaluate_step and not standalone_flow:
         return (
             _check(
                 check_id="orchestration",

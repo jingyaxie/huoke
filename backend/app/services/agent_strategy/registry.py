@@ -69,6 +69,35 @@ SKILL_FLOW_DOUYIN = _register(
     )
 )
 
+STANDALONE_BROWSE_DOUYIN = _register(
+    AgentStrategy(
+        id="standalone-browse-douyin",
+        platform="douyin",
+        label="一体化浏览（Standalone）",
+        description="固定 UI 流程：搜索/主页/单视频 → 点进详情 → 侧栏规则评估 → 同页触达（与 Skill 分步链路并行，可切换）",
+        profile_id="task-douyin-standalone-browse",
+        execution_mode="skill_flow",
+        crawl_skill_id="standalone-keyword-browse",
+        inherit_base_prompt=True,
+        inherit_workflow_prompt=False,
+        inherit_experience_prompt=False,
+        exclude_rule_ids=[],
+        system_prompt=(
+            "你是抖音获客 **任务专用** 智能体（Standalone 一体化浏览策略）。\n"
+            "纪律：\n"
+            "1. 抓取由 Supervisor 调用 standalone 浏览模块（非 douyin-keyword-comments）\n"
+            "2. 在同页 Feed 侧栏完成规则评估与 reply/dm/follow 触达\n"
+            "3. 禁止回退到「先入库再查库再重开页触达」的旧分步 Skill 链路"
+        ),
+        ui_flow_runtime=False,
+        bootstrap_crawl=False,
+        inline_ui_outreach=True,
+        ui_first=True,
+        supervisor_plan_only=True,
+        crawl_purpose="一体化 UI：搜索/主页点击视频 → 侧栏评估 → 同页触达",
+    )
+)
+
 SKILL_FLOW_XHS = _register(
     AgentStrategy(
         id="skill-flow-xiaohongshu",

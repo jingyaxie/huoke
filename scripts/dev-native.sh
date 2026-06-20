@@ -5,7 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND_DIR="$ROOT/backend"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
-STORAGE_DIR="${STORAGE_DIR:-$ROOT/storage/dev}"
+# 若未显式传入 STORAGE_DIR，稍后在 source .env.local 后按 STORAGE_ROOT 解析
+STORAGE_DIR="${STORAGE_DIR:-}"
+STORAGE_DIR_EXPLICIT=false
+if [[ -n "$STORAGE_DIR" ]]; then
+  STORAGE_DIR_EXPLICIT=true
+fi
 
 if [[ ! -f "$ROOT/.env.local" ]]; then
   echo "请先复制配置: cp .env.local.example .env.local" >&2
@@ -85,17 +90,39 @@ if [[ "$need_recreate_venv" == true ]]; then
   pip install -r requirements.txt
 fi
 
-mkdir -p "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile"
-
 set -a
 # shellcheck disable=SC1091
 source "$ROOT/.env.local"
 set +a
 
-export DATABASE_URL="sqlite+pysqlite:///${STORAGE_DIR}/huoke.db"
+if [[ "$STORAGE_DIR_EXPLICIT" != true ]]; then
+  if [[ -n "${STORAGE_ROOT:-}" ]]; then
+    sr="${STORAGE_ROOT#./}"
+    STORAGE_DIR="$ROOT/$sr"
+  else
+    STORAGE_DIR="$ROOT/storage/dev"
+  fi
+elif [[ "$STORAGE_DIR" != /* ]]; then
+  STORAGE_DIR="$ROOT/$STORAGE_DIR"
+fi
+
+mkdir -p "$STORAGE_DIR" "$STORAGE_DIR/douyin/profile"
+
+# 尊重 .env.local 的 DATABASE_URL（与 STORAGE_ROOT 一致时）；否则按目录默认库名
+if [[ -n "${DATABASE_URL:-}" && "$DATABASE_URL" == sqlite* && "$DATABASE_URL" == *"${STORAGE_DIR#"$ROOT"/}"* ]]; then
+  :
+else
+  db_file="huoke.db"
+  if [[ -f "${STORAGE_DIR}/huoke_sidecar.db" ]]; then
+    db_file="huoke_sidecar.db"
+  fi
+  export DATABASE_URL="sqlite+pysqlite:///${STORAGE_DIR}/${db_file}"
+fi
 export STORAGE_ROOT="$STORAGE_DIR"
 export DOUYIN_PROFILE_DIR="${STORAGE_DIR}/douyin/profile"
 export PYTHONPATH="$BACKEND_DIR"
+
+echo "数据目录: ${STORAGE_DIR}"
 
 echo "等待数据库就绪..."
 "$VENV_PYTHON" - <<'PY'
@@ -110,4 +137,13 @@ echo "前端: http://localhost:${FRONTEND_PORT:-5173}  (另开终端: cd fronten
 echo "API:  http://localhost:${BACKEND_PORT}/docs"
 echo ""
 
-exec "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 127.0.0.1 --port "${BACKEND_PORT}"
+RELOAD_ARGS=()
+if [[ "${HUOKE_BACKEND_RELOAD:-0}" == "1" ]]; then
+  RELOAD_ARGS=(--reload)
+  echo "热重载: 已开启 (HUOKE_BACKEND_RELOAD=1；改代码会重启进程并打断浏览器任务)"
+else
+  echo "稳定模式: 无热重载 (长任务/浏览器会话推荐；需热重载请 HUOKE_BACKEND_RELOAD=1 或 dev.sh --reload)"
+fi
+echo ""
+
+exec "$VENV_PYTHON" -m uvicorn app.main:app "${RELOAD_ARGS[@]}" --host 127.0.0.1 --port "${BACKEND_PORT}"

@@ -1,6 +1,53 @@
 from __future__ import annotations
 
-from app.services.ui_flow.platforms.douyin.feed_ui import merge_comment_api_pages
+import pytest
+
+from app.services.ui_flow.platforms.douyin.feed_ui import (
+    comment_list_end_marker_visible,
+    merge_comment_api_pages,
+)
+
+
+class _FakeLocator:
+    def __init__(self, *, count: int, visible: bool) -> None:
+        self._count = count
+        self._visible = visible
+
+    @property
+    def first(self):
+        return self
+
+    async def count(self) -> int:
+        return self._count
+
+    async def is_visible(self) -> bool:
+        return self._visible
+
+
+class _FakePage:
+    def __init__(self, markers: list[tuple[int, bool]]) -> None:
+        self._markers = markers
+        self._idx = 0
+
+    def get_by_text(self, text: str, *, exact: bool = False):
+        idx = self._idx
+        self._idx += 1
+        if idx < len(self._markers):
+            count, visible = self._markers[idx]
+            return _FakeLocator(count=count, visible=visible)
+        return _FakeLocator(count=0, visible=False)
+
+
+@pytest.mark.asyncio
+async def test_comment_list_end_marker_visible_detects_footer():
+    page = _FakePage([(1, True), (0, False)])
+    assert await comment_list_end_marker_visible(page) is True
+
+
+@pytest.mark.asyncio
+async def test_comment_list_end_marker_visible_false_when_absent():
+    page = _FakePage([(0, False), (0, False)])
+    assert await comment_list_end_marker_visible(page) is False
 
 
 def _sample_page(cid: str, text: str, *, replies: list[dict] | None = None) -> dict:

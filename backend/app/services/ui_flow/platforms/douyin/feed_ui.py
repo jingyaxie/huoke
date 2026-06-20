@@ -28,13 +28,12 @@ _CLOSE_FEED_SELECTORS = (
     '[class*="close-btn"]',
 )
 _FEED_MODAL_COMMENT_ROOT = '[data-e2e="feed-active-video"]'
+# 仅精确评论入口，禁止宽泛 interaction/svg（易误点红心点赞）
 _COMMENT_ICON_SELECTORS = (
     '[data-e2e="feed-comment-icon"]',
     '[data-e2e="comment-icon"]',
     f'{_FEED_MODAL_COMMENT_ROOT} [data-e2e="feed-comment-icon"]',
     '[class*="comment"] [data-e2e="feed-comment-icon"]',
-    '[class*="Interaction"] [class*="comment"]',
-    '[class*="interaction"] svg',
 )
 
 _CLICK_COMMENT_ICON_JS = """
@@ -137,6 +136,17 @@ async def feed_overlay_visible(page) -> bool:
         if await _locator_visible(page, selector):
             return True
     return False
+
+
+async def is_search_feed_overlay(page) -> bool:
+    """搜索页 Feed 浮层：左视频 + 右评论侧栏（modal_id），非 /video/ 独立详情页。"""
+    url = (page.url or "").lower()
+    if re.search(r"/video/\d+", url):
+        return False
+    on_search = "/search/" in url or "/jingxuan/search/" in url
+    if not on_search and "modal_id=" not in url:
+        return False
+    return await feed_overlay_visible(page)
 
 
 async def search_list_visible(page) -> bool:
@@ -249,6 +259,26 @@ async def _comment_sidebar_active(page) -> bool:
         return False
 
 
+_COMMENT_LIST_END_TEXTS = (
+    "暂时没有更多评论",
+    "没有更多评论",
+)
+
+
+async def comment_list_end_marker_visible(page) -> bool:
+    """Comment sidebar footer shown when Douyin has no further pages to load."""
+    for text in _COMMENT_LIST_END_TEXTS:
+        try:
+            loc = page.get_by_text(text, exact=False).first
+            if not await loc.count():
+                continue
+            if await loc.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _pause_feed_via_space(page) -> None:
     with contextlib.suppress(Exception):
         await page.keyboard.press("Space")
@@ -344,8 +374,14 @@ async def activate_comment_sidebar_on_page(
     if await _comment_sidebar_active(page):
         return True
 
-    await pause_feed_video_on_page(page, settings, tenant_id=tenant_id)
-    await _pause_feed_via_space(page)
+    # 搜索 Feed 浮层：右侧评论栏常已展开，勿点视频区域（易误触红心/暂停）
+    search_feed = await is_search_feed_overlay(page)
+    if search_feed and await _has_visible_comment_items(page):
+        return True
+
+    if not search_feed:
+        await pause_feed_video_on_page(page, settings, tenant_id=tenant_id)
+        await _pause_feed_via_space(page)
 
     for attempt in range(5):
         if await _comment_sidebar_active(page):
@@ -391,7 +427,8 @@ async def activate_comment_sidebar_on_page(
                 except Exception:
                     continue
 
-        await _pause_feed_via_space(page)
+        if not search_feed:
+            await _pause_feed_via_space(page)
         await asyncio.sleep(0.35)
 
     return await _comment_sidebar_active(page) or await _has_visible_comment_items(page)
@@ -482,15 +519,59 @@ def merge_comment_api_pages(
     return comments_map, api_total, top_rows
 
 
+_REPLY_EXPAND_SELECTORS = (
+    'span:has-text("条回复")',
+    'div:has-text("条回复")',
+    'button:has-text("条回复")',
+    'span:has-text("展开")',
+    'text=/展开\\d*条回复/',
+    'text=/\\d+\\s*条回复/',
+    'text=/查看更多回复/',
+)
+
+
 async def find_comment_item_locator(
     page,
     *,
     comment_id: str = "",
     comment_text: str = "",
 ):
+    """定位评论 DOM：优先 comment_id / #comment-{id}，其次文本匹配。"""
     needle = (comment_text or "").strip()[:40]
     cid = (comment_id or "").strip()
-    selectors = ('[data-e2e="comment-item"]', '[class*="CommentItem"]')
+
+    if cid:
+        id_selectors = (
+            f'[data-e2e="comment-item"][data-cid="{cid}"]',
+            f'[data-e2e="comment-item"]:has(#comment-{cid})',
+            f'[class*="CommentItem"][data-cid="{cid}"]',
+            f"#comment-{cid}",
+        )
+        for selector in id_selectors:
+            loc = page.locator(selector).first
+            try:
+                if not await loc.count():
+                    continue
+                if selector.startswith("#comment-"):
+                    wrapped = page.locator(f'[data-e2e="comment-item"]:has(#comment-{cid})').first
+                    if await wrapped.count():
+                        return wrapped
+                    reply_wrap = page.locator(f'[class*="reply"]:has(#comment-{cid})').first
+                    if await reply_wrap.count():
+                        return reply_wrap
+                with contextlib.suppress(Exception):
+                    await loc.scroll_into_view_if_needed(timeout=5000)
+                if await loc.is_visible():
+                    return loc
+            except Exception:
+                continue
+
+    selectors = (
+        '[data-e2e="comment-item"]',
+        '[class*="CommentItem"]',
+        '[class*="reply-comment"]',
+        '[class*="ReplyComment"]',
+    )
     for selector in selectors:
         loc = page.locator(selector)
         count = await loc.count()
@@ -513,6 +594,63 @@ async def find_comment_item_locator(
     return None
 
 
+async def expand_replies_for_parent_comment(
+    page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    parent_comment_id: str = "",
+    parent_item=None,
+    max_clicks: int = 3,
+) -> bool:
+    """滚到父评论并点击「展开 N 条回复」，以便定位楼中楼目标评论。"""
+    parent_id = str(parent_comment_id or "").strip()
+    item = parent_item
+    if item is None and parent_id:
+        item = await find_comment_item_locator(page, comment_id=parent_id)
+    if item is None:
+        return False
+
+    with contextlib.suppress(Exception):
+        await item.scroll_into_view_if_needed(timeout=5000)
+    await human_delay(page, settings, tenant_id=tenant_id, profile="action")
+
+    expanded = False
+    for _ in range(max(1, max_clicks)):
+        clicked = False
+        for selector in _REPLY_EXPAND_SELECTORS:
+            loc = item.locator(selector).first
+            try:
+                if await loc.count() and await loc.is_visible():
+                    await human_click(page, loc, settings, tenant_id=tenant_id)
+                    clicked = True
+                    expanded = True
+                    await human_delay(page, settings, tenant_id=tenant_id, profile="action")
+                    break
+            except Exception:
+                continue
+        if clicked:
+            continue
+        with contextlib.suppress(Exception):
+            if await item.evaluate(
+                """(el) => {
+                  for (const node of el.querySelectorAll('span, div, button, a')) {
+                    const text = (node.textContent || '').trim();
+                    if (/展开\\d*条回复|\\d+\\s*条回复|查看更多回复/.test(text)) {
+                      node.click();
+                      return true;
+                    }
+                  }
+                  return false;
+                }"""
+            ):
+                expanded = True
+                await human_delay(page, settings, tenant_id=tenant_id, profile="action")
+                continue
+        break
+    return expanded
+
+
 async def scroll_comment_sidebar_until(
     page,
     settings: Settings,
@@ -520,24 +658,36 @@ async def scroll_comment_sidebar_until(
     tenant_id: str,
     comment_id: str = "",
     comment_text: str = "",
+    parent_comment_id: str = "",
     max_rounds: int = 8,
 ):
+    """分页滚动侧栏直到目标评论可见；楼中楼会先展开父评论回复区。"""
+    parent_id = str(parent_comment_id or "").strip()
+
+    async def _locate_target():
+        if parent_id:
+            parent = await find_comment_item_locator(page, comment_id=parent_id)
+            if parent is not None:
+                await expand_replies_for_parent_comment(
+                    page,
+                    settings,
+                    tenant_id=tenant_id,
+                    parent_item=parent,
+                )
+        return await find_comment_item_locator(
+            page,
+            comment_id=comment_id,
+            comment_text=comment_text,
+        )
+
     await activate_comment_sidebar_on_page(page, settings, tenant_id=tenant_id)
-    target = await find_comment_item_locator(
-        page,
-        comment_id=comment_id,
-        comment_text=comment_text,
-    )
+    target = await _locate_target()
     if target is not None:
         return target
 
     for _ in range(max(1, max_rounds)):
         await scroll_comment_sidebar_on_page(page, settings, tenant_id=tenant_id, rounds=1)
-        target = await find_comment_item_locator(
-            page,
-            comment_id=comment_id,
-            comment_text=comment_text,
-        )
+        target = await _locate_target()
         if target is not None:
             return target
     return None

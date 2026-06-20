@@ -51,6 +51,21 @@ async def run_prepare(ctx: DouyinUiSession) -> UiStepResult:
         entry_url = resolve_entry_url(ctx.settings, ctx.params.entry)
     try:
         if ctx.params.ui_search_only and "/search/" in (ctx.page.url or ""):
+            if ctx.state.get("reuse_search_session"):
+                from app.services.ui_flow.platforms.douyin.search_ui import page_ready_for_search_reuse
+
+                if await page_ready_for_search_reuse(ctx):
+                    ctx.state["prepare_done"] = True
+                    with contextlib.suppress(Exception):
+                        await ctx.page.bring_to_front()
+                    return UiStepResult(
+                        ok=True,
+                        data={
+                            "entry_url": ctx.page.url,
+                            "page_url": ctx.page.url,
+                            "reused_search": True,
+                        },
+                    )
             await ctx.page.goto(entry_url, wait_until="domcontentloaded", timeout=45000)
         elif not await _searchbar_visible(ctx.page, ctx.settings, tenant_id=ctx.tenant_id):
             if _on_douyin_site(ctx.page.url):

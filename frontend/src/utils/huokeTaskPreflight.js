@@ -1,8 +1,8 @@
 import { defaultEvaluation } from "./huokeTaskForm";
+import { resolveAgentStrategy } from "./acquisitionStrategy";
 
-function agentStrategyForPlatform(platform) {
-  if (platform === "xiaohongshu") return "skill-flow-xiaohongshu";
-  return "skill-flow-douyin";
+function agentStrategyForPlatform(platform, strategyId) {
+  return resolveAgentStrategy(platform, strategyId);
 }
 
 export function buildConstraintsFromSettings({ settings, commentPresetIds, dmPresetIds }) {
@@ -47,7 +47,7 @@ export function buildAutoPreflightPayload(input) {
       external_task_id: `preflight-auto-${Date.now()}`,
     },
     auto_execute: false,
-    agent_strategy: agentStrategyForPlatform(input.platform),
+    agent_strategy: agentStrategyForPlatform(input.platform, input.agentStrategy),
   };
 }
 
@@ -62,6 +62,14 @@ export function buildManualPreflightPayload(input) {
   };
   if (intent === "account_home" && input.crawlVideoLimit) {
     scope.crawl_video_limit = Number(input.crawlVideoLimit);
+  }
+  const resolvedStrategy = agentStrategyForPlatform(input.platform, input.agentStrategy);
+  if (resolvedStrategy === "standalone-browse-douyin") {
+    if (intent === "account_home" && input.crawlVideoLimit) {
+      scope.target_count = Math.max(1, Number(input.crawlVideoLimit) || 1);
+    } else if (intent === "single_video") {
+      scope.target_count = Math.max(1, Number(input.targetCount) || 5);
+    }
   }
   return {
     intent,
@@ -78,7 +86,7 @@ export function buildManualPreflightPayload(input) {
       external_task_id: `preflight-manual-${Date.now()}`,
     },
     auto_execute: false,
-    agent_strategy: agentStrategyForPlatform(input.platform),
+    agent_strategy: resolvedStrategy,
   };
 }
 

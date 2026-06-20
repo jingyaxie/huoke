@@ -6,6 +6,7 @@ from app.platforms.douyin.video_comments_passive import (
     _days_cutoff_ts,
     _filter_comments_by_days,
     _should_stop_for_time_window,
+    comment_scroll_stop_reason,
 )
 
 
@@ -60,6 +61,28 @@ def test_should_not_stop_before_min_scroll_rounds():
         last_page=last_page,
         min_scroll_before_time_stop=2,
     )
+
+
+def test_comment_scroll_stop_only_on_time_window_or_no_more_pages():
+    cutoff = _cutoff(7)
+    recent = int(datetime.now(timezone.utc).timestamp())
+    pages = [{"comments": [{"create_time": recent}], "has_more": 1}]
+    assert comment_scroll_stop_reason(
+        cutoff_ts=cutoff,
+        round_idx=1,
+        last_page=pages[-1],
+        captured_pages=pages,
+        comment_days=7,
+    ) is None
+
+    pages_end = [{"comments": [{"create_time": recent}], "has_more": 0}]
+    assert comment_scroll_stop_reason(
+        cutoff_ts=cutoff,
+        round_idx=2,
+        last_page=pages_end[-1],
+        captured_pages=pages_end,
+        comment_days=7,
+    ) == "评论已全部加载（无更多分页）"
 
 
 def test_filter_keeps_recent_comments_only():

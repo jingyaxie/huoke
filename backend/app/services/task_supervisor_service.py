@@ -20,16 +20,21 @@ from app.services.skill_store import SkillStore, resolve_skill_id
 from app.services.skill_runner_service import SkillRunnerService
 from app.services.outreach_policy import random_interval_sec
 from app.services.task_brief_service import TaskBrief, is_skill_flow_brief
+from app.services.standalone_browse_adapter import is_standalone_browse_brief
 from app.services.task_context_service import build_data_snapshot
 from app.services.task_round_service import (
     complete_current_round,
     effective_leads_collected,
+    effective_leads_qualified,
+    effective_supervisor_goal_count,
     effective_target_leads,
     ensure_round_state,
     goal_reached_for_current_round,
     max_rounds_from_brief,
     round_loop_enabled,
     start_next_round,
+    standalone_outreach_incomplete,
+    uses_qualified_leads_goal,
 )
 from app.services.task_job_ledger_service import append_memory_ledger_action, build_task_ledger
 from app.services.task_sandbox_runtime import TaskSandboxRuntime
@@ -43,6 +48,7 @@ from app.services.supervisor_outreach import (
     outreach_interval_from_brief,
     outreach_quotas_exhausted,
     outreach_stats_ready,
+    merge_job_persisted_comment_ids,
     persist_crawl_skill_result,
     resolve_outreach_action_with_policy_async,
     run_evaluate_leads_phase,
@@ -80,6 +86,8 @@ from app.services.task_execution_plan import (
     ensure_supervisor_execution_plan,
     guard_supervisor_complete_decision,
     plan_driven_supervisor_decision,
+    prepare_standalone_auto_continue,
+    standalone_can_auto_continue,
     sync_supervisor_plan_from_state,
 )
 
@@ -430,6 +438,20 @@ class TaskSupervisorService:
                             resume_at = _default_resume_at()
                             decision["resume_at"] = resume_at
                         wake_reason = reasoning or "未达成目标，挂起等待继续执行"
+                        if await self._try_standalone_auto_continue(
+                            brief=brief,
+                            state=state,
+                            reasoning=wake_reason,
+                            on_progress=on_progress,
+                        ):
+                            cycles.append(
+                                self._cycle_record(
+                                    cycle_idx + 1,
+                                    {**decision, "action": "auto_continue", "reasoning": wake_reason},
+                                    {"status": "auto_continue", "summary": wake_reason},
+                                )
+                            )
+                            continue
                         self._mark_suspended(
                             state,
                             brief,
@@ -460,6 +482,23 @@ class TaskSupervisorService:
                     completion = str(outcome) if isinstance(outcome, str) else None
                     if not completion and "配额" in wake_reason:
                         completion = "quota_exhausted"
+                    if (
+                        completion == "plan_incomplete"
+                        and await self._try_standalone_auto_continue(
+                            brief=brief,
+                            state=state,
+                            reasoning=wake_reason,
+                            on_progress=on_progress,
+                        )
+                    ):
+                        cycles.append(
+                            self._cycle_record(
+                                cycle_idx + 1,
+                                {**decision, "action": "auto_continue", "reasoning": wake_reason},
+                                {"status": "auto_continue", "summary": wake_reason},
+                            )
+                        )
+                        continue
                     self._mark_suspended(
                         state,
                         brief,
@@ -494,6 +533,7 @@ class TaskSupervisorService:
                     dry_run=dry_run,
                     state=state,
                     job_id=job_id,
+                    on_progress=on_progress,
                 )
                 cycles.append(self._cycle_record(cycle_idx + 1, decision, skill_result))
                 fp_before = _progress_fingerprint(state)
@@ -986,6 +1026,8 @@ class TaskSupervisorService:
         stats = snapshot.get("interaction_stats") if isinstance(snapshot.get("interaction_stats"), dict) else {}
         validate_only = bool(brief.goals.get("outreach_validate_only"))
         leads = int(progress.get("leads_collected") or state.get("leads_collected") or 0)
+        qualified = int(progress.get("leads_qualified") or state.get("leads_qualified") or 0)
+        goal_count = effective_supervisor_goal_count(brief, state)
         target = int(progress.get("target_leads") or brief.goals.get("target_leads") or 50)
 
         if validate_only and state.get("outreach_validated"):
@@ -996,24 +1038,28 @@ class TaskSupervisorService:
                     "action": "complete",
                     "reasoning": f"[validate] 已确认匹配目标可执行 {state.get('last_validate_action') or 'outreach'}",
                     "params": {},
-                    "goal_progress": {"leads_collected": leads, "target_leads": target},
+                    "goal_progress": {"leads_collected": leads, "leads_qualified": qualified, "target_leads": target},
                 },
             )
 
-        if not validate_only and leads >= target:
+        if not validate_only and goal_count >= target and not standalone_outreach_incomplete(brief, state):
+            goal_label = "精准线索" if uses_qualified_leads_goal(brief) else "线索"
             return guard_supervisor_complete_decision(
                 brief,
                 state,
                 {
                     "action": "complete",
-                    "reasoning": f"已收集 {leads} 条线索，达到目标 {target}",
+                    "reasoning": f"已收集 {goal_count} 条{goal_label}，达到目标 {target}",
                     "params": {},
-                    "goal_progress": {"leads_collected": leads, "target_leads": target},
+                    "goal_progress": {
+                        "leads_collected": leads,
+                        "leads_qualified": qualified,
+                        "target_leads": target,
+                    },
                 },
             )
 
         if not state.get("crawl_done"):
-            qualified = int(state.get("leads_qualified") or 0)
             if state.get("evaluation_done") and target > 0 and qualified >= target:
                 state["crawl_done"] = True
                 state["qualified_target_reached"] = True
@@ -1157,7 +1203,7 @@ class TaskSupervisorService:
                 stats,
             )
 
-        if leads < target:
+        if goal_count < target:
             return build_plan_incomplete_suspend_decision(brief, state)
 
         return guard_supervisor_complete_decision(
@@ -1165,9 +1211,16 @@ class TaskSupervisorService:
             state,
             {
                 "action": "complete",
-                "reasoning": f"已收集 {leads} 条线索，达到目标 {target}",
+                "reasoning": (
+                    f"已收集 {goal_count} 条"
+                    f"{'精准线索' if uses_qualified_leads_goal(brief) else '线索'}，达到目标 {target}"
+                ),
                 "params": {},
-                "goal_progress": {"leads_collected": leads, "target_leads": target},
+                "goal_progress": {
+                    "leads_collected": leads,
+                    "leads_qualified": effective_leads_qualified(state),
+                    "target_leads": target,
+                },
             },
         )
 
@@ -1181,6 +1234,7 @@ class TaskSupervisorService:
         dry_run: bool = False,
         state: dict[str, Any] | None = None,
         job_id: str = "",
+        on_progress: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
         if dry_run:
             return self._mock_action_result(action, params, brief, state or {})
@@ -1223,6 +1277,42 @@ class TaskSupervisorService:
                 return {"status": "completed", **result}
             except ValueError as exc:
                 return {"error": str(exc), "status": "failed"}
+
+        if (
+            action in CRAWL_SUPERVISOR_ACTIONS
+            and (brief.platform or self.platform) == "douyin"
+            and is_standalone_browse_brief(brief)
+        ):
+            from app.services.standalone_browse_adapter import run_standalone_browse_for_supervisor
+
+            try:
+                result = await asyncio.wait_for(
+                    run_standalone_browse_for_supervisor(
+                        self.settings,
+                        tenant_id=self.tenant_id,
+                        account_id=self.account_id,
+                        brief=brief,
+                        params=params,
+                        action=action,
+                        db_session=self.db_session,
+                        state=state,
+                        on_progress=on_progress,
+                    ),
+                    timeout=CRAWL_ACTION_TIMEOUT_SEC,
+                )
+                if result.get("error"):
+                    result.setdefault("status", "failed")
+                else:
+                    result.setdefault("status", "completed")
+                return result
+            except asyncio.TimeoutError:
+                return {
+                    "error": f"{action} standalone 浏览超时（>{CRAWL_ACTION_TIMEOUT_SEC}s）",
+                    "status": "failed",
+                    "action": action,
+                }
+            except Exception as exc:
+                return {"error": str(exc), "status": "failed", "action": action}
 
         skill_id = skill_id_from_brief(brief, action)
         if not skill_id:
@@ -1497,6 +1587,28 @@ class TaskSupervisorService:
             if summary and not str(state.get("wake_reason") or "").strip():
                 state["wake_reason"] = summary
 
+    async def _try_standalone_auto_continue(
+        self,
+        *,
+        brief: TaskBrief,
+        state: dict[str, Any],
+        reasoning: str,
+        on_progress: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None,
+    ) -> bool:
+        if not standalone_can_auto_continue(brief, state):
+            return False
+        prepare_standalone_auto_continue(state, brief)
+        await self._emit(
+            on_progress,
+            "status",
+            {
+                "message": f"Standalone 自动续扫（未达目标）：{reasoning[:96]}",
+                "auto_continue": True,
+            },
+        )
+        await asyncio.sleep(MIN_CYCLE_INTERVAL_SEC)
+        return True
+
     async def _maybe_run_page_diagnosis(
         self,
         *,
@@ -1665,6 +1777,7 @@ class TaskSupervisorService:
                         source_keyword=str(brief.keyword or skill_result.get("keyword") or "").strip() or None,
                     )
                     state["comments_persisted"] = int(state.get("comments_persisted") or 0) + persisted
+                    merge_job_persisted_comment_ids(state, skill_result)
                 except Exception:
                     pass
             execution_plan = state.get("execution_plan")
@@ -1678,7 +1791,32 @@ class TaskSupervisorService:
                 )
             return
 
-        if action == "crawl_keyword" and ok and not dry_run:
+        if action in CRAWL_SUPERVISOR_ACTIONS and skill_result.get("standalone_browse") and ok:
+            batch_precise = int(skill_result.get("precise_lead_count") or 0)
+            state["evaluation_done"] = True
+            from app.services.task_round_service import persisted_precise_comment_count
+
+            persisted = persisted_precise_comment_count(state)
+            if persisted > 0:
+                state["leads_qualified"] = persisted
+            else:
+                state["leads_qualified"] = max(int(state.get("leads_qualified") or 0), batch_precise)
+            state.pop("standalone_session_qualified_base", None)
+            outreach_leads = _extract_outreach_leads(skill_result)
+            executed = int(skill_result.get("outreach_executed_count") or 0)
+            if executed:
+                state["outreach_executed_count"] = max(
+                    int(state.get("outreach_executed_count") or 0),
+                    executed,
+                )
+            if outreach_leads:
+                _add_leads_to_state(brief, state, outreach_leads)
+            elif executed:
+                _add_leads_to_state(brief, state, executed)
+            elif batch_precise and bool(brief.goals.get("outreach_validate_only")):
+                _add_leads_to_state(brief, state, batch_precise)
+
+        if action == "crawl_keyword" and ok and not dry_run and not skill_result.get("standalone_browse"):
             valid, err_msg, comment_count = validate_crawl_skill_result(skill_result)
             if not valid:
                 ok = False
@@ -1711,6 +1849,9 @@ class TaskSupervisorService:
             )
 
         if action == "crawl_keyword" and ok:
+            saved_search = str(skill_result.get("search_url") or "").strip()
+            if saved_search and "/search/" in saved_search.lower():
+                state["standalone_search_url"] = saved_search
             record_crawl_round_without_evaluation(state)
             captured = _extract_crawl_captured_count(skill_result)
             videos_processed = int(skill_result.get("videos_processed") or 0)
@@ -1721,6 +1862,7 @@ class TaskSupervisorService:
             search_phase_ok = crawl_search_phase_succeeded(skill_result)
             skill_flow_need_more = (
                 is_skill_flow_brief(brief)
+                and not skill_result.get("standalone_browse")
                 and captured <= 0
                 and videos_processed >= 0
                 and not skill_result.get("crawl_search_exhausted")
@@ -1734,11 +1876,46 @@ class TaskSupervisorService:
                 and not gate.force_evaluate
                 and not gate.suspend
             )
+            standalone_need_more = (
+                skill_result.get("standalone_browse")
+                and bool(skill_result.get("standalone_need_more"))
+                and not skill_result.get("target_reached")
+                and not skill_result.get("crawl_search_exhausted")
+                and (target_leads <= 0 or leads_qualified < target_leads)
+            )
+            if target_leads > 0 and leads_qualified >= target_leads:
+                state["crawl_done"] = True
+                state["qualified_target_reached"] = True
+                standalone_need_more = False
             if gate.force_evaluate:
                 state["crawl_done"] = True
                 skill_flow_need_more = False
+                standalone_need_more = False
                 if gate.reason:
                     state["crawl_evaluate_gate_reason"] = gate.reason
+            elif standalone_need_more:
+                state.pop("crawl_done", None)
+                vp = int(skill_result.get("videos_processed") or 0)
+                if vp > 0:
+                    state["standalone_browse_offset"] = int(state.get("standalone_browse_offset") or 0) + vp
+                state["last_crawl_error"] = (
+                    str(skill_result.get("diagnostic") or "")[:200]
+                    or "本批视频未找到足够精准线索，继续浏览下一个视频"
+                )
+                execution_plan = state.get("execution_plan")
+                if isinstance(execution_plan, dict):
+                    steps = execution_plan.get("steps")
+                    if isinstance(steps, list):
+                        for step in steps:
+                            if not isinstance(step, dict):
+                                continue
+                            step_action = str(step.get("action") or "")
+                            if step_action == "crawl_keyword":
+                                step["status"] = "in_progress"
+                            elif step_action in {"evaluate_leads", "query_stats", "complete", *OUTREACH_LOOP_ACTIONS}:
+                                step["status"] = "pending"
+                        execution_plan["current_index"] = 0
+                        state["execution_plan"] = execution_plan
             elif skill_flow_need_more:
                 state.pop("crawl_done", None)
                 if search_phase_ok and videos_processed <= 0:
@@ -1819,10 +1996,21 @@ class TaskSupervisorService:
                         source_keyword=str(brief.keyword or skill_result.get("keyword") or "").strip() or None,
                     )
                     state["comments_persisted"] = int(state.get("comments_persisted") or 0) + persisted
+                    merge_job_persisted_comment_ids(state, skill_result)
                 except Exception:
                     pass
 
         if action in {"crawl_profile", "crawl_content_url"} and ok:
+            if skill_result.get("standalone_browse"):
+                batch_precise = int(skill_result.get("precise_lead_count") or 0)
+                state["evaluation_done"] = True
+                state["leads_qualified"] = int(state.get("leads_qualified") or 0) + batch_precise
+                outreach_leads = _extract_outreach_leads(skill_result)
+                executed = int(skill_result.get("outreach_executed_count") or 0)
+                if outreach_leads:
+                    _add_leads_to_state(brief, state, outreach_leads)
+                elif executed:
+                    _add_leads_to_state(brief, state, executed)
             record_crawl_round_without_evaluation(state)
             captured = count_crawl_from_skill_result(skill_result)
             videos_processed = int(skill_result.get("videos_processed") or 0)
@@ -1877,6 +2065,7 @@ class TaskSupervisorService:
                         source_keyword=str(brief.keyword or skill_result.get("keyword") or "").strip() or None,
                     )
                     state["comments_persisted"] = int(state.get("comments_persisted") or 0) + persisted
+                    merge_job_persisted_comment_ids(state, skill_result)
                 except Exception:
                     pass
 
@@ -1983,7 +2172,11 @@ class TaskSupervisorService:
         target = int(brief.goals.get("target_leads") or 0)
         if target <= 0:
             return False
-        return int(state.get("leads_collected") or 0) >= target
+        if is_standalone_browse_brief(brief):
+            if effective_leads_qualified(state) < target:
+                return False
+            return not standalone_outreach_incomplete(brief, state)
+        return effective_supervisor_goal_count(brief, state) >= target
 
     def _resolve_llm(self) -> tuple[Any, str]:
         factory = AIClientFactory(self.settings)

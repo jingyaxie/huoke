@@ -55,6 +55,12 @@
           </el-radio-group>
         </el-form-item>
 
+        <TaskAcquisitionStrategyField
+          v-if="form.platform === 'douyin'"
+          v-model="form.agentStrategy"
+          :platform="form.platform"
+        />
+
         <BrowserModeField v-model="form.browserMode" />
 
         <el-form-item :label="keywordLabel" required>
@@ -88,9 +94,9 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item v-if="hasScopeField('home_auto', 'target_count', capabilities)" label="预设抓取数量" required>
+        <el-form-item v-if="hasScopeField('home_auto', 'target_count', capabilities)" :label="targetCountLabel" required>
           <el-input-number v-model="form.targetCount" :min="1" :max="500" />
-          <p class="field-hint">建议单次预设抓取数量控制在 30-100 条，系统将用 LLM 评估评论是否符合线索标准。</p>
+          <p class="field-hint">{{ targetCountHint }}</p>
         </el-form-item>
 
         <TaskEvaluationSection
@@ -145,6 +151,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import BrowserModeField from "./BrowserModeField.vue";
+import TaskAcquisitionStrategyField from "./TaskAcquisitionStrategyField.vue";
 import TaskEvaluationSection from "./TaskEvaluationSection.vue";
 import TaskInteractionFields from "./TaskInteractionFields.vue";
 import TaskPresetSelect from "./TaskPresetSelect.vue";
@@ -179,6 +186,7 @@ import {
   validateRequiredScopeFields,
 } from "../utils/huokeTaskForm";
 import { buildAutoPreflightPayload } from "../utils/huokeTaskPreflight";
+import { isStandaloneDouyinStrategy } from "../utils/acquisitionStrategy";
 import { validateTaskPresetSelection } from "../utils/presetSelection";
 import { loadTaskAccountOptions, taskAccountOptionToBindingRef } from "../utils/taskAccountOptions";
 
@@ -207,6 +215,7 @@ const form = reactive({
   regionCode: "",
   selectedAccountKey: "",
   platform: "douyin",
+  agentStrategy: "",
   browserMode: "headed",
   keywords: "",
   publishTimeRange: "unlimited",
@@ -242,6 +251,13 @@ const commentOptions = computed(() =>
 const evaluationTemplates = computed(() => capabilities.value?.evaluation_templates || []);
 const regionName = computed(() => REGION_PRESETS.find((row) => row.code === form.regionCode)?.name || "");
 const keywordLabel = computed(() => getScopeFieldLabel("home_auto", "keyword", capabilities.value, "产品关键词"));
+const isStandalone = computed(() => isStandaloneDouyinStrategy(form.agentStrategy));
+const targetCountLabel = computed(() => (isStandalone.value ? "目标精准线索" : "预设抓取数量"));
+const targetCountHint = computed(() =>
+  isStandalone.value
+    ? "一体化浏览将在侧栏用规则/评估筛线索，凑够目标条数后结束；建议 3–20 条。"
+    : "建议单次预设抓取数量控制在 30-100 条，系统将用 LLM 评估评论是否符合线索标准。",
+);
 
 const canSubmit = computed(() => {
   if (submitting.value || preflightLoading.value) return false;
@@ -342,6 +358,7 @@ watch(
     form.regionCode,
     form.browserMode,
     form.name,
+    form.agentStrategy,
     form.evalTemplateId,
     form.targetCustomer,
     form.acceptDescription,
@@ -379,6 +396,7 @@ watch(
           commentPresetIds: selectedCommentPresetIds.value,
           dmPresetIds: selectedDmPresetIds.value,
           evaluation: evaluationPayload(),
+          agentStrategy: form.agentStrategy,
           taskName: form.name.trim() || `关键词获客-${keywords[0]}`,
         });
         preflight.value = await preflightExternalTask(payload);
@@ -399,6 +417,7 @@ function resetForm() {
   form.regionCode = "";
   form.selectedAccountKey = "";
   form.platform = "douyin";
+  form.agentStrategy = "";
   form.browserMode = "headed";
   form.keywords = "";
   form.publishTimeRange = "unlimited";
@@ -484,6 +503,7 @@ async function submit() {
       dmPresets: dmPresets.value,
       evaluation: evaluationPayload(),
       binding,
+      agentStrategy: form.agentStrategy,
     });
     const job = await createExternalTask(payload);
     ElMessage.success("任务已创建");
