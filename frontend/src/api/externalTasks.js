@@ -59,6 +59,7 @@ export function buildAutoTaskPayload({
   keyword,
   regionName,
   targetCount,
+  crawlVideoLimit,
   commentDays,
   publishTimeRange,
   headless = true,
@@ -78,6 +79,15 @@ export function buildAutoTaskPayload({
     comment_days: commentDays,
     publish_time_range: publishTimeRange || "unlimited",
   };
+  const resolvedStrategy = agentStrategyForPlatform(platform, agentStrategy);
+  if (
+    resolvedStrategy === "standalone-browse-douyin"
+    && crawlVideoLimit != null
+    && Number(crawlVideoLimit) > 0
+    && Number(crawlVideoLimit) !== Number(targetCount)
+  ) {
+    scope.crawl_video_limit = Number(crawlVideoLimit);
+  }
   const region = String(regionName || "").trim();
   if (region && region !== "不限地区" && region !== "全国") {
     scope.region = region;
@@ -143,10 +153,10 @@ export function buildManualTaskPayload({
   }
   const resolvedStrategy = agentStrategyForPlatform(platform, agentStrategy);
   if (resolvedStrategy === "standalone-browse-douyin") {
-    if (intent === "account_home" && crawlVideoLimit) {
-      scope.target_count = Math.max(1, Number(crawlVideoLimit) || 1);
+    if (targetCount != null && Number(targetCount) > 0) {
+      scope.target_count = Math.max(1, Number(targetCount));
     } else if (intent === "single_video") {
-      scope.target_count = Math.max(1, Number(targetCount) || 5);
+      scope.target_count = 5;
     }
   }
   const outreach = {

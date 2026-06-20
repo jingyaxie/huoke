@@ -53,7 +53,7 @@ class TaskBrief(BaseModel):
     agent_profile_id: str | None = None
 
 
-def _crawl_video_limit_from_payload(payload: dict[str, Any] | None, *, default: int = _DEFAULT_CRAWL_VIDEO_LIMIT) -> int:
+def _explicit_crawl_video_limit_from_payload(payload: dict[str, Any] | None) -> int | None:
     src = payload if isinstance(payload, dict) else {}
     for key in _CRAWL_VIDEO_LIMIT_KEYS:
         val = src.get(key)
@@ -65,6 +65,25 @@ def _crawl_video_limit_from_payload(payload: dict[str, Any] | None, *, default: 
             continue
         if n > 0:
             return n
+    return None
+
+
+def _crawl_video_limit_from_payload(
+    payload: dict[str, Any] | None,
+    *,
+    default: int = _DEFAULT_CRAWL_VIDEO_LIMIT,
+    omit_default_for_standalone: bool = False,
+    agent_strategy: str | None = None,
+) -> int | None:
+    explicit = _explicit_crawl_video_limit_from_payload(payload)
+    if explicit is not None:
+        return explicit
+    if omit_default_for_standalone:
+        from app.services.agent_strategy.registry import STANDALONE_BROWSE_DOUYIN
+
+        sid = str(agent_strategy or "").strip()
+        if sid == STANDALONE_BROWSE_DOUYIN.id or sid == "standalone-browse-douyin":
+            return None
     return default
 
 
@@ -178,7 +197,11 @@ def _fallback_brief(message: str, *, agent_strategy: str | None = None) -> TaskB
         from app.services.external_task_service import _map_publish_time_range
 
         video_publish_days = _map_publish_time_range((payload or {}).get("publish_time_range"))
-    crawl_video_limit = _crawl_video_limit_from_payload({**(payload or {}), **crawl})
+    crawl_video_limit = _crawl_video_limit_from_payload(
+        {**(payload or {}), **crawl},
+        omit_default_for_standalone=True,
+        agent_strategy=strategy.id,
+    )
     repeat_mode = (payload or {}).get("repeat_mode") or crawl.get("repeat_mode")
     round_target = (payload or {}).get("round_target_count") or crawl.get("round_target_count")
     max_rounds = (payload or {}).get("max_rounds") or crawl.get("max_rounds")
@@ -222,7 +245,7 @@ def _fallback_brief(message: str, *, agent_strategy: str | None = None) -> TaskB
             "target_leads": int(target_leads) if target_leads else 50,
             "comment_days": int(comment_days) if comment_days else 3,
             **({"video_publish_days": int(video_publish_days)} if video_publish_days else {}),
-            "crawl_video_limit": crawl_video_limit,
+            **({"crawl_video_limit": int(crawl_video_limit)} if crawl_video_limit is not None else {}),
             **({"repeat_mode": str(repeat_mode)} if repeat_mode else {}),
             **({"round_target_count": int(round_target)} if round_target else {}),
             **({"max_rounds": int(max_rounds)} if max_rounds else {}),
@@ -450,9 +473,9 @@ def enrich_brief_from_task_payload(brief: TaskBrief, payload: dict[str, Any] | N
             brief.goals["force_refresh"] = bool(crawl.get("force_refresh"))
         if crawl.get("cache_ttl_hours") is not None:
             brief.goals["cache_ttl_hours"] = float(crawl.get("cache_ttl_hours"))
-        crawl_video_limit = _crawl_video_limit_from_payload(crawl)
-        if crawl_video_limit:
-            brief.goals["crawl_video_limit"] = crawl_video_limit
+        explicit_limit = _explicit_crawl_video_limit_from_payload(crawl)
+        if explicit_limit is not None:
+            brief.goals["crawl_video_limit"] = explicit_limit
         if crawl.get("headless") is True:
             brief.goals["show_browser"] = False
         elif crawl.get("headless") is False:

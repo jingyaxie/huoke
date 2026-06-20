@@ -34,7 +34,13 @@ INTENT_SPECS: tuple[ExternalTaskIntentSpec, ...] = (
         scope_fields=[
             ExternalTaskFieldSpec(key="keyword", type="string", required=True, label="关键词"),
             ExternalTaskFieldSpec(key="region", type="string", label="地区"),
-            ExternalTaskFieldSpec(key="target_count", type="integer", required=True, label="目标线索数"),
+            ExternalTaskFieldSpec(key="target_count", type="integer", required=True, label="目标精准线索数"),
+            ExternalTaskFieldSpec(
+                key="crawl_video_limit",
+                type="integer",
+                label="单批扫描视频上限",
+                description="可选。每轮最多浏览多少个视频；与目标精准线索数无关。未填时一体化模式默认按较大上限续扫。",
+            ),
             ExternalTaskFieldSpec(key="comment_days", type="integer", label="评论天数"),
             ExternalTaskFieldSpec(key="publish_time_range", type="string", label="视频发布时间筛选"),
             ExternalTaskFieldSpec(key="repeat_mode", type="string", label="循环模式"),

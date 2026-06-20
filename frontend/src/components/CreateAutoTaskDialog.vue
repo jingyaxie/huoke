@@ -99,6 +99,11 @@
           <p class="field-hint">{{ targetCountHint }}</p>
         </el-form-item>
 
+        <el-form-item v-if="isStandalone && hasScopeField('home_auto', 'target_count', capabilities)" label="单批扫描视频上限">
+          <el-input-number v-model="form.crawlVideoLimit" :min="1" :max="500" />
+          <p class="field-hint">{{ crawlVideoLimitHint }}</p>
+        </el-form-item>
+
         <TaskEvaluationSection
           v-model:expanded="form.evalExpanded"
           v-model:eval-template-id="form.evalTemplateId"
@@ -221,6 +226,7 @@ const form = reactive({
   publishTimeRange: "unlimited",
   commentDays: 3,
   targetCount: 50,
+  crawlVideoLimit: 50,
   evalExpanded: false,
   evalTemplateId: "",
   targetCustomer: "",
@@ -255,8 +261,11 @@ const isStandalone = computed(() => isStandaloneDouyinStrategy(form.agentStrateg
 const targetCountLabel = computed(() => (isStandalone.value ? "目标精准线索" : "预设抓取数量"));
 const targetCountHint = computed(() =>
   isStandalone.value
-    ? "一体化浏览将在侧栏用规则/评估筛线索，凑够目标条数后结束；建议 3–20 条。"
+    ? "要凑够多少条「精准线索」任务才算达标；与下面扫描视频数无关。"
     : "建议单次预设抓取数量控制在 30-100 条，系统将用 LLM 评估评论是否符合线索标准。",
+);
+const crawlVideoLimitHint = computed(() =>
+  "每轮最多浏览多少个视频；未凑够精准线索会自动续扫下一批。留空概念上等同较大默认值（约 200）。",
 );
 
 const canSubmit = computed(() => {
@@ -389,6 +398,7 @@ watch(
           publishTime: form.publishTimeRange,
           commentDays: form.commentDays,
           target: form.targetCount,
+          crawlVideoLimit: isStandalone.value ? form.crawlVideoLimit : undefined,
           regionName: regionName.value || undefined,
           regionCode: form.regionCode || undefined,
           headless: browserModeToHeadless(form.browserMode),
@@ -423,6 +433,7 @@ function resetForm() {
   form.publishTimeRange = "unlimited";
   form.commentDays = 3;
   form.targetCount = 50;
+  form.crawlVideoLimit = 50;
   form.evalExpanded = false;
   form.evalTemplateId = "";
   form.targetCustomer = "";
@@ -493,6 +504,7 @@ async function submit() {
       keyword: keywords[0],
       regionName: regionName.value,
       targetCount: form.targetCount,
+      crawlVideoLimit: isStandalone.value ? form.crawlVideoLimit : undefined,
       commentDays: form.commentDays,
       publishTimeRange: form.publishTimeRange,
       headless: browserModeToHeadless(form.browserMode),

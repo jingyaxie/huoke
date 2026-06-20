@@ -31,6 +31,15 @@ export function buildAutoPreflightPayload(input) {
   if (region && region !== "不限地区" && region !== "全国") {
     scope.region = region;
   }
+  const resolvedStrategy = agentStrategyForPlatform(input.platform, input.agentStrategy);
+  if (
+    resolvedStrategy === "standalone-browse-douyin"
+    && input.crawlVideoLimit != null
+    && Number(input.crawlVideoLimit) > 0
+    && Number(input.crawlVideoLimit) !== Number(input.target)
+  ) {
+    scope.crawl_video_limit = Number(input.crawlVideoLimit);
+  }
   const evaluation = defaultEvaluation(keyword, input.evaluation);
   return {
     intent: "keyword_auto",
@@ -65,9 +74,7 @@ export function buildManualPreflightPayload(input) {
   }
   const resolvedStrategy = agentStrategyForPlatform(input.platform, input.agentStrategy);
   if (resolvedStrategy === "standalone-browse-douyin") {
-    if (intent === "account_home" && input.crawlVideoLimit) {
-      scope.target_count = Math.max(1, Number(input.crawlVideoLimit) || 1);
-    } else if (intent === "single_video") {
+    if (intent === "single_video" || intent === "account_home") {
       scope.target_count = Math.max(1, Number(input.targetCount) || 5);
     }
   }

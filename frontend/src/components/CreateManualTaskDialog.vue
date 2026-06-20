@@ -50,11 +50,12 @@
 
         <el-form-item v-if="showManualTargetCount" label="目标精准线索">
           <el-input-number v-model="form.targetCount" :min="1" :max="100" />
-          <p class="field-hint">一体化浏览模式下，从当前链接采集并触达的目标线索条数。</p>
+          <p class="field-hint">要凑够多少条精准线索；与下方「扫描视频数」无关。</p>
         </el-form-item>
 
         <el-form-item v-if="effectiveIntent === 'account_home'" label="扫描视频数">
-          <el-input-number v-model="form.crawlVideoLimit" :min="1" :max="50" />
+          <el-input-number v-model="form.crawlVideoLimit" :min="1" :max="200" />
+          <p class="field-hint">主页模式下每轮最多点进多少个作品抓评论；未凑够精准线索会继续扫。</p>
         </el-form-item>
 
         <el-form-item v-if="hasScopeField(manualTaskType, 'publish_time_range', capabilities)" label="视频发布时间">
@@ -241,7 +242,7 @@ const urlPlaceholder = computed(() =>
     : "粘贴单条视频详情页链接",
 );
 const isStandalone = computed(() => isStandaloneDouyinStrategy(form.agentStrategy));
-const showManualTargetCount = computed(() => isStandalone.value && effectiveIntent.value === "single_video");
+const showManualTargetCount = computed(() => isStandalone.value);
 
 const canSubmit = computed(() => {
   if (submitting.value || preflightLoading.value) return false;

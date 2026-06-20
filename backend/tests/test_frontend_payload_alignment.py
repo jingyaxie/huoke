@@ -121,6 +121,7 @@ def build_auto_task_payload_standalone_like_frontend():
     payload = build_auto_task_payload_like_frontend()
     payload["agent_strategy"] = STANDALONE_STRATEGY
     payload["scope"]["target_count"] = 5
+    payload["scope"]["crawl_video_limit"] = 50
     return payload
 
 
@@ -169,6 +170,26 @@ def test_frontend_manual_payload_validates_and_normalizes():
     assert config["video_url"] == "https://www.douyin.com/video/7123456789"
     assert config["video_publish_days"] == 3
     assert config["crawl"] == {"headless": False}
+
+
+def test_standalone_auto_payload_keeps_target_and_video_limit_separate():
+    raw = build_auto_task_payload_standalone_like_frontend()
+    request = ExternalTaskCreateRequest.model_validate(raw)
+    _message, config, _correlation = normalize_external_create(request)
+    assert config["target_count"] == 5
+    assert config["crawl_video_limit"] == 50
+    assert config["target_count"] != config["crawl_video_limit"]
+
+
+def test_standalone_brief_omits_default_crawl_video_limit():
+    from app.services.task_brief_service import _fallback_brief
+
+    brief = _fallback_brief(
+        '{"task_name":"测试","keyword":"健身","target_count":5,"platform":"douyin"}',
+        agent_strategy=STANDALONE_STRATEGY,
+    )
+    assert brief.goals.get("target_leads") == 5
+    assert "crawl_video_limit" not in brief.goals
 
 
 def test_preflight_payload_shape_auto_execute_false():
