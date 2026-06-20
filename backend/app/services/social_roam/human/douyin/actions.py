@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 from typing import Any
 
@@ -368,6 +369,23 @@ async def _resolve_profile_page(
     return work_page, profile_url, profile, store
 
 
+_FOLLOW_OK_TEXTS = ("已关注", "互相关注", "已请求")
+
+
+async def _follow_status_on_page(page) -> tuple[bool, str]:
+    for selector in _FOLLOW_BTN_SELECTORS:
+        candidate = page.locator(selector).first
+        try:
+            if not await candidate.count():
+                continue
+            text = (await candidate.inner_text() or "").strip()
+            if any(token in text for token in _FOLLOW_OK_TEXTS):
+                return True, text
+        except Exception:
+            continue
+    return False, ""
+
+
 async def human_follow_user(
     page,
     settings: Settings,
@@ -393,13 +411,14 @@ async def human_follow_user(
         candidate = work_page.locator(selector).first
         if await candidate.count():
             text = (await candidate.inner_text() or "").strip()
-            if "已关注" in text or "互相关注" in text:
+            if any(token in text for token in _FOLLOW_OK_TEXTS):
                 return {
                     "ok": True,
                     "skipped": True,
                     "reason": "already_followed",
                     "capture_method": "douyin_follow_ui_human",
                     "profile_url": profile_url,
+                    "follow_status_after_text": text,
                 }
             follow_btn = candidate
             break
@@ -411,12 +430,17 @@ async def human_follow_user(
             "profile_url": profile_url,
         }
 
+    with contextlib.suppress(Exception):
+        await follow_btn.scroll_into_view_if_needed(timeout=5000)
     await human_click(work_page, follow_btn, settings, tenant_id=tenant_id)
     await human_delay(work_page, settings, tenant_id=tenant_id, profile="action")
     await asyncio.sleep(random.uniform(0.8, 1.6))
 
-    verify_text = (await follow_btn.inner_text() or "").strip()
-    ok = "已关注" in verify_text or "互相关注" in verify_text
+    ok, verify_text = await _follow_status_on_page(work_page)
+    if not ok:
+        with contextlib.suppress(Exception):
+            verify_text = (await follow_btn.inner_text() or "").strip()
+            ok = any(token in verify_text for token in _FOLLOW_OK_TEXTS)
     return {
         "ok": ok,
         "user_id": user_id,

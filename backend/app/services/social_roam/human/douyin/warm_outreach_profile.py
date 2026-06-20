@@ -166,6 +166,48 @@ async def _pick_visible_comment_item(page, *, max_scan: int = 12):
     return None
 
 
+async def _ensure_profile_header_visible(page) -> None:
+    """暖场滚动后把用户信息栏（关注/私信）滚回视口顶部。"""
+    with contextlib.suppress(Exception):
+        await page.evaluate("window.scrollTo(0, 0)")
+    await _human_pause(min_s=0.5, max_s=0.9)
+    for selector in (
+        '[data-e2e="user-detail"]',
+        '[data-e2e="user-info-follow-btn"]',
+        '[data-e2e="user-info"]',
+    ):
+        loc = page.locator(selector).first
+        with contextlib.suppress(Exception):
+            if await loc.count():
+                await loc.scroll_into_view_if_needed(timeout=5000)
+                break
+
+
+async def _resolve_warm_comment_item(
+    page,
+    settings: Settings,
+    *,
+    tenant_id: str,
+    comment_id: str,
+    comment_text: str,
+    scroll_rounds: int,
+):
+    target_cid = str(comment_id or "").strip()
+    target_text = str(comment_text or "").strip()
+    if target_cid or target_text:
+        item = await scroll_comment_sidebar_until(
+            page,
+            settings,
+            tenant_id=tenant_id,
+            comment_id=target_cid,
+            comment_text=target_text,
+            max_rounds=max(4, scroll_rounds),
+        )
+        if item is not None:
+            return item
+    return await _pick_visible_comment_item(page)
+
+
 async def _open_profile_via_warm_comment_click(
     page,
     settings: Settings,
@@ -189,27 +231,23 @@ async def _open_profile_via_warm_comment_click(
         return None, "sidebar_not_ready"
 
     await _human_pause(min_s=1.0, max_s=1.7)
-    target_cid = str(comment_id or "").strip()
-    target_text = str(comment_text or "").strip()
-    if target_cid or target_text:
-        with contextlib.suppress(Exception):
-            await scroll_comment_sidebar_until(
-                page,
-                settings,
-                tenant_id=tenant_id,
-                comment_id=target_cid,
-                comment_text=target_text,
-                max_rounds=max(4, scroll_rounds),
-            )
-    await _slow_scroll_comment_sidebar(
+    item = await _resolve_warm_comment_item(
         page,
         settings,
         tenant_id=tenant_id,
-        rounds=random.randint(1, 2),
+        comment_id=str(comment_id or ""),
+        comment_text=str(comment_text or ""),
+        scroll_rounds=scroll_rounds,
     )
-    await _human_pause(min_s=0.8, max_s=1.4)
-
-    item = await _pick_visible_comment_item(page)
+    if item is None:
+        await _slow_scroll_comment_sidebar(
+            page,
+            settings,
+            tenant_id=tenant_id,
+            rounds=random.randint(1, 2),
+        )
+        await _human_pause(min_s=0.8, max_s=1.4)
+        item = await _pick_visible_comment_item(page)
     if item is None:
         return None, "no_comment_with_profile_link"
 
@@ -620,11 +658,24 @@ async def warm_outreach_follow_dm_from_comment(
             goto_home=False,
         )
         await _warmup_browse_profile(profile_page)
+        await _ensure_profile_header_visible(profile_page)
+
+        from app.services.social_roam.human.douyin.actions import (
+            human_follow_user,
+            human_send_dm,
+        )
 
         follow_result: dict[str, Any] | None = None
         if do_follow:
-            follow_result = await _human_follow_on_profile(
-                profile_page, settings, tenant_id=tenant_id
+            follow_result = await human_follow_user(
+                page,
+                settings,
+                tenant_id=tenant_id,
+                account_id=account_id,
+                sec_uid=target_sec,
+                user_id=str(user_id or ""),
+                username=str(nickname or ""),
+                profile_page=profile_page,
             )
             if not follow_result.get("ok"):
                 return {
@@ -642,13 +693,29 @@ async def warm_outreach_follow_dm_from_comment(
 
         dm_result: dict[str, Any] | None = None
         if do_dm:
-            dm_result = await _human_dm_on_profile(
-                profile_page,
-                settings,
-                tenant_id=tenant_id,
-                message=message,
-                dry_run=dry_run,
-            )
+            if dry_run:
+                dm_result = await _human_dm_on_profile(
+                    profile_page,
+                    settings,
+                    tenant_id=tenant_id,
+                    message=message,
+                    dry_run=True,
+                )
+            else:
+                sent = await human_send_dm(
+                    page,
+                    settings,
+                    tenant_id=tenant_id,
+                    account_id=account_id,
+                    sec_uid=target_sec,
+                    message=message,
+                    username=str(nickname or ""),
+                    profile_page=profile_page,
+                )
+                dm_result = {
+                    **sent,
+                    "method": sent.get("capture_method") or "profile_dm_ui_human",
+                }
             if not dm_result.get("ok"):
                 return {
                     "ok": False,

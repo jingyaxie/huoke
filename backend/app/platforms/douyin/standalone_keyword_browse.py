@@ -2422,6 +2422,8 @@ async def _execute_outreach_if_needed(
             follow = warm.get("follow") if isinstance(warm.get("follow"), dict) else {}
             ok = bool(warm.get("ok")) and bool(follow.get("ok"))
             if not ok:
+                err = str(warm.get("error") or follow.get("error") or "关注失败")[:80]
+                await set_page_step_hint(page, "触达失败：关注", sub=err, title="Huoke · 抖音浏览")
                 return await _fallback_reply_from_warm_failure(
                     page,
                     settings,
@@ -2435,6 +2437,8 @@ async def _execute_outreach_if_needed(
         dm = warm.get("dm") if isinstance(warm.get("dm"), dict) else {}
         ok = bool(warm.get("ok")) and bool(dm.get("ok"))
         if not ok:
+            err = str(warm.get("error") or dm.get("error") or "私信失败")[:80]
+            await set_page_step_hint(page, "触达失败：私信", sub=err, title="Huoke · 抖音浏览")
             return await _fallback_reply_from_warm_failure(
                 page,
                 settings,
