@@ -663,7 +663,11 @@ class TaskSupervisorService:
                     final_summary = wake
 
         finally:
-            if session is not None and not getattr(session, "stable_mode", False):
+            if (
+                session is not None
+                and not getattr(session, "stable_mode", False)
+                and not is_standalone_browse_brief(brief)
+            ):
                 await session.close()
             self._sandbox_runtime = None
 

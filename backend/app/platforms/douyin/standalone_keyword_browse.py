@@ -44,7 +44,7 @@ StandaloneAcquisitionMode = Literal["keyword_auto", "single_video", "account_hom
 from playwright.async_api import Page
 from sqlalchemy.orm import Session
 
-from app.core.antibot import human_click, human_delay
+from app.core.antibot import human_delay, human_mouse_move
 from app.core.config import Settings
 from app.platforms.douyin.human_guards import (
     HumanBrowseGuardError,
@@ -82,7 +82,6 @@ from app.services.ui_flow.platforms.douyin.feed_ui import (
 )
 from app.services.ui_flow.platforms.douyin.browse_ui import (
     _VIDEO_CARD_SELECTORS,
-    _click_video_link_at_index,
     _resolve_aweme_id_at_index,
 )
 from app.services.ui_flow.platforms.douyin.profile_ui import (
@@ -110,7 +109,6 @@ from app.services.ui_flow.platforms.douyin.search_ui import (
     apply_ui_publish_time_filter,
     collect_video_urls_from_page,
     page_has_search_posters,
-    page_has_video_results,
     release_searchbar_focus,
     reuse_search_results_if_ready,
     run_search,
@@ -124,6 +122,7 @@ CAPTURE_METHOD_VIDEO = "standalone_video_browse"
 CAPTURE_METHOD_PROFILE = "standalone_profile_browse"
 DOUYIN_ENTRY_URL = "https://www.douyin.com/"
 DOUYIN_JINGXUAN_URL = "https://www.douyin.com/jingxuan"
+_LIST_READY_MAX_SCROLLS = 5
 
 
 def capture_method_for_mode(mode: str) -> str:
@@ -288,18 +287,31 @@ def _filter_diagnostic_suffix(ctx: DouyinUiSession) -> str:
 
 async def _is_search_list_ready(
     page: Page,
-    api_items: dict[str, dict],
+    api_items: dict[str, dict] | None = None,
     *,
     ctx: DouyinUiSession | None = None,
 ) -> bool:
-    """列表已展示即视为搜索成功：search API 有明确结论，或 DOM 海报/链接可见。"""
+    """列表可点：在搜索 URL 且视口内至少 1 张可点卡片（与点击 primitive 同一套 JS 扫描）。"""
+    _ = api_items  # 保留签名兼容；不再用 API/posters 单独判定成功
     if not _on_search_results_url(page.url or ""):
         return False
-    if api_items:
+    cards = await _collect_visible_search_cards(page)
+    if cards:
         return True
-    if ctx and ctx.state.get("search_api_complete"):
-        return True
-    return bool(await page_has_search_posters(page) or await page_has_video_results(page))
+    if ctx is None:
+        return False
+    settings = ctx.settings
+    tenant_id = ctx.tenant_id
+    for attempt in range(_LIST_READY_MAX_SCROLLS):
+        if attempt == 0:
+            await _scroll_search_list_to_top(ctx)
+        else:
+            await scroll_search_results_page(page, settings, tenant_id=tenant_id)
+        await asyncio.sleep(0.35)
+        cards = await _collect_visible_search_cards(page)
+        if cards:
+            return True
+    return False
 
 
 async def _page_phase_note(page: Page) -> str:
@@ -480,71 +492,6 @@ _VISIBLE_SEARCH_CARDS_JS = """
 }
 """
 
-_CLICK_SEARCH_CARD_JS = """
-(index) => {
-  const selectors = [
-    'div.search-result-card',
-    '[class*="search-result-card"]',
-    '[data-e2e="search-card-video"]',
-    '[class*="SearchVideoCard"]',
-    '[class*="discover-video-card"]',
-    '[class*="videoImage"] img',
-  ];
-  for (const sel of selectors) {
-    const nodes = Array.from(document.querySelectorAll(sel));
-    if (nodes.length <= index) continue;
-    let target = nodes[index];
-    if (target.tagName === 'IMG') {
-      target = target.closest(
-        '[class*="discover-video-card"], [data-e2e="search-card-video"], '
-        + '[class*="search-result-card"], [class*="SearchVideoCard"]'
-      ) || target.parentElement || target;
-    }
-    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-    const r = target.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8) continue;
-    if (typeof target.click === 'function') target.click();
-    else {
-      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-    }
-    const href = (target.closest('a[href*="/video/"]') || target.querySelector('a[href*="/video/"]'))?.href || '';
-    let aweme = (String(href).match(/\\/video\\/(\\d{8,22})/) || [])[1] || '';
-    if (!aweme) {
-      const holder = target.closest('[data-aweme-id]') || target;
-      aweme = String(holder.getAttribute('data-aweme-id') || '').trim();
-    }
-    return { ok: true, selector: sel, total: nodes.length, aweme, top: r.top, left: r.left };
-  }
-  return { ok: false, selector: '', total: 0, aweme: '', top: 0, left: 0 };
-}
-"""
-
-
-async def _click_search_card_via_js(ctx: DouyinUiSession, index: int) -> tuple[bool, str, str]:
-    """虚拟列表：按 DOM 序号 scrollIntoView 后 JS 点击。"""
-    page = ctx.page
-    try:
-        result = await page.evaluate(_CLICK_SEARCH_CARD_JS, index)
-    except Exception as exc:
-        return False, f"js_click_failed:{exc}", ""
-    if not isinstance(result, dict) or not result.get("ok"):
-        total = int((result or {}).get("total") or 0) if isinstance(result, dict) else 0
-        return False, f"js_click_miss index={index} total={total}", ""
-    aweme = str(result.get("aweme") or "")
-    sel = str(result.get("selector") or "js_card")
-    await asyncio.sleep(random.uniform(0.35, 0.65))
-    if await _wait_feed_opened(page, max_sec=5.0):
-        ctx.state["feed_mode"] = True
-        return True, f"js_click:{sel} index={index} total={result.get('total')}", aweme
-    top = float(result.get("top") or 0)
-    left = float(result.get("left") or 0)
-    if top > 0 and left > 0:
-        await page.mouse.click(left + 40, top + 40)
-        if await _wait_feed_opened(page, max_sec=3.0):
-            ctx.state["feed_mode"] = True
-            return True, f"js_coord:{sel} index={index}", aweme
-    return False, f"js_clicked_no_feed:{sel}[{index}]", aweme
-
 
 async def _collect_visible_search_cards(page: Page) -> list[dict[str, Any]]:
     try:
@@ -623,44 +570,6 @@ async def _scroll_search_until_card_index(
     return cards
 
 
-async def _resolve_best_poster_selector(page: Page, index: int) -> tuple[str, int]:
-    """找出能覆盖 index 且可见条目最多的海报选择器。"""
-    best_selector = ""
-    best_count = 0
-    best_score = -1
-    for selector in (
-        'div.search-result-card',
-        '[class*="search-result-card"]',
-        '[data-e2e="search-card-video"]',
-        '[class*="SearchVideoCard"]',
-        '[class*="discover-video-card"]',
-        'img.discover-video-card-img',
-        '[class*="videoImage"] img',
-        *_VIDEO_CARD_SELECTORS,
-        *_POSTER_SELECTORS,
-    ):
-        try:
-            loc = page.locator(selector)
-            count = await loc.count()
-        except Exception:
-            continue
-        if count <= index:
-            continue
-        visible = 0
-        for i in range(min(count, max(index + 1, 6))):
-            try:
-                if await loc.nth(i).is_visible():
-                    visible += 1
-            except Exception:
-                continue
-        score = visible * 1000 + count
-        if score > best_score:
-            best_score = score
-            best_count = count
-            best_selector = selector
-    return best_selector, best_count
-
-
 async def _click_visible_card_coords(
     page: Page,
     card: dict[str, Any],
@@ -668,20 +577,33 @@ async def _click_visible_card_coords(
     settings: Settings,
     tenant_id: str,
 ) -> bool:
-    x = float(card.get("left") or 0) + float(card.get("width") or 0) / 2
-    y = float(card.get("top") or 0) + float(card.get("height") or 0) / 2
-    await page.mouse.move(x, y)
-    await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
+    width = float(card.get("width") or 0)
+    height = float(card.get("height") or 0)
+    x = float(card.get("left") or 0) + width * random.uniform(0.32, 0.68)
+    y = float(card.get("top") or 0) + height * random.uniform(0.32, 0.68)
+    await human_mouse_move(page, x, y, settings, tenant_id=tenant_id)
+    await human_delay(page, settings, tenant_id=tenant_id, profile="action")
     await page.mouse.click(x, y)
     return await _wait_feed_opened(page, max_sec=4.0)
 
 
-async def _click_search_img_poster(ctx: DouyinUiSession, index: int) -> tuple[bool, str]:
-    """点击搜索列表封面（优先可见卡片坐标，兼容精选页虚拟列表）。"""
+async def _click_viewport_search_card(
+    ctx: DouyinUiSession,
+    index: int,
+) -> tuple[bool, str, str]:
+    """唯一点击路径：视口内卡片坐标 + 人类鼠标轨迹，失败仅滚动重试。"""
     page = ctx.page
-    cards = await _scroll_search_until_card_index(ctx, index)
-    if len(cards) > index:
+    last_note = "viewport_cards=0"
+    for attempt in range(3):
+        cards = await _scroll_search_until_card_index(ctx, index)
+        if len(cards) <= index:
+            last_note = f"viewport_cards={len(cards)} need_index={index} attempt={attempt}"
+            if attempt < 2:
+                await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
+                await asyncio.sleep(0.4)
+            continue
         card = cards[index]
+        aweme = str(card.get("aweme") or "")
         if await _click_visible_card_coords(
             page,
             card,
@@ -690,75 +612,18 @@ async def _click_search_img_poster(ctx: DouyinUiSession, index: int) -> tuple[bo
         ):
             ctx.state["feed_mode"] = True
             sel = str(card.get("selector") or "visible_card")
-            return True, f"visible_coord:{sel} index={index}"
-
-    selector, count = await _resolve_best_poster_selector(page, index)
-    if not selector:
-        return False, f"img_click_no_target count={count} visible={len(cards)}"
-    target = page.locator(selector).nth(index)
-    if " img" in selector or "discover-video-card-img" in selector:
-        parent = target.locator(
-            "xpath=ancestor::*[@data-e2e='search-card-video' or "
-            "contains(@class,'search-result-card') or contains(@class,'SearchVideoCard') or "
-            "contains(@class,'discover-video-card')][1]"
+            note = f"viewport_click:{sel} index={index} cards={len(cards)}"
+            if aweme:
+                note += f" aweme={aweme[:12]}"
+            return True, note, aweme
+        last_note = (
+            f"clicked_no_feed index={index} viewport_cards={len(cards)} "
+            f"attempt={attempt}"
         )
-        if await parent.count():
-            target = parent.first
-    try:
-        if await target.is_visible():
-            await target.scroll_into_view_if_needed(timeout=3000)
-            try:
-                await human_click(page, target, ctx.settings, tenant_id=ctx.tenant_id)
-            except Exception:
-                await target.click(force=True, timeout=4000)
-        else:
-            box = await target.bounding_box()
-            if box:
-                await page.mouse.click(
-                    box["x"] + box["width"] / 2,
-                    box["y"] + box["height"] / 2,
-                )
-            else:
-                await target.click(force=True, timeout=4000)
-        if await _wait_feed_opened(page, max_sec=5.0):
-            ctx.state["feed_mode"] = True
-            return True, f"img_click:{selector} index={index}"
-    except Exception as exc:
-        box = await target.bounding_box()
-        if box:
-            x = box["x"] + box["width"] / 2
-            y = box["y"] + box["height"] / 2
-            await page.mouse.click(x, y)
-            if await _wait_feed_opened(page, max_sec=5.0):
-                ctx.state["feed_mode"] = True
-                return True, f"img_coord:{selector} index={index}"
-        return False, f"img_click_fail:{selector}[{index}] {exc}"
-    return False, f"img_click_no_feed:{selector}[{index}] visible={len(cards)}"
-
-
-async def _click_search_card_via_dom(
-    ctx: DouyinUiSession,
-    index: int,
-) -> tuple[bool, str, str]:
-    """用页面内可见卡片坐标点击（兼容精选页 discover-video-card）。"""
-    page = ctx.page
-    try:
-        cards = await _scroll_search_until_card_index(ctx, index)
-    except Exception as exc:
-        return False, f"dom_pick_failed:{exc}", ""
-    if not isinstance(cards, list) or len(cards) <= index:
-        return False, f"dom_cards={len(cards) if isinstance(cards, list) else 0}", ""
-    card = cards[index]
-    aweme = str(card.get("aweme") or "")
-    if await _click_visible_card_coords(
-        page,
-        card,
-        settings=ctx.settings,
-        tenant_id=ctx.tenant_id,
-    ):
-        ctx.state["feed_mode"] = True
-        return True, f"dom_click index={index} aweme={aweme[:12] if aweme else 'dom'}", aweme
-    return False, f"dom_clicked_no_feed index={index}", aweme
+        if attempt < 2:
+            await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
+            await asyncio.sleep(0.4)
+    return False, last_note, ""
 
 
 async def _click_search_result_item(
@@ -767,7 +632,7 @@ async def _click_search_result_item(
     *,
     skip_back: bool = False,
 ) -> tuple[bool, str]:
-    """点击搜索列表第 N 个视频：纯 DOM/坐标点击，不用 modal_id URL 跳转。"""
+    """点击搜索列表第 N 个视频：视口坐标 + 人类鼠标，不用 modal_id / locator 兜底。"""
     page = ctx.page
     if not skip_back:
         if not await _back_to_search_list(ctx):
@@ -775,33 +640,14 @@ async def _click_search_result_item(
     else:
         await asyncio.sleep(random.uniform(0.12, 0.28))
 
-    await _sync_search_aweme_ids_from_dom(ctx)
-    aweme_hint = await _resolve_aweme_id_at_index(ctx, index)
-    phase_before = await _page_phase_note(page)
-    ctx.phase_log.append(
-        f"CLICK_PREP index={index} posters={await _count_search_posters(page)} "
-        f"best={await _resolve_best_poster_selector(page, index)} aweme={aweme_hint[:12] if aweme_hint else 'dom'} "
-        f"{phase_before}"
-    )
-
-    async def _confirm_feed_open(method: str) -> tuple[bool, str]:
-        snap = await classify_douyin_page(page)
-        if await _wait_search_feed_overlay(ctx, max_sec=5.0):
-            return True, (
-                f"{method} index={index} aweme={aweme_hint[:12] if aweme_hint else 'dom'} "
-                f"feed_overlay phase={snap.get('phase')}"
-            )
-        snap = await classify_douyin_page(page)
-        return False, (
-            f"{method}_no_feed_overlay index={index} phase={snap.get('phase')} "
-            f"feed={snap.get('feed_visible')} list={snap.get('list_visible')} "
-            f"url={(page.url or '')[:96]}"
-        )
-
     if not await search_list_visible(page):
-        return False, f"无法 DOM 点击：当前不在搜索列表；{await _page_phase_note(page)}"
+        return False, f"不在搜索列表；{await _page_phase_note(page)}"
 
-    last_note = "未找到可点击的列表 item"
+    viewport_n = len(await _collect_visible_search_cards(page))
+    ctx.phase_log.append(
+        f"CLICK_PREP index={index} viewport_cards={viewport_n} "
+        f"posters={await _count_search_posters(page)} {await _page_phase_note(page)}"
+    )
 
     if index <= 0:
         await _scroll_search_list_to_top(ctx)
@@ -809,79 +655,32 @@ async def _click_search_result_item(
         await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
         await asyncio.sleep(0.35)
 
-    img_ok, img_note = await _click_search_img_poster(ctx, index)
-    if img_ok:
-        ok, note = await _confirm_feed_open(img_note.split(":")[0] if img_note else "visible_coord")
-        if ok:
-            return True, note
-        last_note = note
+    clicked, click_note, aweme = await _click_viewport_search_card(ctx, index)
+    if not clicked:
+        return False, f"{click_note}; {await _page_phase_note(page)}"
 
-    dom_ok, dom_note, dom_aweme = await _click_search_card_via_dom(ctx, index)
-    if dom_ok:
-        ok, note = await _confirm_feed_open("dom_click")
-        if ok:
-            if dom_aweme and not aweme_hint:
-                ids = list(ctx.state.get("search_aweme_ids") or [])
-                if dom_aweme not in ids:
-                    ids.append(dom_aweme)
-                    ctx.state["search_aweme_ids"] = ids
-            return True, note
-        last_note = note
-    elif dom_note:
-        last_note = f"{last_note}; {dom_note}"
-
-    js_ok, js_note, js_aweme = await _click_search_card_via_js(ctx, index)
-    if js_ok:
-        ok, note = await _confirm_feed_open(js_note.split()[0] if js_note else "js_click")
-        if ok:
-            if js_aweme and not aweme_hint:
-                ids = list(ctx.state.get("search_aweme_ids") or [])
-                if js_aweme not in ids:
-                    ids.append(js_aweme)
-                    ctx.state["search_aweme_ids"] = ids
-            return True, note
-        last_note = note
-
-    if await _click_video_link_at_index(ctx, index):
-        ok, note = await _confirm_feed_open("link_click")
-        if ok:
-            return True, note
-        last_note = note
-
-    best_selector, best_count = await _resolve_best_poster_selector(page, index)
-    if best_selector:
-        item = page.locator(best_selector).nth(index)
-        try:
-            with contextlib.suppress(Exception):
-                await page.evaluate(
-                    """(args) => {
-                      const [sel, idx] = args;
-                      const nodes = Array.from(document.querySelectorAll(sel));
-                      const el = nodes[idx];
-                      if (el) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-                    }""",
-                    [best_selector, index],
-                )
-                await asyncio.sleep(0.3)
-            if await item.is_visible():
-                await human_click(page, item, ctx.settings, tenant_id=ctx.tenant_id)
+    if aweme:
+        ids = list(ctx.state.get("search_aweme_ids") or [])
+        if aweme not in ids:
+            if index < len(ids):
+                ids[index] = aweme
             else:
-                box = await item.bounding_box()
-                if box:
-                    await page.mouse.click(
-                        box["x"] + box["width"] / 2,
-                        box["y"] + box["height"] / 2,
-                    )
-                else:
-                    await item.click(force=True, timeout=4000)
-            ok, note = await _confirm_feed_open(f"poster_click:{best_selector}")
-            if ok:
-                return True, note
-            last_note = note
-        except Exception as exc:
-            last_note = f"{best_selector}[{index}] 点击异常: {exc}"
+                ids.append(aweme)
+            ctx.state["search_aweme_ids"] = ids
 
-    return False, f"{last_note}; {await _page_phase_note(page)}"
+    snap = await classify_douyin_page(page)
+    if await _wait_search_feed_overlay(ctx, max_sec=5.0):
+        aweme_hint = aweme or await _resolve_aweme_id_at_index(ctx, index)
+        return True, (
+            f"{click_note} feed_overlay phase={snap.get('phase')} "
+            f"aweme={aweme_hint[:12] if aweme_hint else 'dom'}"
+        )
+    snap = await classify_douyin_page(page)
+    return False, (
+        f"feed_overlay_timeout index={index} {click_note} phase={snap.get('phase')} "
+        f"feed={snap.get('feed_visible')} list={snap.get('list_visible')} "
+        f"url={(page.url or '')[:96]}"
+    )
 
 
 def _match_comment(comment_text: str, keywords: list[str], exclude: list[str] | None = None) -> bool:
@@ -939,7 +738,7 @@ class StandaloneKeywordBrowseConfig:
     eval_spec: dict[str, Any] | None = None
     task_brief: Any | None = None
     reuse_stable_session: bool = True
-    close_browser_after: bool = False
+    close_browser_after: bool = False  # 已废弃：standalone 不主动关浏览器
     start_video_index: int = 0
     resume_search_url: str = ""
     source_job_id: str = ""
@@ -1070,37 +869,25 @@ async def _sync_search_aweme_ids_from_dom(ctx: DouyinUiSession) -> list[str]:
 
 
 async def _prepare_search_list_for_browse(ctx: DouyinUiSession) -> bool:
-    """搜索完成后等待列表可点：确保在搜索页，DOM 海报或 API aweme_id 任一就绪。"""
+    """搜索完成后等待列表可点：视口内至少 1 张可点卡片（与点击同一套扫描）。"""
     page = ctx.page
     settings = ctx.settings
     tenant_id = ctx.tenant_id
     search_url = str(ctx.state.get("search_url") or page.url or "")
 
     if search_url and not _on_search_results_url(page.url or ""):
-        try:
+        with contextlib.suppress(Exception):
             await page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
             await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
-        except Exception:
-            pass
 
     deadline = asyncio.get_running_loop().time() + 28.0
-    round_idx = 0
     while asyncio.get_running_loop().time() < deadline:
-        aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
-        if aweme_ids:
-            return True
-        poster_count = await _count_search_posters(page)
-        if poster_count > 0:
+        if await _is_search_list_ready(page, {}, ctx=ctx):
             await _sync_search_aweme_ids_from_dom(ctx)
             return True
-        if ctx.video_urls:
-            return True
-        if round_idx % 3 == 2 and _on_search_results_url(page.url or ""):
-            await scroll_search_results_page(page, settings, tenant_id=tenant_id)
         await human_delay(page, settings, tenant_id=tenant_id, profile="fast")
-        round_idx += 1
 
-    return bool(ctx.state.get("search_aweme_ids")) or await _count_search_posters(page) > 0
+    return await _is_search_list_ready(page, {}, ctx=ctx)
 
 
 async def _open_feed_via_video_url(ctx: DouyinUiSession, aweme_id: str) -> bool:
@@ -1317,35 +1104,9 @@ async def _enter_video_for_browse(
 
 
 async def _ensure_search_item_index(ctx: DouyinUiSession, index: int) -> bool:
-    """列表 item 不足时滚动加载，直到 index 可点或达到尝试上限。"""
-    page = ctx.page
-    aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
-
-    async def _index_ready() -> bool:
-        ids = list(ctx.state.get("search_aweme_ids") or [])
-        if len(ids) > index:
-            return True
-        if await _count_search_posters(page) > index:
-            return True
-        synced = await _sync_search_aweme_ids_from_dom(ctx)
-        return len(synced) > index
-
-    if await _index_ready():
-        return True
-    if not await search_list_visible(page):
-        return len(list(ctx.state.get("search_aweme_ids") or [])) > index
-
-    max_scroll_attempts = max(6, min(16, (index + 4) // 2 + 2))
-    for _ in range(max_scroll_attempts):
-        if await _index_ready():
-            return True
-        if not await search_list_visible(page):
-            break
-        await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
-        await asyncio.sleep(random.uniform(0.5, 1.0))
-        aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
-
-    return await _index_ready()
+    """列表 item 不足时滚动，直到视口内第 index 张卡片可见。"""
+    cards = await _scroll_search_until_card_index(ctx, index)
+    return len(cards) > index
 
 
 def _resolve_lead_aweme_id(lead: PreciseLeadRecord) -> str:
@@ -1897,6 +1658,11 @@ async def _attempt_search_reuse(
         if aweme_ids:
             ctx.state["search_aweme_ids"] = aweme_ids
 
+    if not await _is_search_list_ready(page, {}, ctx=ctx):
+        viewport_n = len(await _collect_visible_search_cards(page))
+        ctx.phase_log.append(f"SEARCH_REUSE skip viewport_cards={viewport_n}")
+        return False, ""
+
     filter_suffix = _filter_diagnostic_suffix(ctx)
     diag = (reused.diagnostic or "复用搜索页") + filter_suffix
     ctx.phase_log.append(f"SEARCH_REUSE {diag[:180]} url={str(page.url or '')[:96]}")
@@ -1979,7 +1745,7 @@ async def _attempt_resume_saved_search(
         )
         return True, reuse_diag or "续扫：恢复已保存搜索页"
 
-    if _on_search_results_url(page.url or "") and await page_has_search_posters(page):
+    if _on_search_results_url(page.url or "") and await _is_search_list_ready(page, {}, ctx=ctx):
         ctx.state["search_url"] = page.url or resume_url
         diag = f"续扫：已打开搜索页 url={str(page.url or '')[:96]}"
         ctx.phase_log.append(diag)
@@ -2173,8 +1939,9 @@ async def _run_search_phase(
             days=publish_days,
             api_days_fallback=api_days_fallback,
         )
-        list_ready = await _is_search_list_ready(page, api_items, ctx=ctx)
+        list_ready = await _is_search_list_ready(page, {}, ctx=ctx)
         filter_suffix = _filter_diagnostic_suffix(ctx)
+        viewport_n = len(await _collect_visible_search_cards(page))
 
         if search_result.ok:
             if not aweme_ids:
@@ -2183,6 +1950,11 @@ async def _run_search_phase(
                     api_items,
                     days=publish_days,
                     api_days_fallback=api_days_fallback,
+                )
+            if not list_ready:
+                return False, (
+                    f"搜索提交成功但视口内无可点卡片（viewport_cards={viewport_n}）"
+                    + filter_suffix
                 )
             ctx.state["search_ready"] = True
             ctx.state.setdefault("search_url", page.url)
@@ -2194,6 +1966,7 @@ async def _run_search_phase(
                 diag += f"；api_videos={api_count}"
             if api_reason:
                 diag += f"；api_status={api_reason}"
+            diag += f"；viewport_cards={viewport_n}"
             filter_sub = filter_suffix.lstrip("；") or f"已识别 {api_count or len(aweme_ids)} 个视频"
             if api_reason and filter_sub == filter_suffix.lstrip("；"):
                 filter_sub += f" · {api_reason}"
@@ -2232,7 +2005,7 @@ async def _run_search_phase(
                 log=True,
             )
             return True, (
-                f"列表已展示，按 DOM 顺序点击（api={len(api_items)}）{filter_suffix}；"
+                f"列表可点（viewport_cards={viewport_n}，api={len(api_items)}）{filter_suffix}；"
                 f"原判定={search_result.error or search_result.diagnostic or 'unknown'}"
             )
 
@@ -2933,16 +2706,17 @@ async def run_standalone_keyword_browse(
         if _is_keyword_mode(config):
             list_prepared = await _prepare_search_list_for_browse(ctx)
             poster_n = await _count_search_posters(page)
+            viewport_n = len(await _collect_visible_search_cards(page))
             aweme_n = len(ctx.state.get("search_aweme_ids") or [])
             ctx.phase_log.append(
-                f"STEP3b list_prepared={list_prepared} posters={poster_n} aweme_ids={aweme_n} "
-                f"url={str(page.url or '')[:96]}"
+                f"STEP3b list_prepared={list_prepared} viewport_cards={viewport_n} "
+                f"posters={poster_n} aweme_ids={aweme_n} url={str(page.url or '')[:96]}"
             )
             if not list_prepared:
                 result.error = "E_NO_LIST"
                 result.diagnostic = (
-                    f"搜索完成但列表不可点（海报={poster_n}，api_aweme={aweme_n}）；"
-                    f"识别规则：需 search URL + (API 有数据 或 DOM 海报>0 或 search_aweme_ids)；"
+                    f"搜索完成但视口内无可点卡片（viewport_cards={viewport_n}，海报={poster_n}）；"
+                    f"识别规则：search URL + 视口内至少 1 张可点卡片；"
                     f"url={page.url}"
                 )
                 result.phase_log = list(ctx.phase_log)
@@ -2972,6 +2746,7 @@ async def run_standalone_keyword_browse(
         video_index = start_video_index
         stop_browse_reason = ""
         ran_out_of_list = False
+        list_click_blocked = False
 
         if _is_keyword_mode(config) and start_video_index > 0:
             ctx.phase_log.append(
@@ -2979,17 +2754,25 @@ async def run_standalone_keyword_browse(
                 f"aweme_ids={len(aweme_ids)} posters={await _count_search_posters(page)}"
             )
             if not await _ensure_search_item_index(ctx, start_video_index):
+                viewport_n = len(await _collect_visible_search_cards(page))
                 ctx.phase_log.append(
-                    f"LIST_SCROLL miss index={start_video_index} "
+                    f"LIST_SCROLL miss index={start_video_index} viewport_cards={viewport_n} "
                     f"posters={await _count_search_posters(page)}"
                 )
+                result.error = "E_NO_LIST"
+                result.diagnostic = (
+                    f"续扫：视口内不足以点到第 {start_video_index + 1} 个视频"
+                    f"（viewport_cards={viewport_n}）"
+                )
+                result.phase_log = list(ctx.phase_log)
                 await _report_step(
                     ctx,
-                    f"续扫：列表滚动到第 {start_video_index + 1} 个视频失败",
-                    sub="将尝试直接点击该序号",
+                    f"续扫：列表未就绪",
+                    sub=result.diagnostic,
                     log=False,
                     progress_force=True,
                 )
+                return result
             else:
                 aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
                 await _report_step(
@@ -3033,9 +2816,9 @@ async def run_standalone_keyword_browse(
                 video_url = ""
                 if _is_keyword_mode(config):
                     if not await _ensure_search_item_index(ctx, video_index):
+                        viewport_n = len(await _collect_visible_search_cards(page))
                         ctx.phase_log.append(
-                            f"LIST_EXHAUSTED index={video_index} "
-                            f"aweme={len(list(ctx.state.get('search_aweme_ids') or []))} "
+                            f"LIST_EXHAUSTED index={video_index} viewport_cards={viewport_n} "
                             f"posters={await _count_search_posters(page)}"
                         )
                         ran_out_of_list = True
@@ -3071,6 +2854,25 @@ async def run_standalone_keyword_browse(
             result.comments_scanned += scanned
             if entered:
                 result.videos_processed += 1
+            elif _is_keyword_mode(config) and (
+                stop_note.startswith("未能点击")
+                or stop_note.startswith("未能返回搜索列表")
+                or "Feed 浮层未就绪" in stop_note
+                or "feed_overlay_timeout" in stop_note
+                or "viewport_cards=0" in stop_note
+            ):
+                list_click_blocked = True
+                ctx.phase_log.append(
+                    f"LIST_CLICK_BLOCKED index={video_index} {stop_note[:220]}"
+                )
+                await _report_step(
+                    ctx,
+                    f"视频 {video_index + 1}：列表点击失败，停止续扫",
+                    sub=stop_note[:120],
+                    log=False,
+                    progress_force=True,
+                )
+                break
             ctx.phase_log.append(
                 f"STEP7 video={video_index + 1} leads={len(video_leads)} "
                 f"total={len(all_leads)}/{target} scanned={scanned} note={stop_note}"
@@ -3119,6 +2921,7 @@ async def run_standalone_keyword_browse(
             not result.target_reached
             and (
                 ran_out_of_list
+                or list_click_blocked
                 or (
                     _is_manual_mode(config)
                     and video_index >= len(manual_video_urls)
@@ -3126,6 +2929,8 @@ async def run_standalone_keyword_browse(
                 )
             )
         )
+        if list_click_blocked and not result.error:
+            result.error = "E_LIST_CLICK"
         result.phase_log = list(ctx.phase_log)
         if result.target_reached:
             result.diagnostic = (
@@ -3143,6 +2948,8 @@ async def run_standalone_keyword_browse(
             )
             if not result.search_exhausted:
                 result.diagnostic += "；搜索结果内仍有视频，将继续浏览直至达成目标或列表耗尽"
+            elif list_click_blocked:
+                result.diagnostic += "；列表点击失败，已停止续扫（避免在搜索页空转）"
             elif ran_out_of_list:
                 result.diagnostic += "；搜索列表已耗尽"
         await _report_step(
@@ -3245,7 +3052,7 @@ def build_standalone_browse_config(
     start_video_index: int | None = None,
     resume_search_url: str = "",
     source_job_id: str = "",
-    close_browser_after: bool = False,
+    close_browser_after: bool = False,  # 忽略：standalone 不主动关浏览器
 ) -> StandaloneKeywordBrowseConfig:
     mode, resolved_video, resolved_profile = resolve_standalone_acquisition_mode(
         acquisition_mode=acquisition_mode,
@@ -3297,7 +3104,7 @@ def build_standalone_browse_config(
         },
         persist_to_db=bool(persist_to_db),
         reuse_stable_session=True,
-        close_browser_after=bool(close_browser_after),
+        close_browser_after=False,
         start_video_index=max(0, int(start_video_index or 0)),
         resume_search_url=str(resume_search_url or "").strip(),
         source_job_id=str(source_job_id or "").strip(),
@@ -3333,56 +3140,23 @@ async def run_standalone_keyword_browse_with_browser(
     """自带浏览器会话的便捷入口（调试 / 脚本调用）。
 
     默认复用 AgentSessionManager 稳定基座（与桌面 App / Supervisor 相同），
-    优先使用已打开的 Chrome 标签，避免每次新建空上下文再灌 Cookie。
+    优先使用已打开的 Chrome 标签；任务结束后不主动关闭浏览器。
     """
     from app.core.antibot import headless_for_platform
     from app.services.agent_browser_session import AgentSessionManager
-    from app.services.playwright_pool import PlaywrightPool
 
     store = DouyinSessionStore(settings)
     resolved_headless = headless_for_platform(settings, PLATFORM, headless)
 
-    if config.reuse_stable_session:
-        session = await AgentSessionManager.get_instance().create_stable(
-            tenant_id,
-            PLATFORM,
-            settings,
-            account_id=account_id,
-            headless=resolved_headless,
-        )
-        page = session.page
-        try:
-            result = await run_standalone_keyword_browse(
-                page,
-                settings,
-                tenant_id=tenant_id,
-                account_id=account_id,
-                config=config,
-                db_session=db_session,
-                headless=resolved_headless,
-                stable_session=session,
-                on_progress=on_progress,
-            )
-        finally:
-            await _persist_session_storage(
-                store,
-                tenant_id=tenant_id,
-                account_id=account_id,
-                context=session._context,
-            )
-            if config.close_browser_after:
-                await AgentSessionManager.get_instance().close(session.session_id)
-        return result
-
-    pool = PlaywrightPool.get()
-    async with pool.tenant_context(
-        PLATFORM,
+    session = await AgentSessionManager.get_instance().create_stable(
         tenant_id,
-        store,
+        PLATFORM,
         settings,
-        headless=resolved_headless,
         account_id=account_id,
-    ) as (_context, page):
+        headless=resolved_headless,
+    )
+    page = session.page
+    try:
         return await run_standalone_keyword_browse(
             page,
             settings,
@@ -3391,5 +3165,13 @@ async def run_standalone_keyword_browse_with_browser(
             config=config,
             db_session=db_session,
             headless=resolved_headless,
+            stable_session=session,
             on_progress=on_progress,
+        )
+    finally:
+        await _persist_session_storage(
+            store,
+            tenant_id=tenant_id,
+            account_id=account_id,
+            context=session._context,
         )

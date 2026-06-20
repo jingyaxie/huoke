@@ -124,7 +124,7 @@ def test_standalone_click_poster_selectors_prefer_search_result_card():
     assert _CLICK_POSTER_SELECTORS[0] == "div.search-result-card"
 
 
-def test_standalone_keyword_click_paths_dom_only_not_modal():
+def test_standalone_keyword_click_paths_viewport_only_not_modal():
     import inspect
 
     from app.platforms.douyin import standalone_keyword_browse as mod
@@ -136,6 +136,10 @@ def test_standalone_keyword_click_paths_dom_only_not_modal():
     assert "_open_feed_via_modal_id" not in enter_src
     assert "_open_feed_via_modal_id" not in wait_src
     assert "modal_open" not in click_src
+    assert "_click_viewport_search_card" in click_src
+    assert "_click_search_img_poster" not in click_src
+    assert "_click_search_card_via_js" not in click_src
+    assert "human_click" not in click_src
 
 
 def test_sync_search_aweme_ids_from_api():
@@ -160,33 +164,36 @@ def test_sync_search_aweme_ids_from_api():
 
 
 @pytest.mark.asyncio
-async def test_is_search_list_ready_with_api_items():
+async def test_is_search_list_ready_requires_viewport_cards():
     class _Page:
         url = "https://www.douyin.com/jingxuan/search/test?type=general"
 
-    assert await _is_search_list_ready(_Page(), {"1": {"aweme_id": "1"}}) is True
-    assert await _is_search_list_ready(_Page(), {}) is False
+        async def evaluate(self, _js):
+            return []
+
+    assert await _is_search_list_ready(_Page(), {"1": {"aweme_id": "1"}}) is False
 
 
 @pytest.mark.asyncio
-async def test_is_search_list_ready_with_api_complete_state():
-    from app.services.ui_flow.params import parse_ui_flow_params
-    from app.services.ui_flow.platforms.douyin.ui_session import DouyinUiSession
-
+async def test_is_search_list_ready_with_viewport_cards():
     class _Page:
         url = "https://www.douyin.com/jingxuan/search/test?type=general"
 
-    params = parse_ui_flow_params({"keyword": "AI获客", "content_limit": 3}, platform="douyin")
-    ctx = DouyinUiSession(
-        settings=None,  # type: ignore[arg-type]
-        tenant_id="default",
-        account_id="default",
-        params=params,
-        page=None,  # type: ignore[arg-type]
-    )
-    ctx.state["search_api_complete"] = True
-    ctx.state["search_api_complete_reason"] = "items=2"
-    assert await _is_search_list_ready(_Page(), {}, ctx=ctx) is True
+        async def evaluate(self, _js):
+            return [{"top": 10, "left": 20, "width": 100, "height": 120, "aweme": "7123456789012345678", "selector": "div.search-result-card"}]
+
+    assert await _is_search_list_ready(_Page(), {}) is True
+
+
+@pytest.mark.asyncio
+async def test_is_search_list_ready_wrong_url():
+    class _Page:
+        url = "https://www.douyin.com/jingxuan"
+
+        async def evaluate(self, _js):
+            return [{"top": 10, "left": 20, "width": 100, "height": 120, "aweme": "1", "selector": "x"}]
+
+    assert await _is_search_list_ready(_Page(), {}) is False
 
 
 @pytest.mark.asyncio

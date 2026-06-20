@@ -278,7 +278,6 @@ async def standalone_keyword_browse(
         dm_ratio=payload.dm_ratio,
         follow_ratio=payload.follow_ratio,
         persist_to_db=bool(payload.persist_to_db),
-        close_browser_after=bool(payload.close_browser_after),
     )
     result = await run_standalone_keyword_browse_with_browser(
         settings,
@@ -336,7 +335,6 @@ async def standalone_video_browse(
         dm_ratio=payload.dm_ratio,
         follow_ratio=payload.follow_ratio,
         persist_to_db=bool(payload.persist_to_db),
-        close_browser_after=bool(payload.close_browser_after),
     )
     result = await run_standalone_keyword_browse_with_browser(
         settings,
@@ -395,7 +393,6 @@ async def standalone_profile_browse(
         dm_ratio=payload.dm_ratio,
         follow_ratio=payload.follow_ratio,
         persist_to_db=bool(payload.persist_to_db),
-        close_browser_after=bool(payload.close_browser_after),
     )
     result = await run_standalone_keyword_browse_with_browser(
         settings,

@@ -155,7 +155,10 @@ class DouyinStandaloneKeywordBrowseRequest(BaseModel):
     dm_ratio: int = Field(default=30, ge=0, le=100)
     follow_ratio: int = Field(default=20, ge=0, le=100)
     persist_to_db: bool = False
-    close_browser_after: bool = False
+    close_browser_after: bool = Field(
+        default=False,
+        description="已废弃；standalone 任务结束后保留浏览器窗口",
+    )
 
 
 class DouyinStandaloneManualBrowseBase(BaseModel):
@@ -178,7 +181,10 @@ class DouyinStandaloneManualBrowseBase(BaseModel):
     dm_ratio: int = Field(default=30, ge=0, le=100)
     follow_ratio: int = Field(default=20, ge=0, le=100)
     persist_to_db: bool = False
-    close_browser_after: bool = False
+    close_browser_after: bool = Field(
+        default=False,
+        description="已废弃；standalone 任务结束后保留浏览器窗口",
+    )
 
 
 class DouyinStandaloneVideoBrowseRequest(DouyinStandaloneManualBrowseBase):
