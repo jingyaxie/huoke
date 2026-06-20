@@ -83,9 +83,7 @@ from app.services.ui_flow.platforms.douyin.feed_ui import (
 from app.services.ui_flow.platforms.douyin.browse_ui import (
     _VIDEO_CARD_SELECTORS,
     _click_video_link_at_index,
-    _open_feed_via_modal_id,
     _resolve_aweme_id_at_index,
-    click_search_poster,
 )
 from app.services.ui_flow.platforms.douyin.profile_ui import (
     back_to_profile_list,
@@ -325,27 +323,15 @@ async def _wait_feed_opened(page: Page, *, max_sec: float = 4.0) -> bool:
 async def _wait_search_feed_overlay(
     ctx: DouyinUiSession,
     *,
-    aweme_hint: str = "",
     max_sec: float = 5.0,
 ) -> bool:
-    """等待搜索 Feed 浮层；若误入 /video/ 详情页则尝试 modal_id 恢复。"""
+    """等待搜索 Feed 浮层（仅 DOM 点击打开，不用 modal_id URL 跳转）。"""
     page = ctx.page
     deadline = asyncio.get_running_loop().time() + max_sec
-    tried_modal_recovery = False
     while asyncio.get_running_loop().time() < deadline:
         if await is_search_feed_overlay(page):
             ctx.state["feed_mode"] = True
             return True
-        url = (page.url or "").lower()
-        if (
-            aweme_hint
-            and re.search(r"/video/\d+", url)
-            and not tried_modal_recovery
-        ):
-            tried_modal_recovery = True
-            if await _open_feed_via_modal_id(ctx, aweme_hint):
-                await asyncio.sleep(0.45)
-                continue
         await asyncio.sleep(0.15)
     return False
 
@@ -416,12 +402,12 @@ async def _back_to_search_list(ctx: DouyinUiSession) -> bool:
 
 
 _CLICK_POSTER_SELECTORS = (
-    '[class*="discover-video-card"]',
-    'img.discover-video-card-img',
-    '[class*="search-result-card"]',
     'div.search-result-card',
+    '[class*="search-result-card"]',
     '[data-e2e="search-card-video"]',
     '[class*="SearchVideoCard"]',
+    '[class*="discover-video-card"]',
+    'img.discover-video-card-img',
     *_VIDEO_CARD_SELECTORS,
 )
 
@@ -430,9 +416,9 @@ _VISIBLE_SEARCH_CARDS_JS = """
   const out = [];
   const seen = new Set();
   const isInViewport = (r) => (
-    r.width >= 24 && r.height >= 24 &&
-    r.bottom > 8 && r.top < window.innerHeight - 8 &&
-    r.right > 8 && r.left < window.innerWidth - 8
+    r.width >= 20 && r.height >= 20 &&
+    r.bottom > 0 && r.top < window.innerHeight &&
+    r.right > 0 && r.left < window.innerWidth
   );
   const pickNode = (el) => {
     const chain = [
@@ -453,12 +439,12 @@ _VISIBLE_SEARCH_CARDS_JS = """
     return null;
   };
   const selectors = [
-    '[class*="discover-video-card"]',
-    'img.discover-video-card-img',
-    '[data-e2e="search-card-video"]',
     'div.search-result-card',
     '[class*="search-result-card"]',
+    '[data-e2e="search-card-video"]',
     '[class*="SearchVideoCard"]',
+    '[class*="discover-video-card"]',
+    'img.discover-video-card-img',
     '[class*="videoImage"] img',
     'a[href*="/video/"]',
   ];
@@ -497,11 +483,11 @@ _VISIBLE_SEARCH_CARDS_JS = """
 _CLICK_SEARCH_CARD_JS = """
 (index) => {
   const selectors = [
-    '[class*="discover-video-card"]',
     'div.search-result-card',
-    '[data-e2e="search-card-video"]',
     '[class*="search-result-card"]',
+    '[data-e2e="search-card-video"]',
     '[class*="SearchVideoCard"]',
+    '[class*="discover-video-card"]',
     '[class*="videoImage"] img',
   ];
   for (const sel of selectors) {
@@ -571,6 +557,31 @@ async def _collect_visible_search_cards(page: Page) -> list[dict[str, Any]]:
 _SEARCH_CARD_PICK_JS = _VISIBLE_SEARCH_CARDS_JS
 
 
+async def _scroll_search_list_to_top(ctx: DouyinUiSession) -> None:
+    """精选/搜索虚拟列表：滚回顶部，确保 index=0 在视口内。"""
+    page = ctx.page
+    await release_searchbar_focus(page)
+    with contextlib.suppress(Exception):
+        await page.evaluate(
+            """() => {
+              window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+              for (const sel of [
+                '[class*="search-result"]',
+                '[class*="SearchResult"]',
+                '[class*="discover-list"]',
+                '[class*="waterfall"]',
+                'main',
+              ]) {
+                const el = document.querySelector(sel);
+                if (el && el.scrollHeight > el.clientHeight + 8) {
+                  el.scrollTop = 0;
+                }
+              }
+            }"""
+        )
+    await asyncio.sleep(random.uniform(0.28, 0.52))
+
+
 async def _scroll_search_until_card_index(
     ctx: DouyinUiSession,
     index: int,
@@ -579,30 +590,36 @@ async def _scroll_search_until_card_index(
 ) -> list[dict[str, Any]]:
     """虚拟列表下滚动直到第 index 个可见卡片出现（仅在搜索列表页执行）。"""
     page = ctx.page
+    if index <= 0:
+        await _scroll_search_list_to_top(ctx)
+
     aweme_ids = list(ctx.state.get("search_aweme_ids") or [])
     if len(aweme_ids) > index:
-        return await _collect_visible_search_cards(page)
+        cards = await _collect_visible_search_cards(page)
+        if len(cards) > index:
+            return cards
 
     if not await search_list_visible(page):
         return await _collect_visible_search_cards(page)
 
     budget = max_scrolls
     if budget is None:
-        budget = 2 if len(aweme_ids) > index else min(12, max(2, index + 1))
+        budget = min(14, max(3, index + 2))
 
     cards: list[dict[str, Any]] = []
-    scroll_budget = 0 if index <= 0 else budget
-    for _ in range(scroll_budget + 1):
+    for attempt in range(budget + 1):
         cards = await _collect_visible_search_cards(page)
         if len(cards) > index:
             return cards
         if await feed_overlay_visible(page) or not await search_list_visible(page):
             break
-        if scroll_budget <= 0:
+        if attempt >= budget:
             break
-        scroll_budget -= 1
-        await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
-        await asyncio.sleep(0.35)
+        if attempt == 0 and index <= 0:
+            await _scroll_search_list_to_top(ctx)
+        else:
+            await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
+            await asyncio.sleep(0.35)
     return cards
 
 
@@ -612,12 +629,12 @@ async def _resolve_best_poster_selector(page: Page, index: int) -> tuple[str, in
     best_count = 0
     best_score = -1
     for selector in (
-        '[class*="discover-video-card"]',
-        'img.discover-video-card-img',
         'div.search-result-card',
         '[class*="search-result-card"]',
         '[data-e2e="search-card-video"]',
         '[class*="SearchVideoCard"]',
+        '[class*="discover-video-card"]',
+        'img.discover-video-card-img',
         '[class*="videoImage"] img',
         *_VIDEO_CARD_SELECTORS,
         *_POSTER_SELECTORS,
@@ -750,7 +767,7 @@ async def _click_search_result_item(
     *,
     skip_back: bool = False,
 ) -> tuple[bool, str]:
-    """点击搜索列表第 N 个视频：aweme 直开优先，DOM 点击兜底；每步校验页面阶段。"""
+    """点击搜索列表第 N 个视频：纯 DOM/坐标点击，不用 modal_id URL 跳转。"""
     page = ctx.page
     if not skip_back:
         if not await _back_to_search_list(ctx):
@@ -763,13 +780,13 @@ async def _click_search_result_item(
     phase_before = await _page_phase_note(page)
     ctx.phase_log.append(
         f"CLICK_PREP index={index} posters={await _count_search_posters(page)} "
-        f"best={await _resolve_best_poster_selector(page, index)} aweme={aweme_hint[:12] if aweme_hint else 'none'} "
+        f"best={await _resolve_best_poster_selector(page, index)} aweme={aweme_hint[:12] if aweme_hint else 'dom'} "
         f"{phase_before}"
     )
 
     async def _confirm_feed_open(method: str) -> tuple[bool, str]:
         snap = await classify_douyin_page(page)
-        if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_hint, max_sec=5.0):
+        if await _wait_search_feed_overlay(ctx, max_sec=5.0):
             return True, (
                 f"{method} index={index} aweme={aweme_hint[:12] if aweme_hint else 'dom'} "
                 f"feed_overlay phase={snap.get('phase')}"
@@ -781,36 +798,20 @@ async def _click_search_result_item(
             f"url={(page.url or '')[:96]}"
         )
 
-    if aweme_hint and await _open_feed_via_modal_id(ctx, aweme_hint):
-        ok, note = await _confirm_feed_open("modal_open")
-        if ok:
-            return True, note
-
     if not await search_list_visible(page):
         return False, f"无法 DOM 点击：当前不在搜索列表；{await _page_phase_note(page)}"
 
-    last_note = f"未找到可点击的列表 item；api_aweme={aweme_hint or 'none'}"
+    last_note = "未找到可点击的列表 item"
 
-    # 已有 aweme_id 时优先 modal 打开，避免在列表上反复滚动
-    if index > 0 and not aweme_hint:
+    if index <= 0:
+        await _scroll_search_list_to_top(ctx)
+    elif index > 0:
         await scroll_search_results_page(page, ctx.settings, tenant_id=ctx.tenant_id)
         await asyncio.sleep(0.35)
 
-    js_ok, js_note, js_aweme = await _click_search_card_via_js(ctx, index)
-    if js_ok:
-        ok, note = await _confirm_feed_open(js_note.split()[0] if js_note else "js_click")
-        if ok:
-            if js_aweme and not aweme_hint:
-                ids = list(ctx.state.get("search_aweme_ids") or [])
-                if js_aweme not in ids:
-                    ids.append(js_aweme)
-                    ctx.state["search_aweme_ids"] = ids
-            return True, note
-        last_note = note
-
     img_ok, img_note = await _click_search_img_poster(ctx, index)
     if img_ok:
-        ok, note = await _confirm_feed_open(img_note.split(":")[0] if img_note else "img_click")
+        ok, note = await _confirm_feed_open(img_note.split(":")[0] if img_note else "visible_coord")
         if ok:
             return True, note
         last_note = note
@@ -829,23 +830,25 @@ async def _click_search_result_item(
     elif dom_note:
         last_note = f"{last_note}; {dom_note}"
 
-    if await click_search_poster(ctx, index):
-        ok, note = await _confirm_feed_open("browse_ui_poster")
+    js_ok, js_note, js_aweme = await _click_search_card_via_js(ctx, index)
+    if js_ok:
+        ok, note = await _confirm_feed_open(js_note.split()[0] if js_note else "js_click")
+        if ok:
+            if js_aweme and not aweme_hint:
+                ids = list(ctx.state.get("search_aweme_ids") or [])
+                if js_aweme not in ids:
+                    ids.append(js_aweme)
+                    ctx.state["search_aweme_ids"] = ids
+            return True, note
+        last_note = note
+
+    if await _click_video_link_at_index(ctx, index):
+        ok, note = await _confirm_feed_open("link_click")
         if ok:
             return True, note
         last_note = note
 
-    best_selector = ""
-    best_count = 0
-    for selector in _CLICK_POSTER_SELECTORS:
-        try:
-            count = await page.locator(selector).count()
-        except Exception:
-            continue
-        if count > index and count > best_count:
-            best_count = count
-            best_selector = selector
-
+    best_selector, best_count = await _resolve_best_poster_selector(page, index)
     if best_selector:
         item = page.locator(best_selector).nth(index)
         try:
@@ -863,24 +866,20 @@ async def _click_search_result_item(
             if await item.is_visible():
                 await human_click(page, item, ctx.settings, tenant_id=ctx.tenant_id)
             else:
-                await item.click(force=True, timeout=4000)
+                box = await item.bounding_box()
+                if box:
+                    await page.mouse.click(
+                        box["x"] + box["width"] / 2,
+                        box["y"] + box["height"] / 2,
+                    )
+                else:
+                    await item.click(force=True, timeout=4000)
             ok, note = await _confirm_feed_open(f"poster_click:{best_selector}")
             if ok:
                 return True, note
             last_note = note
         except Exception as exc:
             last_note = f"{best_selector}[{index}] 点击异常: {exc}"
-
-    if await _click_video_link_at_index(ctx, index):
-        ok, note = await _confirm_feed_open("link_click")
-        if ok:
-            return True, note
-        last_note = note
-
-    if aweme_hint and await _open_feed_via_modal_id(ctx, aweme_hint):
-        ok, note = await _confirm_feed_open("modal_fallback")
-        if ok:
-            return True, note
 
     return False, f"{last_note}; {await _page_phase_note(page)}"
 
@@ -1283,24 +1282,6 @@ async def _enter_video_for_browse(
     if not await _back_to_search_list(ctx):
         return False, "未能返回搜索列表，无法点下一个视频"
 
-    aweme_hint = ""
-    with contextlib.suppress(ValueError):
-        aweme_hint = _extract_aweme_id(video_url) if video_url else ""
-    if not aweme_hint:
-        aweme_hint = await _resolve_aweme_id_at_index(ctx, video_index)
-
-    if aweme_hint and await _open_feed_via_modal_id(ctx, aweme_hint):
-        if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_hint, max_sec=5.0):
-            note = f"modal_open index={video_index + 1} aweme={aweme_hint[:12]}"
-            ctx.phase_log.append(f"ITEM_CLICK {note}")
-            await _report_step(
-                ctx,
-                f"步骤 4/7：打开第 {video_index + 1} 个视频",
-                sub="Feed 浮层 · modal_id",
-                log=False,
-            )
-            return True, note
-
     if not await _ensure_search_item_index(ctx, video_index):
         return False, f"搜索列表第 {video_index + 1} 项不可用（滚动后仍不足）"
 
@@ -1315,22 +1296,13 @@ async def _enter_video_for_browse(
         f"list={snap_after.get('list_visible')} url={str(ctx.page.url or '')[:96]}"
     )
     if snap_after.get("on_video"):
-        aweme_recover = ""
-        with contextlib.suppress(ValueError):
-            aweme_recover = _extract_aweme_id(video_url) if video_url else ""
-        if not aweme_recover:
-            aweme_recover = await _resolve_aweme_id_at_index(ctx, video_index)
-        if aweme_recover and await _open_feed_via_modal_id(ctx, aweme_recover):
-            if await _wait_search_feed_overlay(ctx, aweme_hint=aweme_recover, max_sec=5.0):
-                ctx.phase_log.append(f"RECOVERED feed_overlay from video_page aweme={aweme_recover[:12]}")
-            else:
-                await _report_step(ctx, "详情页未就绪", sub="误入 /video/ 页且 modal 恢复失败", log=False)
-                return False, f"误入独立视频详情页，Feed 浮层恢复失败；{click_note}"
-        else:
-            await _report_step(ctx, "详情页未就绪", sub="误入 /video/ 独立详情页", log=False)
-            return False, f"误入独立视频详情页（评论在视频下方），请重试；{click_note}"
+        with contextlib.suppress(Exception):
+            await ctx.page.go_back()
+            await asyncio.sleep(0.45)
+        await _report_step(ctx, "详情页未就绪", sub="误入 /video/ 独立详情页", log=False)
+        return False, f"误入独立视频详情页（评论在视频下方），请重试；{click_note}"
 
-    if not await _wait_search_feed_overlay(ctx, aweme_hint=await _resolve_aweme_id_at_index(ctx, video_index), max_sec=4.0):
+    if not await _wait_search_feed_overlay(ctx, max_sec=4.0):
         await _report_step(ctx, "Feed 浮层未就绪", sub=await _page_phase_note(ctx.page), log=False)
         return False, f"进详情后 Feed 浮层未就绪；{await _page_phase_note(ctx.page)}"
 
@@ -2463,8 +2435,8 @@ async def _browse_video_comments(
     dedupe_stats: dict[str, int],
     db_session: Session | None = None,
     leads_before: int = 0,
-) -> tuple[list[PreciseLeadRecord], int, str]:
-    """步骤 5–7：单视频评论浏览、评估、保存线索。"""
+) -> tuple[list[PreciseLeadRecord], int, str, bool]:
+    """步骤 5–7：单视频评论浏览、评估、保存线索。返回 (leads, scanned, note, entered)。"""
     page = ctx.page
     leads: list[PreciseLeadRecord] = []
     comment_days = config.comment_days if config.comment_days is not None else config.days
@@ -2481,7 +2453,7 @@ async def _browse_video_comments(
         video_url=video_url,
     )
     if not entered:
-        return leads, 0, enter_note
+        return leads, 0, enter_note, False
 
     await _report_step(ctx, f"步骤 5/7：打开评论侧栏", sub=f"视频 {video_index + 1}", log=False)
 
@@ -2489,7 +2461,7 @@ async def _browse_video_comments(
     await asyncio.sleep(random.uniform(0.8, 1.6))
 
     if not await is_search_feed_overlay(page) and not await is_feed_detail_open(page):
-        return leads, 0, f"打开评论前不在 Feed 浮层；{await _page_phase_note(page)}"
+        return leads, 0, f"打开评论前不在 Feed 浮层；{await _page_phase_note(page)}", True
 
     captured_pages: list[dict[str, Any]] = []
     seen_signatures: set[str] = set()
@@ -2514,7 +2486,7 @@ async def _browse_video_comments(
         except Exception:
             pass
         await close_feed_detail_on_page(page, ctx.settings, tenant_id=ctx.tenant_id)
-        return leads, 0, "未能打开评论侧栏（未点到评论入口）"
+        return leads, 0, "未能打开评论侧栏（未点到评论入口）", True
 
     sort_latest_ok = await select_latest_comment_sort_on_page(page, ctx.settings, tenant_id=ctx.tenant_id)
     min_time_rounds = 1 if sort_latest_ok else 2
@@ -2796,7 +2768,7 @@ async def _browse_video_comments(
 
     if not stop_reason and _newest_top_create_time_in_page(_last_list_page(captured_pages)) is None:
         stop_reason = "未拦截到评论数据"
-    return leads, scanned, stop_reason or "单视频评论浏览结束"
+    return leads, scanned, stop_reason or "单视频评论浏览结束", True
 
 
 def _serialize_leads(leads: list[PreciseLeadRecord]) -> list[dict[str, Any]]:
@@ -3073,7 +3045,7 @@ async def run_standalone_keyword_browse(
                     break
 
             try:
-                video_leads, scanned, stop_note = await _browse_video_comments(
+                video_leads, scanned, stop_note, entered = await _browse_video_comments(
                     ctx,
                     config=config,
                     video_index=video_index,
@@ -3086,18 +3058,19 @@ async def run_standalone_keyword_browse(
                 )
             except HumanBrowseGuardError as exc:
                 ctx.phase_log.append(f"GUARD_VIDEO index={video_index + 1} {str(exc)[:120]}")
-                video_leads, scanned, stop_note = [], 0, f"本视频浏览中断：{exc}"
+                video_leads, scanned, stop_note, entered = [], 0, f"本视频浏览中断：{exc}", True
                 with contextlib.suppress(Exception):
                     await _close_video_browse(ctx)
             except Exception as exc:
                 ctx.phase_log.append(f"VIDEO_SKIP index={video_index + 1} {str(exc)[:120]}")
                 _logger.warning("browse video failed index=%s: %s", video_index + 1, exc)
-                video_leads, scanned, stop_note = [], 0, f"本视频异常：{exc}"
+                video_leads, scanned, stop_note, entered = [], 0, f"本视频异常：{exc}", False
                 with contextlib.suppress(Exception):
                     await _close_video_browse(ctx)
             all_leads.extend(video_leads)
             result.comments_scanned += scanned
-            result.videos_processed += 1
+            if entered:
+                result.videos_processed += 1
             ctx.phase_log.append(
                 f"STEP7 video={video_index + 1} leads={len(video_leads)} "
                 f"total={len(all_leads)}/{target} scanned={scanned} note={stop_note}"

@@ -118,6 +118,26 @@ def test_on_search_results_url_accepts_jingxuan_search():
     assert not _on_search_results_url("https://www.douyin.com/jingxuan")
 
 
+def test_standalone_click_poster_selectors_prefer_search_result_card():
+    from app.platforms.douyin.standalone_keyword_browse import _CLICK_POSTER_SELECTORS
+
+    assert _CLICK_POSTER_SELECTORS[0] == "div.search-result-card"
+
+
+def test_standalone_keyword_click_paths_dom_only_not_modal():
+    import inspect
+
+    from app.platforms.douyin import standalone_keyword_browse as mod
+
+    click_src = inspect.getsource(mod._click_search_result_item)
+    enter_src = inspect.getsource(mod._enter_video_for_browse)
+    wait_src = inspect.getsource(mod._wait_search_feed_overlay)
+    assert "_open_feed_via_modal_id" not in click_src
+    assert "_open_feed_via_modal_id" not in enter_src
+    assert "_open_feed_via_modal_id" not in wait_src
+    assert "modal_open" not in click_src
+
+
 def test_sync_search_aweme_ids_from_api():
     from app.services.ui_flow.params import parse_ui_flow_params
     from app.services.ui_flow.platforms.douyin.ui_session import DouyinUiSession

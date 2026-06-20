@@ -80,6 +80,12 @@ def bundle_fingerprint(bundle_dir: Path) -> str:
     return str(int(bundle_dir.stat().st_mtime_ns))
 
 
+def fingerprints_match(stored: object, current: str) -> bool:
+    if stored is None:
+        return False
+    return str(stored).casefold() == str(current).casefold()
+
+
 def copy_tree(source: Path, destination: Path) -> None:
     if not source.exists():
         raise FileNotFoundError(f"copy source missing: {source}")
@@ -202,7 +208,7 @@ def sync_bundle_cache(source_bundle_dir: Path, data_dir: Path, root: Path) -> Pa
     if manifest_file.is_file() and cache_bundle.is_dir():
         try:
             existing = json.loads(manifest_file.read_text(encoding="utf-8"))
-            if existing.get("fingerprint") == fingerprint and (cache_bundle / "runtime").is_dir():
+            if fingerprints_match(existing.get("fingerprint"), fingerprint) and (cache_bundle / "runtime").is_dir():
                 cache_issues = collect_bundle_integrity_issues(cache_bundle)
                 cached_python = find_portable_python_exe(cache_bundle)
                 if not cache_issues and cached_python is not None:
@@ -255,6 +261,43 @@ def sync_bundle_cache(source_bundle_dir: Path, data_dir: Path, root: Path) -> Pa
     return cache_bundle
 
 
+def repair_runtime_workdir_missing_components(
+    source_bundle_dir: Path,
+    work_bundle: Path,
+) -> bool:
+    """补齐 runtime-work 中缺失的 backend/frontend-dist，避免为局部残缺触发整包重同步。"""
+    repaired = False
+    for name in ("runtime", "backend", "frontend-dist"):
+        src = source_bundle_dir / name
+        dst = work_bundle / name
+        if not src.exists():
+            continue
+        if not runtime_workdir_backend_ready(work_bundle) or not dst.exists():
+            copy_tree(src, dst)
+            repaired = True
+            continue
+        for rel in CORE_BUNDLE_RELATIVE_PATHS:
+            if not rel.startswith(f"{name}/"):
+                continue
+            rel_path = rel.replace("/", os.sep)
+            if (work_bundle / rel_path).is_file():
+                continue
+            src_file = source_bundle_dir / rel_path
+            if not src_file.is_file():
+                continue
+            target_file = work_bundle / rel_path
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, target_file, follow_symlinks=True)
+            repaired = True
+    for name in ("BUNDLE_MANIFEST.json", "RUNTIME_MANIFEST.json"):
+        src = source_bundle_dir / name
+        dst = work_bundle / name
+        if src.is_file() and not dst.is_file():
+            shutil.copy2(src, dst, follow_symlinks=True)
+            repaired = True
+    return repaired
+
+
 def sync_runtime_workdir(source_bundle_dir: Path, data_dir: Path, *, force: bool = False) -> Path:
     if not (source_bundle_dir / "runtime").is_dir():
         raise RuntimeError(f"Source bundle missing runtime: {source_bundle_dir}")
@@ -271,19 +314,46 @@ def sync_runtime_workdir(source_bundle_dir: Path, data_dir: Path, *, force: bool
     if not force and state_file.is_file() and (work_bundle / "runtime").is_dir():
         try:
             state = json.loads(state_file.read_text(encoding="utf-8"))
-            if state.get("fingerprint") == fingerprint and runtime_workdir_backend_ready(work_bundle):
-                work_ok, _ = verify_runtime_manifest(work_bundle, strict=False)
-                if work_ok:
-                    print(f"Reusing runtime-work: {work_bundle}", flush=True)
-                    return work_bundle
+            if fingerprints_match(state.get("fingerprint"), fingerprint):
+                if not runtime_workdir_backend_ready(work_bundle):
+                    if repair_runtime_workdir_missing_components(source_bundle_dir, work_bundle):
+                        print(
+                            f"Repaired missing runtime-work components: {work_bundle}",
+                            flush=True,
+                        )
+                if runtime_workdir_backend_ready(work_bundle):
+                    work_ok, _ = verify_runtime_manifest(work_bundle, strict=False)
+                    if work_ok:
+                        print(f"Reusing runtime-work: {work_bundle}", flush=True)
+                        return work_bundle
         except Exception:
             pass
 
     print(f"Syncing runtime-work: {work_bundle}", flush=True)
+    staging_bundle = work_root / "staging"
+    if staging_bundle.exists():
+        shutil.rmtree(staging_bundle, ignore_errors=True)
+    staging_bundle.mkdir(parents=True, exist_ok=True)
+    copy_bundle_components(source_bundle_dir, staging_bundle)
+    if not runtime_workdir_backend_ready(staging_bundle):
+        issues = collect_bundle_integrity_issues(staging_bundle)
+        shutil.rmtree(staging_bundle, ignore_errors=True)
+        raise RuntimeError(
+            "runtime-work staging sync incomplete: "
+            + ("; ".join(issues) if issues else "unknown")
+        )
+
+    previous_bundle = work_root / "previous"
+    if previous_bundle.exists():
+        shutil.rmtree(previous_bundle, ignore_errors=True)
     if work_bundle.exists():
-        shutil.rmtree(work_bundle, ignore_errors=True)
-    work_bundle.mkdir(parents=True, exist_ok=True)
-    copy_bundle_components(source_bundle_dir, work_bundle)
+        try:
+            work_bundle.rename(previous_bundle)
+        except OSError:
+            shutil.rmtree(work_bundle, ignore_errors=True)
+    staging_bundle.rename(work_bundle)
+    if previous_bundle.exists():
+        shutil.rmtree(previous_bundle, ignore_errors=True)
     if not runtime_workdir_backend_ready(work_bundle):
         issues = collect_bundle_integrity_issues(work_bundle)
         raise RuntimeError(
