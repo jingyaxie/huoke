@@ -34,9 +34,10 @@ if (Test-Path $BundleDir) {
 New-Item -ItemType Directory -Force -Path $TargetBackend, $RuntimeDir | Out-Null
 
 Write-Host "Copying backend..."
-$exclude = @(".venv", "__pycache__", ".pytest_cache", "reports", "storage")
+$excludeDirs = @(".venv", "__pycache__", ".pytest_cache", "reports", "storage", "scripts", "tests")
+$excludeFiles = @("pytest.ini", "requirements-dev.txt", "pyproject.toml")
 robocopy $BackendSrc $TargetBackend /E /NFL /NDL /NJH /NJS /nc /ns /np `
-  /XD $exclude | Out-Null
+  /XD $excludeDirs /XF $excludeFiles | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "Backend copy failed (robocopy exit $LASTEXITCODE)" }
 
 # 内置 Skill / 规则定义必须打入 bundle（供 skill_store 启动时 bootstrap；排除整个 storage 会漏掉）

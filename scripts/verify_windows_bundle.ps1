@@ -68,6 +68,13 @@ foreach ($rel in @(
   Assert-PathExists -Path (Join-Path $resolvedBundle $rel) -Label $rel
 }
 
+foreach ($rel in @("backend/scripts", "backend/tests")) {
+  $devPath = Join-Path $resolvedBundle $rel
+  if (Test-Path $devPath) {
+    throw "Dev-only path must not ship in desktop bundle: $devPath"
+  }
+}
+
 foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll")) {
   Assert-PathExists -Path (Join-Path $resolvedBundle "runtime/msvc/$dll") -Label $dll
 }

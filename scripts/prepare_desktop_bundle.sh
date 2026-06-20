@@ -32,6 +32,11 @@ rsync -a \
   --exclude '.pytest_cache' \
   --exclude 'reports' \
   --exclude 'storage' \
+  --exclude 'scripts' \
+  --exclude 'tests' \
+  --exclude 'pytest.ini' \
+  --exclude 'requirements-dev.txt' \
+  --exclude 'pyproject.toml' \
   "$BACKEND_SRC/" "$TARGET_BACKEND/"
 
 # 内置 Skill / 规则定义必须打入 bundle（排除整个 storage 会漏掉）
