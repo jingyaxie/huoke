@@ -222,6 +222,7 @@ onUnmounted(() => {
   flex-direction: column;
   width: var(--sidebar-width);
   flex-shrink: 0;
+  color-scheme: dark;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   border-right: 1px solid var(--sidebar-border);
@@ -280,7 +281,40 @@ onUnmounted(() => {
 .nav-scroll {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.32) transparent;
+}
+
+.nav-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.nav-scroll::-webkit-scrollbar-track {
+  margin: 4px 0;
+  background: transparent;
+}
+
+.nav-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  transition: background 0.2s ease;
+}
+
+.nav-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.38);
+}
+
+.nav-scroll::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 229, 255, 0.55);
+}
+
+.nav-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .nav-section {

@@ -49,10 +49,10 @@ function onFrameLoad() {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -62,6 +62,6 @@ function onFrameLoad() {
   width: 100%;
   min-height: 0;
   border: 0;
-  background: #fff;
+  background: transparent;
 }
 </style>
